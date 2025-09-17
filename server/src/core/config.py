@@ -1,7 +1,7 @@
 import os
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,22 +68,14 @@ class Settings(BaseSettings):
     )
 
     # Map settings from config.yml with fallbacks
-    DEFAULT_MAP: str = os.getenv(
-        "DEFAULT_MAP",
-        game_config.get("game", {}).get("spawn", {}).get("map_id", "large_test_map"),
-    )
-    DEFAULT_SPAWN_X: int = int(
-        os.getenv(
-            "DEFAULT_SPAWN_X",
-            str(game_config.get("game", {}).get("spawn", {}).get("x", 10)),
-        )
-    )
-    DEFAULT_SPAWN_Y: int = int(
-        os.getenv(
-            "DEFAULT_SPAWN_Y",
-            str(game_config.get("game", {}).get("spawn", {}).get("y", 10)),
-        )
-    )
+    DEFAULT_MAP: str = "samplemap"
+    DEFAULT_SPAWN_X: int = 10
+    DEFAULT_SPAWN_Y: int = 10
+    COLLISION_LAYER_NAMES: List[str] = ["tree", "building", "water", "farm", "obstacles", "collision"]
+
+    # Valkey settings
+    VALKEY_HOST: str = "valkey"
+    VALKEY_PORT: int = 6379
     MAPS_DIRECTORY: str = os.getenv("MAPS_DIRECTORY", "/app/server/maps")
 
     # Logging settings

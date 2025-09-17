@@ -385,7 +385,11 @@ async def handle_chunk_request(
                 protocol_row = []
                 for tile in row:
                     protocol_row.append(
-                        TileData(gid=tile["gid"], properties=tile["properties"])
+                        TileData(
+                            gid=tile["gid"], 
+                            properties=tile["properties"],
+                            layers=tile.get("layers", [])  # Include multi-layer data
+                        )
                     )
                 protocol_tiles.append(protocol_row)
 

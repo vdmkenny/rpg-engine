@@ -5,7 +5,7 @@ Initializes the FastAPI application and includes the API routers.
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
-from server.src.api import websockets, auth
+from server.src.api import websockets, auth, assets
 from server.src.core.logging_config import setup_logging, get_logger
 from server.src.core.metrics import init_metrics, get_metrics, get_metrics_content_type
 from server.src.services.map_service import get_map_manager
@@ -82,3 +82,4 @@ def read_version():
 # Include API routers
 app.include_router(websockets.router)
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+app.include_router(assets.router, prefix="/api", tags=["Assets"])

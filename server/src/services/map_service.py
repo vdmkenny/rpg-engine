@@ -8,7 +8,7 @@ interact with the game world.
 
 import os
 import asyncio
-from typing import Dict, Optional, Tuple, Set, Union, List
+from typing import Dict, Optional, Tuple, Set, Union, List, Any
 from pathlib import Path
 
 try:
@@ -42,7 +42,7 @@ class TileMap:
         self.tile_width = 32
         self.tile_height = 32
         self.walkable_tiles: Set[int] = set()
-        self.collision_layer = None
+        self.collision_layers: List[pytmx.TiledTileLayer] = []
 
         self._load_map()
 
@@ -78,12 +78,8 @@ class TileMap:
             # Find collision/obstacle layers
             if hasattr(self.tmx_data, "layers"):
                 for layer in self.tmx_data.layers:
-                    if hasattr(layer, "data") and layer.name.lower() in [
-                        "obstacles",
-                        "collision",
-                    ]:
-                        self.collision_layer = layer
-                        break
+                        if hasattr(layer, "data") and layer.name.lower() in settings.COLLISION_LAYER_NAMES:
+                            self.collision_layers.append(layer)
 
             logger.info(
                 "Map loaded successfully",
@@ -92,6 +88,8 @@ class TileMap:
                     "dimensions": f"{self.width}x{self.height}",
                     "tile_size": f"{self.tile_width}x{self.tile_height}",
                     "walkable_tiles": len(self.walkable_tiles),
+                    "collision_layers": [layer.name for layer in self.collision_layers],
+                    "tilesets": len(self.tmx_data.tilesets) if self.tmx_data else 0,
                 },
             )
 
@@ -100,6 +98,247 @@ class TileMap:
                 "Failed to load map", extra={"map_path": self.map_path, "error": str(e)}
             )
             raise
+
+    def get_tileset_metadata(self) -> List[Dict]:
+        """
+        Extract tileset metadata for client asset management.
+        
+        Returns:
+            List of tileset metadata dicts with image paths, dimensions, and GID ranges
+        """
+        if not self.tmx_data:
+            return []
+            
+        tilesets = []
+        for tileset in self.tmx_data.tilesets:
+            # pytmx automatically resolves external .tsx files, so we can treat all tilesets uniformly
+            logger.info(f"Processing tileset: name={getattr(tileset, 'name', 'unnamed')}, "
+                       f"source={getattr(tileset, 'source', 'none')}, "
+                       f"firstgid={getattr(tileset, 'firstgid', 'none')}")
+            
+            image_source = None
+            
+            # Get image source from tileset (pytmx has already resolved .tsx references)
+            if hasattr(tileset, 'image') and tileset.image:
+                image_source = tileset.image.source
+            elif hasattr(tileset, 'source') and tileset.source:
+                # If source exists, it's likely the image source (pytmx resolved .tsx)
+                image_source = tileset.source
+            
+            # Calculate proper GID range
+            tilecount = getattr(tileset, 'tilecount', 0)
+            last_gid = tileset.firstgid + tilecount - 1 if tilecount > 0 else tileset.firstgid
+            
+            tileset_info = {
+                "id": tileset.name or f"tileset_{tileset.firstgid}",
+                "type": "manual",  # Using manual resolution to fix pytmx bugs
+                "image_source": image_source,
+                "first_gid": tileset.firstgid,
+                "last_gid": last_gid,
+                "tile_width": getattr(tileset, 'tilewidth', 32),
+                "tile_height": getattr(tileset, 'tileheight', 32),
+                "tile_count": tilecount,
+                "columns": getattr(tileset, 'columns', 1),
+                "spacing": getattr(tileset, 'spacing', 0),
+                "margin": getattr(tileset, 'margin', 0),
+            }
+            
+            logger.info(f"Tileset metadata: {tileset_info}")
+            tilesets.append(tileset_info)
+        
+        return tilesets
+
+    def get_correct_tile_data(self, gid: int) -> Optional[Dict[str, Any]]:
+        """
+        Get correct tile data by manually resolving tileset instead of using buggy pytmx methods.
+        
+        Args:
+            gid: Global tile ID
+            
+        Returns:
+            Dict with correct tileset info and local coordinates, or None if not found
+        """
+        if not self.tmx_data or gid <= 0:
+            return None
+            
+        # Manual tileset lookup to work around pytmx bugs
+        correct_tileset = None
+        for tileset in self.tmx_data.tilesets:
+            if hasattr(tileset, 'tilecount') and hasattr(tileset, 'firstgid'):
+                last_gid = tileset.firstgid + tileset.tilecount - 1
+                if tileset.firstgid <= gid <= last_gid:
+                    correct_tileset = tileset
+                    break
+        
+        if not correct_tileset:
+            return None
+            
+        # Calculate correct local tile ID
+        local_id = gid - correct_tileset.firstgid
+        
+        # Get tileset image source
+        image_source = None
+        if hasattr(correct_tileset, 'image') and correct_tileset.image:
+            image_source = correct_tileset.image.source
+        elif hasattr(correct_tileset, 'source'):
+            image_source = correct_tileset.source
+            
+        if not image_source:
+            return None
+            
+        # Calculate tile position in the tileset image
+        columns = getattr(correct_tileset, 'columns', 1)
+        tile_width = getattr(correct_tileset, 'tilewidth', 32)
+        tile_height = getattr(correct_tileset, 'tileheight', 32)
+        spacing = getattr(correct_tileset, 'spacing', 0)
+        margin = getattr(correct_tileset, 'margin', 0)
+        
+        # Calculate x, y position in tileset
+        col = local_id % columns
+        row = local_id // columns
+        
+        x = margin + col * (tile_width + spacing)
+        y = margin + row * (tile_height + spacing)
+        
+        return {
+            "tileset_name": getattr(correct_tileset, 'name', f'tileset_{correct_tileset.firstgid}'),
+            "image_source": os.path.basename(image_source),
+            "local_id": local_id,
+            "x": x,
+            "y": y,
+            "width": tile_width,
+            "height": tile_height,
+            "gid": gid
+        }
+        
+    def _convert_local_to_global_gid(self, local_gid: int, tile_x: int, tile_y: int, layer_index: int = 0) -> int:
+        """
+        Convert pytmx local GID back to global GID by parsing raw TMX data.
+        
+        pytmx converts global GIDs to local tile IDs automatically, but we need 
+        global GIDs for proper tileset mapping. The only reliable way is to 
+        parse the raw TMX CSV data directly.
+        
+        Args:
+            local_gid: Local tile ID from pytmx layer.data
+            tile_x: Tile X coordinate
+            tile_y: Tile Y coordinate
+            layer_index: Which layer to get the GID from
+            
+        Returns:
+            Global GID from original TMX file
+        """
+        if local_gid <= 0:
+            return 0
+            
+        # Use cached raw TMX data if available
+        if not hasattr(self, '_raw_tmx_layers'):
+            self._load_raw_tmx_data()
+        
+        # Get the real GID from raw TMX data for the specific layer
+        if (hasattr(self, '_raw_tmx_layers') and self._raw_tmx_layers and 
+            layer_index < len(self._raw_tmx_layers)):
+            layer_data = self._raw_tmx_layers[layer_index]
+            if tile_y < len(layer_data) and tile_x < len(layer_data[tile_y]):
+                raw_gid = layer_data[tile_y][tile_x]
+                if raw_gid > 0:
+                    return raw_gid
+        
+        # Fallback to original local GID if raw parsing fails
+        return local_gid
+        
+    def _load_raw_tmx_data(self):
+        """Load raw TMX layer data directly from the XML file."""
+        import xml.etree.ElementTree as ET
+        
+        try:
+            tree = ET.parse(self.map_path)
+            root = tree.getroot()
+            
+            self._raw_tmx_layers = []
+            
+            # Parse each layer's CSV data
+            for layer_elem in root.findall('layer'):
+                data_elem = layer_elem.find('data')
+                if data_elem is not None and data_elem.get('encoding') == 'csv':
+                    csv_data = data_elem.text
+                    if csv_data:
+                        csv_data = csv_data.strip()
+                        layer_rows = []
+                        
+                        for line in csv_data.split('\n'):
+                            if line.strip():
+                                # Parse CSV row, handling trailing commas
+                                row_gids = []
+                                for gid_str in line.split(','):
+                                    gid_str = gid_str.strip()
+                                    if gid_str:
+                                        row_gids.append(int(gid_str))
+                                if row_gids:
+                                    layer_rows.append(row_gids)
+                        
+                        self._raw_tmx_layers.append(layer_rows)
+                    
+        except Exception as e:
+            logger.warning(f"Error loading raw TMX data: {e}")
+            self._raw_tmx_layers = []
+    
+    def _parse_external_tileset(self, tileset) -> Optional[Dict]:
+        """
+        Parse an external .tsx tileset file to extract metadata.
+        
+        Args:
+            tileset: The tileset object with source reference
+            
+        Returns:
+            Tileset metadata dictionary or None if parsing fails
+        """
+        import xml.etree.ElementTree as ET
+        from pathlib import Path
+        
+        try:
+            # Build path to .tsx file
+            tsx_path = Path(self.map_path).parent / tileset.source
+            logger.info(f"Looking for external tileset at: {tsx_path}")
+            
+            if not tsx_path.exists():
+                logger.warning(f"External tileset file not found: {tsx_path}")
+                return None
+            
+            # Parse the .tsx file
+            tree = ET.parse(tsx_path)
+            root = tree.getroot()
+            
+            # Extract tileset information
+            name = root.get('name', tileset.name or f"tileset_{tileset.firstgid}")
+            tile_width = int(root.get('tilewidth', 32))
+            tile_height = int(root.get('tileheight', 32))
+            tile_count = int(root.get('tilecount', 0))
+            columns = int(root.get('columns', 1))
+            
+            # Extract image source
+            image_element = root.find('image')
+            image_source = None
+            if image_element is not None:
+                image_source = image_element.get('source')
+            
+            tileset_info = {
+                "id": name,
+                "type": "external",
+                "source": tileset.source,
+                "image_source": image_source,
+                "first_gid": tileset.firstgid,
+                "tile_width": tile_width,
+                "tile_height": tile_height,
+                "tile_count": tile_count,
+                "columns": columns,
+            }
+            
+            return tileset_info
+            
+        except Exception as e:
+            logger.error(f"Failed to parse external tileset {tileset.source}: {e}")
+            return None
 
     def is_walkable(self, x: int, y: int) -> bool:
         """
@@ -154,6 +393,15 @@ class TileMap:
                     except (IndexError, TypeError):
                         continue
 
+        # Check for collision on any of the designated collision layers
+        if self.collision_layers:
+            for layer in self.collision_layers:
+                if layer.data[y][x] != 0:
+                    return False  # Tile is on a collision layer
+
+        # Check for walkable property on the tile itself
+        # This part of the logic might need adjustment based on how your tilesets are configured
+        # For now, we assume that if it's not on a collision layer, it's walkable.
         return True  # Default to walkable if no blocking tiles found
 
     def get_spawn_position(self) -> Tuple[int, int]:
@@ -245,27 +493,58 @@ class TileMap:
                     )
                     continue
 
-                # Get primary layer tile (usually ground/base layer)
-                primary_gid = 0
+                # Get tiles from all visible layers
+                layer_gids = []
                 tile_properties = {}
+                collision_info = {}
 
                 if self.tmx_data and hasattr(self.tmx_data, "layers"):
-                    # Get tile from first visible layer (ground layer)
-                    for layer in self.tmx_data.layers:
+                    # Collect tiles from all visible layers
+                    for layer_index, layer in enumerate(self.tmx_data.layers):
                         if hasattr(layer, "data") and layer.visible:
-                            primary_gid = layer.data[tile_y][tile_x]
-                            break
+                            local_gid = layer.data[tile_y][tile_x]
+                            if local_gid > 0:  # Only include non-empty tiles
+                                # Convert pytmx local GID to global GID using raw TMX data
+                                global_gid = self._convert_local_to_global_gid(local_gid, tile_x, tile_y, layer_index)
+                                if global_gid > 0:
+                                    layer_gids.append({
+                                        "gid": global_gid,
+                                        "layer_name": layer.name
+                                    })
 
-                    # Get tile properties
-                    if primary_gid > 0:
+                    # Check collision layers for additional rendering info
+                    for layer in self.collision_layers:
+                        if hasattr(layer, "data"):
+                            collision_gid = layer.data[tile_y][tile_x]
+                            if collision_gid > 0:  # Non-empty tile on collision layer
+                                collision_info[layer.name] = collision_gid
+
+                    # Get tile properties from the bottom-most layer with a tile
+                    if layer_gids:
+                        # Use the first (bottom) layer's GID for properties
+                        bottom_gid = layer_gids[0]["gid"]
                         tile_properties = (
-                            self.tmx_data.get_tile_properties_by_gid(primary_gid) or {}
+                            self.tmx_data.get_tile_properties_by_gid(bottom_gid) or {}
                         )
 
                 # Add computed properties
                 tile_properties["walkable"] = self.is_walkable(tile_x, tile_y)
+                if collision_info:
+                    tile_properties["collision_layers"] = collision_info
 
-                row.append({"gid": primary_gid, "properties": tile_properties})
+                # Create tile data with all layers
+                tile_data = {
+                    "layers": layer_gids,  # All layers for this tile
+                    "properties": tile_properties
+                }
+                
+                # For backward compatibility, include primary GID from bottom layer
+                if layer_gids:
+                    tile_data["gid"] = layer_gids[0]["gid"]
+                else:
+                    tile_data["gid"] = 0
+
+                row.append(tile_data)
 
             tiles.append(row)
 
@@ -400,8 +679,8 @@ class MapManager:
             # Fallback to hardcoded values if default map is not found
             return "test_map", settings.DEFAULT_SPAWN_X, settings.DEFAULT_SPAWN_Y
 
-        spawn_point = tile_map.get_spawn_position()
-        return default_map_id, spawn_point.x, spawn_point.y
+        spawn_x, spawn_y = tile_map.get_spawn_position()
+        return default_map_id, spawn_x, spawn_y
 
     def get_player_spawn_position(
         self, map_id: str, player_id: str

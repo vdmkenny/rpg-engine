@@ -23,6 +23,7 @@ from game_states import GameState
 from entities import Player, FloatingMessage
 from chunk_manager import ChunkManager
 from ui_components import InputField, Button, ChatWindow
+from tileset_manager import TilesetManager
 
 # Screen Constants
 WINDOW_WIDTH = 1024
@@ -71,6 +72,10 @@ class RPGClient:
         self.target_camera_x = 0
         self.target_camera_y = 0
         self.chunk_manager = ChunkManager()
+        
+        # Tileset management
+        self.tileset_manager = TilesetManager()
+        self.current_map_id = None
 
         # Network
         self.websocket = None
@@ -185,6 +190,9 @@ class RPGClient:
                     if not self.jwt_token:
                         self.set_status("No access token received", RED)
                         return
+                    
+                    # Set up tileset manager with authentication
+                    self.tileset_manager.set_auth_token(self.jwt_token)
 
             # Connect WebSocket
             try:
@@ -351,31 +359,115 @@ class RPGClient:
                         )
 
     def draw_tile(self, screen_x, screen_y, tile_data):
-        """Draw a single tile."""
-        # Handle new tile format with gid and properties
+        """Draw a single tile using sprites when available, otherwise colors."""
+        # Handle new tile format with layers and properties
         if isinstance(tile_data, dict):
-            tile_type = tile_data.get('gid', 0)
+            properties = tile_data.get('properties', {})
+            collision_layers = properties.get('collision_layers', {})
+            
             # Check if it's out of bounds
-            if tile_data.get('properties', {}).get('out_of_bounds', False):
+            if properties.get('out_of_bounds', False):
                 color = (64, 64, 64)  # Dark gray for out of bounds
-            else:
-                # Simple color-based rendering for different tile types
-                if tile_type == 0:  # Grass
-                    color = GREEN
-                elif tile_type == 1:  # Stone
-                    color = GRAY
-                elif tile_type == 2:  # Water
-                    color = BLUE
-                elif tile_type == 3:  # Sand
-                    color = (255, 255, 0)  # Yellow
-                elif tile_type == 4:  # Wall/Rock
-                    color = BROWN
+                pygame.draw.rect(
+                    self.screen,
+                    color,
+                    (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE)
+                )
+                return
+            
+            # Handle multi-layer tiles
+            layers = tile_data.get('layers', [])
+            if layers:
+                # Draw each layer in order (bottom to top)
+                sprites_rendered = 0
+                for layer_info in layers:
+                    gid = layer_info.get('gid', 0)
+                    if gid > 0 and self.current_map_id:
+                        # Enable sprite rendering with correct tileset mapping
+                        sprite = self.tileset_manager.get_tile_sprite(gid, self.current_map_id)
+                        if sprite:
+                            self.screen.blit(sprite, (int(screen_x), int(screen_y)))
+                            sprites_rendered += 1
+                        # Continue to next layer even if this one fails - don't break!
+                        # Each layer should be independent
+                            
+                # Add collision overlay if needed
+                if collision_layers:
+                    self._draw_collision_overlay(screen_x, screen_y, collision_layers)
+                return
+            
+            # Handle single-layer tiles (backward compatibility)
+            tile_type = tile_data.get('gid', 0)
+            if tile_type > 0 and self.current_map_id:
+                sprite = self.tileset_manager.get_tile_sprite(tile_type, self.current_map_id)
+                if sprite:
+                    self.screen.blit(sprite, (int(screen_x), int(screen_y)))
+                    if collision_layers:
+                        self._draw_collision_overlay(screen_x, screen_y, collision_layers)
+                    return
                 else:
-                    # Unknown tile type - use red to make it obvious
-                    color = RED
+                    # Fallback to colored rectangle
+                    self._draw_fallback_tile(screen_x, screen_y, tile_type, collision_layers)
+                    return
         else:
             # Handle legacy integer tile types
             tile_type = tile_data
+            self._draw_fallback_tile(screen_x, screen_y, tile_type, {})
+
+    def _draw_fallback_tile(self, screen_x, screen_y, tile_type, collision_layers):
+        """Draw a colored rectangle as fallback when sprites aren't available."""
+        # Determine color based on tile type or collision info
+        if collision_layers:
+            # Prioritize collision layers for visual feedback
+            if 'tree' in collision_layers:
+                color = (34, 139, 34)  # Forest green for trees
+            elif 'building' in collision_layers:
+                color = (139, 69, 19)  # Saddle brown for buildings
+            elif 'water' in collision_layers:
+                color = (30, 144, 255)  # Dodger blue for water
+            elif 'farm' in collision_layers:
+                color = (255, 215, 0)  # Gold for farm areas
+            elif 'grass' in collision_layers:
+                color = (50, 205, 50)  # Lime green for grass
+            elif 'obstacles' in collision_layers or 'collision' in collision_layers:
+                color = (105, 105, 105)  # Dim gray for obstacles
+            else:
+                # Fallback for unknown collision layers
+                color = (255, 69, 0)  # Red orange for unknown collision
+        elif isinstance(tile_type, int):
+            # Enhanced color mapping based on more granular GID ranges
+            if tile_type == 0:
+                color = (0, 0, 0)  # Black for empty
+            elif 1 <= tile_type <= 20:  # Basic ground tiles
+                color = (85, 107, 47)  # Dark olive green for ground
+            elif 21 <= tile_type <= 100:  # Decorative ground
+                color = (107, 142, 35)  # Olive drab
+            elif 101 <= tile_type <= 200:  # Various terrain
+                color = (154, 205, 50)  # Yellow green
+            elif 201 <= tile_type <= 300:  # More terrain
+                color = (124, 252, 0)  # Lawn green
+            elif 301 <= tile_type <= 400:  # Tree/nature tiles (this should be our tree layer!)
+                color = (34, 139, 34)  # Forest green for trees
+            elif 401 <= tile_type <= 576:  # Upper waterfall range
+                color = (70, 130, 180)  # Steel blue for waterfall
+            elif 577 <= tile_type <= 1000:  # Base chip tiles
+                color = (160, 82, 45)  # Saddle brown for base terrain
+            elif 1001 <= tile_type <= 1640:  # More base tiles
+                color = (210, 180, 140)  # Tan
+            elif 1641 <= tile_type <= 2000:  # Grass range start
+                color = (0, 128, 0)  # Green
+            elif 2001 <= tile_type <= 2168:  # Grass range end
+                color = (50, 205, 50)  # Lime green
+            elif 2169 <= tile_type <= 3000:  # Water range start
+                color = (0, 191, 255)  # Deep sky blue
+            elif 3001 <= tile_type <= 5240:  # Water range middle-end
+                color = (30, 144, 255)  # Dodger blue
+            elif 5241 <= tile_type <= 5288:  # Flower range
+                color = (255, 20, 147)  # Deep pink for flowers
+            else:
+                color = (128, 128, 128)  # Gray for unknown
+        else:
+            # Handle legacy types
             if tile_type == 0:  # Grass
                 color = GREEN
             elif tile_type == 1:  # Stone
@@ -387,14 +479,33 @@ class RPGClient:
             elif tile_type == 4:  # Wall/Rock
                 color = BROWN
             else:
-                # Unknown tile type - use red to make it obvious
                 color = RED
 
+        # Draw colored rectangle
         pygame.draw.rect(
             self.screen,
             color,
             (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE)
         )
+
+    def _draw_collision_overlay(self, screen_x, screen_y, collision_layers):
+        """Draw semi-transparent collision overlays."""
+        overlay = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+        if 'tree' in collision_layers:
+            overlay.fill((34, 139, 34, 80))  # Semi-transparent green
+        elif 'building' in collision_layers:
+            overlay.fill((139, 69, 19, 80))  # Semi-transparent brown
+        elif 'water' in collision_layers:
+            overlay.fill((30, 144, 255, 80))  # Semi-transparent blue
+        elif 'farm' in collision_layers:
+            overlay.fill((255, 215, 0, 80))  # Semi-transparent gold
+        elif 'grass' in collision_layers:
+            overlay.fill((50, 205, 50, 80))  # Semi-transparent lime
+        elif 'obstacles' in collision_layers or 'collision' in collision_layers:
+            overlay.fill((105, 105, 105, 80))  # Semi-transparent gray
+        else:
+            overlay.fill((255, 69, 0, 80))  # Semi-transparent red orange
+        self.screen.blit(overlay, (int(screen_x), int(screen_y)))
 
     def draw_player(self, player_id, player):
         """Draw a player."""
@@ -743,6 +854,15 @@ class RPGClient:
             # Initialize chunk request tracking
             self.player.last_chunk_request_x = self.player.x
             self.player.last_chunk_request_y = self.player.y
+            
+            # Load tilesets for the current map
+            if self.player.map_id and self.player.map_id != self.current_map_id:
+                self.current_map_id = self.player.map_id
+                try:
+                    await self.tileset_manager.load_map_tilesets(self.current_map_id)
+                    print(f"Loaded tilesets for map: {self.current_map_id}")
+                except Exception as e:
+                    print(f"Failed to load tilesets for map {self.current_map_id}: {e}")
 
         # Update timing from server config
         if config_data:
@@ -919,6 +1039,10 @@ class RPGClient:
         
         if self.websocket:
             await self.websocket.close()
+        
+        # Cleanup tileset manager
+        await self.tileset_manager.close()
+        
         pygame.quit()
 
 

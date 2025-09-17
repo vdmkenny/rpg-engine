@@ -55,8 +55,9 @@ class ChunkRequestPayload(BaseModel):
 
 
 class TileData(BaseModel):
-    gid: int  # Global tile ID
+    gid: int  # Global tile ID (for backward compatibility)
     properties: Dict[str, Any] = {}  # Tile properties like walkable, etc.
+    layers: List[Dict[str, Any]] = []  # Multi-layer support: [{"gid": 577, "layer_name": "ground"}, ...]
 
 
 class ChunkData(BaseModel):
