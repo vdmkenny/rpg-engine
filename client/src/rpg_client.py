@@ -123,8 +123,11 @@ class RPGClient:
 
     async def send_message(self, message):
         """Send a message via WebSocket."""
-        if self.websocket:
-            packed_data = msgpack.packb(message.model_dump())
+        if not self.websocket:
+            return
+            
+        packed_data = msgpack.packb(message.model_dump())
+        if packed_data is not None:
             await self.websocket.send(packed_data)
 
     async def send_chat_message(self, channel, message):
