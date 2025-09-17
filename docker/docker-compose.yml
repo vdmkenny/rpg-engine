@@ -1,0 +1,96 @@
+services:
+  db:
+    image: postgres:17
+    platform: linux/amd64
+    container_name: rpg_db
+    environment:
+      POSTGRES_USER: rpg
+      POSTGRES_PASSWORD: rpgpassword
+      POSTGRES_DB: rpg
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rpg -d rpg"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  valkey:
+    image: valkey/valkey:8
+    platform: linux/amd64
+    container_name: rpg_valkey
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ../
+      dockerfile: server/Dockerfile
+    container_name: rpg_server
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://rpg:rpgpassword@db:5432/rpg
+      - VALKEY_URL=redis://valkey:6379/0
+      - JWT_SECRET_KEY=your_super_secret_key_change_me
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../server/src:/app/src
+      - ../server/alembic:/app/alembic
+      - ../server/alembic.ini:/app/alembic.ini
+      - ../common/src:/app/common/src
+
+  client:
+    build:
+      context: ../
+      dockerfile: client/Dockerfile
+    container_name: rpg_client
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      - PYTHONPATH=/app
+      - SERVER_WS_URL=ws://server:8000
+      - SERVER_HTTP_URL=http://server:8000
+    volumes:
+      - ../:/app
+
+  test-collision:
+    build:
+      context: ../
+      dockerfile: client/Dockerfile
+    container_name: rpg_test_collision
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ../:/app
+    command: python /app/client/test_collision.py
+    profiles:
+      - test
+
+volumes:
+  db_data:
+  valkey_data:

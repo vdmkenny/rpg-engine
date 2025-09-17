@@ -1,0 +1,19 @@
+# Server-side game configuration
+game:
+  # The rate at which the game loop runs, in ticks per second.
+  tick_rate: 20
+  # The interval, in ticks, at which player data is synced from Valkey to the database.
+  db_sync_interval_ticks: 200 # e.g., 200 ticks / 20 ticks/sec = 10 seconds
+  
+  # Movement configuration
+  movement:
+    # Minimum time between moves in seconds (prevents spam)
+    move_cooldown: 0.15  # 150ms = ~6.7 moves per second max
+    # Duration of movement animation on client
+    animation_duration: 0.3
+  
+  # Default spawn configuration for new players
+  spawn:
+    map_id: "obstacle_test_map"
+    x: 25
+    y: 25

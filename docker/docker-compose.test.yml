@@ -1,0 +1,50 @@
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.test
+    command: tail -f /dev/null # Keep container running for exec
+    depends_on:
+      test_db:
+        condition: service_healthy
+      test_valkey:
+        condition: service_started
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://rpg_test:rpg_test_password@test_db:5432/rpg_test
+      - VALKEY_URL=valkey://test_valkey:6379
+      - JWT_SECRET_KEY=test_secret_key
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+    volumes:
+      - ../:/app
+    networks:
+      - rpg_net
+
+  test_db:
+    image: postgres:13
+    platform: linux/amd64 # Specify platform to avoid warnings on ARM hosts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rpg_test -d rpg_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    environment:
+      - POSTGRES_USER=rpg_test
+      - POSTGRES_PASSWORD=rpg_test_password
+      - POSTGRES_DB=rpg_test
+    ports:
+      - "5433:5432"
+    networks:
+      - rpg_net
+  
+  test_valkey:
+    image: valkey/valkey:7.2-alpine
+    platform: linux/amd64
+    ports:
+      - "6380:6379"
+    networks:
+      - rpg_net
+
+networks:
+  rpg_net:
+    driver: bridge

@@ -1,0 +1,94 @@
+import os
+import yaml
+from pathlib import Path
+from typing import Dict, Any, Optional
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def load_game_config() -> Dict[str, Any]:
+    """Load game configuration from config.yml"""
+    config_path = Path("/app/server/config.yml")
+    if not config_path.exists():
+        # Fallback to relative path for development
+        config_path = Path("server/config.yml")
+
+    if config_path.exists():
+        with open(config_path, "r") as f:
+            return yaml.safe_load(f) or {}
+    return {}
+
+
+# Load game config from YAML
+game_config = load_game_config()
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env")
+
+    # Database settings
+    DATABASE_URL: str = os.getenv(
+        "DATABASE_URL", "postgresql+asyncpg://rpg:rpgpassword@db:5432/rpg"
+    )
+    VALKEY_URL: str = os.getenv("VALKEY_URL", "redis://valkey:6379/0")
+
+    # Authentication settings
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your_super_secret_key_change_me")
+    ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
+        os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
+    )
+
+    # Game settings from config.yml with fallbacks
+    GAME_TICK_RATE: float = float(
+        os.getenv(
+            "GAME_TICK_RATE", str(game_config.get("game", {}).get("tick_rate", 20.0))
+        )
+    )
+
+    # Movement settings from config.yml with fallbacks
+    MOVE_COOLDOWN: float = float(
+        os.getenv(
+            "MOVE_COOLDOWN",
+            str(
+                game_config.get("game", {})
+                .get("movement", {})
+                .get("move_cooldown", 0.15)
+            ),
+        )
+    )
+    ANIMATION_DURATION: float = float(
+        os.getenv(
+            "ANIMATION_DURATION",
+            str(
+                game_config.get("game", {})
+                .get("movement", {})
+                .get("animation_duration", 0.3)
+            ),
+        )
+    )
+
+    # Map settings from config.yml with fallbacks
+    DEFAULT_MAP: str = os.getenv(
+        "DEFAULT_MAP",
+        game_config.get("game", {}).get("spawn", {}).get("map_id", "large_test_map"),
+    )
+    DEFAULT_SPAWN_X: int = int(
+        os.getenv(
+            "DEFAULT_SPAWN_X",
+            str(game_config.get("game", {}).get("spawn", {}).get("x", 10)),
+        )
+    )
+    DEFAULT_SPAWN_Y: int = int(
+        os.getenv(
+            "DEFAULT_SPAWN_Y",
+            str(game_config.get("game", {}).get("spawn", {}).get("y", 10)),
+        )
+    )
+    MAPS_DIRECTORY: str = os.getenv("MAPS_DIRECTORY", "/app/server/maps")
+
+    # Logging settings
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
+
+settings = Settings()
