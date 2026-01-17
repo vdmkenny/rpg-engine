@@ -18,6 +18,7 @@ from starlette.testclient import TestClient
 
 from server.src.main import app
 from server.src.core.security import create_access_token
+from server.src.core.database import reset_engine, reset_valkey
 from common.src.protocol import MessageType
 
 
@@ -36,6 +37,12 @@ def unique_username(prefix: str = "user") -> str:
 @SKIP_WS_INTEGRATION
 class TestWebSocketAuthentication:
     """Tests for WebSocket authentication flow."""
+
+    @pytest.fixture(autouse=True)
+    def reset_db_engine(self):
+        """Reset the database engine and Valkey before each test to avoid event loop conflicts."""
+        reset_engine()
+        reset_valkey()
 
     def test_ws_auth_valid_token(self):
         """Valid JWT token should receive WELCOME message."""

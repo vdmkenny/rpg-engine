@@ -82,3 +82,18 @@ async def get_valkey() -> GlideClient:
     if valkey_client is None:
         valkey_client = await GlideClient.create(valkey_config)
     return valkey_client
+
+
+def reset_valkey():
+    """
+    Reset the Valkey client singleton.
+    
+    This is needed for test isolation when using Starlette's TestClient,
+    which creates a new event loop for each test. The Valkey client from
+    the previous event loop becomes invalid and must be discarded.
+    
+    Note: This function must be called synchronously before TestClient starts.
+    The old client will be recreated on next get_valkey() call.
+    """
+    global valkey_client
+    valkey_client = None

@@ -19,7 +19,7 @@ from typing import Dict, Any
 from starlette.testclient import TestClient
 
 from server.src.main import app
-from server.src.core.database import get_valkey, reset_engine
+from server.src.core.database import get_valkey, reset_engine, reset_valkey
 from server.src.api.websockets import manager
 from server.src.game.game_loop import (
     get_visible_entities,
@@ -130,6 +130,7 @@ def integration_client():
     """
     # Reset engine to ensure fresh connections for this test
     reset_engine()
+    reset_valkey()
     
     # Clear any state from previous test runs
     manager.clear()

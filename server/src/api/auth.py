@@ -64,6 +64,10 @@ async def register_player(
         # Grant all skills to the new player
         await SkillService.grant_all_skills_to_player(db, db_player.id)
 
+        # Refresh to get clean state (without lazy-loaded relationships that could
+        # cause serialization issues with PlayerPublic response model)
+        await db.refresh(db_player)
+
         logger.info(
             "New player registered",
             extra={
