@@ -247,6 +247,7 @@ replays/
 debug_*.py
 test_*.py
 *_test.py
+!server/src/tests/test_*.py
 playground.py
 scratch.py
 experiment.py

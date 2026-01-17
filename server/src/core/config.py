@@ -2,6 +2,7 @@ import os
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -81,6 +82,17 @@ class Settings(BaseSettings):
     # Logging settings
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
+    @model_validator(mode="after")
+    def validate_jwt_secret(self) -> "Settings":
+        """Ensure JWT secret is changed from default in non-development environments."""
+        default_secret = "your_super_secret_key_change_me"
+        if self.ENVIRONMENT != "development" and self.JWT_SECRET_KEY == default_secret:
+            raise ValueError(
+                "JWT_SECRET_KEY must be changed from default in non-development environments. "
+                "Set the JWT_SECRET_KEY environment variable to a secure random value."
+            )
+        return self
 
 
 settings = Settings()

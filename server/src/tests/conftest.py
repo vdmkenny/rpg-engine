@@ -1,13 +1,16 @@
+"""
+Test fixtures and configuration for the RPG server tests.
+"""
+
 import pytest
 import pytest_asyncio
-from typing import AsyncGenerator, Callable, Awaitable, Dict
+from typing import AsyncGenerator, Callable, Awaitable, Dict, Any, Optional
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from unittest.mock import AsyncMock
 
 from server.src.main import app
-from server.src.core.database import get_db
+from server.src.core.database import get_db, get_valkey
 from server.src.models.base import Base
 from server.src.models.player import Player
 from server.src.core.security import get_password_hash, create_access_token
@@ -18,6 +21,89 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 # Global test engine and session maker
 test_engine = None
 TestingSessionLocal = None
+
+
+class FakeValkey:
+    """
+    In-memory Valkey/Redis implementation for testing.
+    
+    Mimics the behavior of a real Valkey client including:
+    - Returning bytes for keys and values (like real Valkey)
+    - Maintaining state across operations
+    - Supporting hash operations (hset, hgetall, hget)
+    - Supporting key operations (delete, exists, keys)
+    """
+    
+    def __init__(self):
+        self._data: Dict[str, Dict[str, str]] = {}
+        self._string_data: Dict[str, str] = {}
+    
+    async def hset(self, key: str, mapping: Dict[str, str]) -> int:
+        """Set multiple hash fields."""
+        if key not in self._data:
+            self._data[key] = {}
+        # Convert all values to strings
+        for k, v in mapping.items():
+            self._data[key][str(k)] = str(v)
+        return len(mapping)
+    
+    async def hget(self, key: str, field: str) -> Optional[bytes]:
+        """Get a single hash field value."""
+        if key in self._data and field in self._data[key]:
+            return self._data[key][field].encode()
+        return None
+    
+    async def hgetall(self, key: str) -> Dict[bytes, bytes]:
+        """Get all fields and values in a hash."""
+        if key not in self._data:
+            return {}
+        # Return bytes like real Valkey does
+        return {k.encode(): v.encode() for k, v in self._data[key].items()}
+    
+    async def delete(self, key: str) -> int:
+        """Delete a key."""
+        deleted = 0
+        if key in self._data:
+            del self._data[key]
+            deleted += 1
+        if key in self._string_data:
+            del self._string_data[key]
+            deleted += 1
+        return deleted
+    
+    async def exists(self, key: str) -> int:
+        """Check if a key exists."""
+        if key in self._data or key in self._string_data:
+            return 1
+        return 0
+    
+    async def set(self, key: str, value: str) -> str:
+        """Set a string value."""
+        self._string_data[key] = str(value)
+        return "OK"
+    
+    async def get(self, key: str) -> Optional[bytes]:
+        """Get a string value."""
+        if key in self._string_data:
+            return self._string_data[key].encode()
+        return None
+    
+    async def keys(self, pattern: str = "*") -> list:
+        """Get keys matching a pattern."""
+        import fnmatch
+        all_keys = list(self._data.keys()) + list(self._string_data.keys())
+        if pattern == "*":
+            return [k.encode() for k in all_keys]
+        return [k.encode() for k in all_keys if fnmatch.fnmatch(k, pattern)]
+    
+    def clear(self):
+        """Clear all data (useful between tests)."""
+        self._data.clear()
+        self._string_data.clear()
+    
+    def get_hash_data(self, key: str) -> Dict[str, str]:
+        """Direct access to hash data for test assertions."""
+        return self._data.get(key, {})
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
@@ -50,6 +136,7 @@ async def setup_test_db():
 async def session() -> AsyncGenerator[AsyncSession, None]:
     """
     Creates a fresh database session for each test.
+    Rolls back any changes after the test completes.
     """
     if TestingSessionLocal is None:
         raise RuntimeError("TestingSessionLocal not initialized")
@@ -61,15 +148,38 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
             await session_obj.rollback()
             raise
         finally:
+            # Clean up any data created during the test
+            await session_obj.rollback()
             await session_obj.close()
 
 
+@pytest_asyncio.fixture(scope="function")
+async def fake_valkey() -> FakeValkey:
+    """
+    Create a fresh FakeValkey instance for each test.
+    """
+    valkey = FakeValkey()
+    yield valkey
+    valkey.clear()
+
+
 @pytest_asyncio.fixture
-async def client(session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+async def client(
+    session: AsyncSession, fake_valkey: FakeValkey
+) -> AsyncGenerator[AsyncClient, None]:
     """
-    Create an HTTP client that uses the test database session.
+    Create an HTTP client that uses the test database session and fake Valkey.
     """
-    app.dependency_overrides[get_db] = lambda: session
+    # Override database dependency
+    async def override_get_db():
+        yield session
+    
+    # Override Valkey dependency
+    async def override_get_valkey():
+        return fake_valkey
+    
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_valkey] = override_get_valkey
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
@@ -80,9 +190,38 @@ async def client(session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
 
 @pytest_asyncio.fixture
-def mock_valkey():
-    """Mock Valkey client for testing."""
-    return AsyncMock()
+def create_test_player(
+    session: AsyncSession,
+) -> Callable[..., Awaitable[Player]]:
+    """
+    Fixture factory to create a test player in the database.
+    """
+    async def _create_player(
+        username: str, 
+        password: str, 
+        x: int = 10, 
+        y: int = 10, 
+        map_id: str = "samplemap",
+        **extra_fields
+    ) -> Player:
+        hashed_password = get_password_hash(password)
+
+        player_data = {
+            "username": username, 
+            "hashed_password": hashed_password,
+            "x_coord": x,
+            "y_coord": y,
+            "map_id": map_id,
+        }
+        player_data.update(extra_fields)
+
+        player = Player(**player_data)
+        session.add(player)
+        await session.commit()
+        await session.refresh(player)
+        return player
+
+    return _create_player
 
 
 @pytest_asyncio.fixture
@@ -95,7 +234,9 @@ def create_test_player_and_token(
     """
 
     async def _create_player_and_token(
-        username: str, password: str, initial_data: Dict | None = None
+        username: str, 
+        password: str, 
+        initial_data: Dict[str, Any] | None = None
     ) -> tuple[str, Player]:
         hashed_password = get_password_hash(password)
 
@@ -112,3 +253,20 @@ def create_test_player_and_token(
         return token, player
 
     return _create_player_and_token
+
+
+@pytest_asyncio.fixture
+def create_expired_token() -> Callable[[str], str]:
+    """
+    Fixture factory to create an expired JWT token for testing.
+    """
+    from datetime import timedelta
+    
+    def _create_expired_token(username: str) -> str:
+        # Create a token that expired 1 hour ago
+        return create_access_token(
+            data={"sub": username}, 
+            expires_delta=timedelta(hours=-1)
+        )
+    
+    return _create_expired_token

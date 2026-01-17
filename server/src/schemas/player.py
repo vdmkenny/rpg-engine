@@ -31,7 +31,7 @@ class PlayerCreate(PlayerBase):
     Schema for creating a new player.
     """
 
-    password: str
+    password: Annotated[str, Field(min_length=1)]
 
 
 class PlayerInDB(PlayerBase):

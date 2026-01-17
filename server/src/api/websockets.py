@@ -23,7 +23,8 @@ from server.src.core.metrics import (
 )
 from server.src.models.player import Player
 from server.src.services.map_service import map_manager
-from common.src.protocol import GameMessage, MessageType, Direction, MoveIntentPayload
+from common.src.protocol import GameMessage, MessageType, Direction, MoveIntentPayload, PlayerDisconnectPayload
+from server.src.game.game_loop import cleanup_disconnected_player
 
 router = APIRouter()
 manager = ConnectionManager()
@@ -229,7 +230,8 @@ async def handle_move_intent(
             # Track movement metrics
             metrics.track_player_movement(move_payload.direction.value)
 
-            # Broadcast position update to ALL players on the same map
+            # Send position confirmation to the moving player only
+            # Other players will receive updates via the game loop's diff-based broadcasting
             position_update = {
                 "type": "GAME_STATE_UPDATE",
                 "payload": {
@@ -246,7 +248,7 @@ async def handle_move_intent(
             }
             packed_update = msgpack.packb(position_update, use_bin_type=True)
             if packed_update:
-                await manager.broadcast_to_map(map_id, packed_update)
+                await websocket.send_bytes(packed_update)
         else:
             # Movement blocked by collision
             logger.debug(
@@ -768,22 +770,23 @@ async def websocket_endpoint(
 
             # Notify other players on the same map about player leaving
             if player_map:
-                disconnect_message = {
-                    "type": "PLAYER_DISCONNECT",
-                    "payload": {"username": username},
-                }
-                packed_disconnect = msgpack.packb(disconnect_message, use_bin_type=True)
+                disconnect_message = GameMessage(
+                    type=MessageType.PLAYER_DISCONNECT,
+                    payload=PlayerDisconnectPayload(username=username).model_dump(),
+                )
+                packed_disconnect = msgpack.packb(disconnect_message.model_dump(), use_bin_type=True)
                 if packed_disconnect:
                     for other_websocket in manager.connections_by_map.get(
                         player_map, {}
                     ).values():
                         try:
                             await other_websocket.send_bytes(packed_disconnect)
-                        except:
+                        except Exception:
                             # Ignore errors sending to other disconnecting clients
                             pass
 
             manager.disconnect(username)
+            cleanup_disconnected_player(username)
             logger.info("Client disconnected and removed", extra={"username": username})
 
             # Update metrics for active connections after disconnect

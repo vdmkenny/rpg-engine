@@ -22,6 +22,7 @@ class MessageType(str, Enum):
     CHUNK_DATA = "CHUNK_DATA"
     ERROR = "ERROR"
     SERVER_SHUTDOWN = "SERVER_SHUTDOWN"
+    PLAYER_DISCONNECT = "PLAYER_DISCONNECT"
 
 
 class Direction(str, Enum):
@@ -71,6 +72,11 @@ class ChunkData(BaseModel):
 class ChunkDataPayload(BaseModel):
     map_id: str
     chunks: List[Dict[str, Any]]  # List of chunk data
+
+
+class PlayerDisconnectPayload(BaseModel):
+    """Payload for PLAYER_DISCONNECT messages."""
+    username: str
 
 
 class MovementValidator:

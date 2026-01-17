@@ -823,17 +823,17 @@ class RPGClient:
         msg_type = message.get("type")
         payload = message.get("payload", {})
 
-        if msg_type == "WELCOME":
+        if msg_type == MessageType.WELCOME.value:
             await self.handle_welcome_message(payload)
-        elif msg_type == "CHUNK_DATA":
+        elif msg_type == MessageType.CHUNK_DATA.value:
             self.handle_chunk_data(payload)
-        elif msg_type == "GAME_STATE_UPDATE":
+        elif msg_type == MessageType.GAME_STATE_UPDATE.value:
             await self.handle_game_state_update(payload)
-        elif msg_type == "NEW_CHAT_MESSAGE":
+        elif msg_type == MessageType.NEW_CHAT_MESSAGE.value:
             self.handle_chat_message(payload)
-        elif msg_type == "PLAYER_DISCONNECT":
+        elif msg_type == MessageType.PLAYER_DISCONNECT.value:
             self.handle_player_disconnect(payload)
-        elif msg_type == "ERROR":
+        elif msg_type == MessageType.ERROR.value:
             self.handle_error_message(payload)
 
     async def handle_welcome_message(self, payload):

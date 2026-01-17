@@ -3,22 +3,30 @@ Main server entrypoint.
 Initializes the FastAPI application and includes the API routers.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 from server.src.api import websockets, auth, assets
 from server.src.core.logging_config import setup_logging, get_logger
 from server.src.core.metrics import init_metrics, get_metrics, get_metrics_content_type
 from server.src.services.map_service import get_map_manager
+from server.src.core.database import get_valkey
+from server.src.game.game_loop import game_loop, cleanup_disconnected_player
 
 # Initialize logging and metrics as early as possible
 setup_logging()
 init_metrics()
 logger = get_logger(__name__)
 
+# Game loop task reference for cleanup
+_game_loop_task = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
+    global _game_loop_task
+    
     # Startup
     logger.info("RPG Server starting up", extra={"version": "0.1.0"})
     
@@ -27,9 +35,26 @@ async def lifespan(app: FastAPI):
     await map_manager.load_maps()
     logger.info(f"Loaded {len(map_manager.maps)} maps")
     
+    # Initialize Valkey connection and start game loop
+    valkey = await get_valkey()
+    _game_loop_task = asyncio.create_task(
+        game_loop(websockets.manager, valkey),
+        name="game_loop"
+    )
+    logger.info("Game loop started", extra={"tick_rate": "20 TPS"})
+    
     yield
+    
     # Shutdown
     logger.info("RPG Server shutting down")
+    
+    # Cancel game loop
+    if _game_loop_task:
+        _game_loop_task.cancel()
+        try:
+            await _game_loop_task
+        except asyncio.CancelledError:
+            logger.info("Game loop stopped")
 
 
 # OpenAPI Documentation for WebSockets is not directly supported in the same way as HTTP endpoints.

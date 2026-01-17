@@ -15,11 +15,14 @@ WORKDIR /app
 # Add poetry to PATH
 ENV PATH="/root/.local/bin:${PATH}"
 
-# Copy dependency definitions
-COPY pyproject.toml poetry.lock ./
+# Copy dependency definitions (poetry.lock may not exist)
+COPY pyproject.toml ./
+COPY poetry.lock* ./
 
 # Install dependencies, including all optional groups
+# Generate lock file if it doesn't exist
 RUN poetry config virtualenvs.create false && \
+    poetry lock --no-update 2>/dev/null || true && \
     poetry install --with server,client,dev --no-root
 
 # Copy the rest of the application code
