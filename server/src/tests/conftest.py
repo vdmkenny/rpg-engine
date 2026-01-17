@@ -4,10 +4,12 @@ Test fixtures and configuration for the RPG server tests.
 
 import pytest
 import pytest_asyncio
+from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Callable, Awaitable, Dict, Any, Optional
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.future import select
 
 from server.src.main import app
 from server.src.core.database import get_db, get_valkey
@@ -270,3 +272,43 @@ def create_expired_token() -> Callable[[str], str]:
         )
     
     return _create_expired_token
+
+
+@pytest_asyncio.fixture
+def set_player_banned(
+    session: AsyncSession,
+) -> Callable[[str], Awaitable[None]]:
+    """
+    Fixture factory to ban a player by username.
+    """
+    async def _set_player_banned(username: str) -> None:
+        result = await session.execute(
+            select(Player).where(Player.username == username)
+        )
+        player = result.scalar_one()
+        player.is_banned = True
+        await session.commit()
+
+    return _set_player_banned
+
+
+@pytest_asyncio.fixture
+def set_player_timeout(
+    session: AsyncSession,
+) -> Callable[[str, timedelta], Awaitable[None]]:
+    """
+    Fixture factory to set a timeout on a player.
+    
+    Args:
+        username: Player to timeout
+        duration: How long the timeout should last from now
+    """
+    async def _set_player_timeout(username: str, duration: timedelta) -> None:
+        result = await session.execute(
+            select(Player).where(Player.username == username)
+        )
+        player = result.scalar_one()
+        player.timeout_until = datetime.now(timezone.utc) + duration
+        await session.commit()
+
+    return _set_player_timeout

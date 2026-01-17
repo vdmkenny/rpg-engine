@@ -69,9 +69,9 @@ class Settings(BaseSettings):
     )
 
     # Map settings from config.yml with fallbacks
-    DEFAULT_MAP: str = "samplemap"
-    DEFAULT_SPAWN_X: int = 10
-    DEFAULT_SPAWN_Y: int = 10
+    DEFAULT_MAP: str = game_config.get("game", {}).get("spawn", {}).get("map_id", "samplemap")
+    DEFAULT_SPAWN_X: int = int(game_config.get("game", {}).get("spawn", {}).get("x", 25))
+    DEFAULT_SPAWN_Y: int = int(game_config.get("game", {}).get("spawn", {}).get("y", 25))
     COLLISION_LAYER_NAMES: List[str] = ["tree", "building", "water", "farm", "obstacles", "collision"]
 
     # Valkey settings
@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     # Logging settings
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
+    # Database settings
+    DATABASE_ECHO: bool = os.getenv("DATABASE_ECHO", "").lower() in ("true", "1", "yes")
 
     @model_validator(mode="after")
     def validate_jwt_secret(self) -> "Settings":

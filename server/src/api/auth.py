@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -107,6 +107,37 @@ async def login_for_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Check if player is banned
+    if player.is_banned:
+        logger.warning(
+            "Banned player attempted login",
+            extra={"username": form_data.username},
+        )
+        metrics.track_auth_attempt("login", "failure")
+        metrics.track_auth_failure("banned")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is banned",
+        )
+
+    # Check if player is timed out
+    if player.timeout_until:
+        # Handle both timezone-aware and naive datetimes (SQLite vs PostgreSQL)
+        timeout_until = player.timeout_until
+        if timeout_until.tzinfo is None:
+            timeout_until = timeout_until.replace(tzinfo=timezone.utc)
+        if timeout_until > datetime.now(timezone.utc):
+            logger.warning(
+                "Timed out player attempted login",
+                extra={"username": form_data.username, "timeout_until": str(player.timeout_until)},
+            )
+            metrics.track_auth_attempt("login", "failure")
+            metrics.track_auth_failure("timeout")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Account is timed out until {player.timeout_until.isoformat()}",
+            )
 
     access_token_expires = timedelta(minutes=30)
     access_token = create_access_token(

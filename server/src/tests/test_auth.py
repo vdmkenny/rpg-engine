@@ -5,9 +5,11 @@ Covers:
 - Registration (happy path, duplicates, validation)
 - Login (happy path, wrong credentials)
 - Security tests (SQL injection)
+- Ban and timeout enforcement
 """
 
 import pytest
+from datetime import timedelta
 from httpx import AsyncClient
 
 
@@ -244,3 +246,50 @@ class TestHealthEndpoints:
         
         assert response.status_code == 200
         assert "version" in response.json()
+
+
+class TestBanAndTimeout:
+    """Tests for ban and timeout enforcement during login."""
+
+    @pytest.mark.asyncio
+    async def test_login_banned_user(self, client: AsyncClient, create_test_player, set_player_banned):
+        """Banned user cannot login."""
+        await create_test_player("banneduser", "password123")
+        await set_player_banned("banneduser")
+
+        response = await client.post(
+            "/auth/login",
+            data={"username": "banneduser", "password": "password123"},
+        )
+
+        assert response.status_code == 403
+        assert "banned" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_login_timed_out_user(self, client: AsyncClient, create_test_player, set_player_timeout):
+        """Timed out user cannot login."""
+        await create_test_player("timedoutuser", "password123")
+        await set_player_timeout("timedoutuser", timedelta(hours=1))
+
+        response = await client.post(
+            "/auth/login",
+            data={"username": "timedoutuser", "password": "password123"},
+        )
+
+        assert response.status_code == 403
+        assert "timed out" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_login_expired_timeout_succeeds(self, client: AsyncClient, create_test_player, set_player_timeout):
+        """User with expired timeout can login."""
+        await create_test_player("expiredtimeout", "password123")
+        # Set timeout to 1 hour in the past (already expired)
+        await set_player_timeout("expiredtimeout", timedelta(hours=-1))
+
+        response = await client.post(
+            "/auth/login",
+            data={"username": "expiredtimeout", "password": "password123"},
+        )
+
+        assert response.status_code == 200
+        assert "access_token" in response.json()

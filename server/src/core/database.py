@@ -21,7 +21,7 @@ from glide import GlideClient, GlideClientConfiguration, NodeAddress
 from server.src.core.config import settings
 
 # --- PostgreSQL Database Setup ---
-engine = create_async_engine(settings.DATABASE_URL, echo=True, future=True)
+engine = create_async_engine(settings.DATABASE_URL, echo=settings.DATABASE_ECHO, future=True)
 
 AsyncSessionLocal = sessionmaker(
     autocommit=False, autoflush=False, bind=engine, class_=AsyncSession
@@ -41,7 +41,7 @@ def reset_engine():
     """
     global engine, AsyncSessionLocal
     # Create a fresh engine (old connections will be garbage collected)
-    engine = create_async_engine(settings.DATABASE_URL, echo=True, future=True)
+    engine = create_async_engine(settings.DATABASE_URL, echo=settings.DATABASE_ECHO, future=True)
     AsyncSessionLocal = sessionmaker(
         autocommit=False, autoflush=False, bind=engine, class_=AsyncSession
     )

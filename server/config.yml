@@ -14,6 +14,6 @@ game:
   
   # Default spawn configuration for new players
   spawn:
-    map_id: "obstacle_test_map"
+    map_id: "samplemap"
     x: 25
     y: 25

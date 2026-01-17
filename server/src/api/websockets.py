@@ -4,6 +4,7 @@ WebSocket router for real-time game communication.
 
 import json
 import time
+from datetime import datetime, timezone
 from typing import Optional, Dict
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, status
 from jose import JWTError, jwt
@@ -76,7 +77,7 @@ async def handle_chat_message(
         sender_pos = {k.decode(): v.decode() for k, v in sender_pos_raw.items()}
         sender_x = int(sender_pos.get("x", 0))
         sender_y = int(sender_pos.get("y", 0))
-        sender_map = sender_pos.get("map_id", "large_test_map")
+        sender_map = sender_pos.get("map_id", settings.DEFAULT_MAP)
         
         # Create the chat message to broadcast
         chat_response = GameMessage(
@@ -113,7 +114,7 @@ async def handle_chat_message(
                 recipient_pos = {k.decode(): v.decode() for k, v in recipient_pos_raw.items()}
                 recipient_x = int(recipient_pos.get("x", 0))
                 recipient_y = int(recipient_pos.get("y", 0))
-                recipient_map = recipient_pos.get("map_id", "large_test_map")
+                recipient_map = recipient_pos.get("map_id", settings.DEFAULT_MAP)
                 
                 # Check if on same map and within range (include sender too)
                 if recipient_map == sender_map:
@@ -172,8 +173,8 @@ async def handle_move_intent(
         current_x = int(current_pos.get("x", 0))
         current_y = int(current_pos.get("y", 0))
         map_id = current_pos.get(
-            "map_id", "large_test_map"
-        )  # Default to large_test_map
+            "map_id", settings.DEFAULT_MAP
+        )
         last_move_time = float(current_pos.get("last_move_time", 0))
 
         # Check movement cooldown (server-side rate limiting)
@@ -319,7 +320,7 @@ async def handle_chunk_request(
             return
 
         player_data = {k.decode(): v.decode() for k, v in player_data_raw.items()}
-        current_map = player_data.get("map_id", "test_map")
+        current_map = player_data.get("map_id", settings.DEFAULT_MAP)
         current_x = int(player_data.get("x", 0))
         current_y = int(player_data.get("y", 0))
 
@@ -372,7 +373,7 @@ async def handle_chunk_request(
                 type=MessageType.ERROR, payload={"message": f"Map '{map_id}' not found"}
             )
             await websocket.send_bytes(
-                msgpack.packb(error_message.dict(), use_bin_type=True)
+                msgpack.packb(error_message.model_dump(), use_bin_type=True)
             )
             return
 
@@ -410,14 +411,14 @@ async def handle_chunk_request(
             type=MessageType.CHUNK_DATA,
             payload=ChunkDataPayload(
                 map_id=map_id,
-                chunks=[chunk.dict() for chunk in chunk_data_list],
+                chunks=[chunk.model_dump() for chunk in chunk_data_list],
                 player_x=center_x,
                 player_y=center_y,
-            ).dict(),
+            ).model_dump(),
         )
 
         await websocket.send_bytes(
-            msgpack.packb(chunk_response.dict(), use_bin_type=True)
+            msgpack.packb(chunk_response.model_dump(), use_bin_type=True)
         )
         metrics.track_websocket_message("CHUNK_DATA", "outbound")
 
@@ -444,7 +445,7 @@ async def handle_chunk_request(
             payload={"message": "Failed to process chunk request"},
         )
         await websocket.send_bytes(
-            msgpack.packb(error_message.dict(), use_bin_type=True)
+            msgpack.packb(error_message.model_dump(), use_bin_type=True)
         )
 
 
@@ -463,7 +464,7 @@ async def sync_player_to_db(username: str, valkey: GlideClient, db: AsyncSession
     try:
         x_coord = int(player_data.get("x", 0))
         y_coord = int(player_data.get("y", 0))
-        map_id = player_data.get("map_id", "test_map")  # Use string map ID directly
+        map_id = player_data.get("map_id", settings.DEFAULT_MAP)
 
         query = select(Player).where(Player.username == username)
         result = await db.execute(query)
@@ -543,6 +544,33 @@ async def websocket_endpoint(
             raise WebSocketDisconnect(
                 code=status.WS_1008_POLICY_VIOLATION, reason="Player not found"
             )
+
+        # Check if player is banned
+        if player.is_banned:
+            logger.warning(
+                "Banned player attempted WebSocket connection",
+                extra={"username": username},
+            )
+            raise WebSocketDisconnect(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Account is banned",
+            )
+
+        # Check if player is timed out
+        if player.timeout_until:
+            # Handle both timezone-aware and naive datetimes (SQLite vs PostgreSQL)
+            timeout_until = player.timeout_until
+            if timeout_until.tzinfo is None:
+                timeout_until = timeout_until.replace(tzinfo=timezone.utc)
+            if timeout_until > datetime.now(timezone.utc):
+                logger.warning(
+                    "Timed out player attempted WebSocket connection",
+                    extra={"username": username, "timeout_until": str(player.timeout_until)},
+                )
+                raise WebSocketDisconnect(
+                    code=status.WS_1008_POLICY_VIOLATION,
+                    reason=f"Account is timed out until {player.timeout_until.isoformat()}",
+                )
 
         # Validate player position and use spawn if invalid
         validated_map, validated_x, validated_y = map_manager.validate_player_position(
@@ -731,7 +759,7 @@ async def websocket_endpoint(
                     "message_type": message.type.value,
                 },
             )
-            packed_message = msgpack.packb(message.dict(), use_bin_type=True)
+            packed_message = msgpack.packb(message.model_dump(), use_bin_type=True)
             if packed_message:
                 await manager.broadcast_to_map(validated_map, packed_message)
                 metrics.track_websocket_message(message.type.value, "broadcast")

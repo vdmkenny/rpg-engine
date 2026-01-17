@@ -29,9 +29,9 @@ class Player(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Position (will also be in Valkey for hot access)
-    x_coord = Column(Integer, default=5)  # Default spawn x coordinate
-    y_coord = Column(Integer, default=5)  # Default spawn y coordinate
-    map_id = Column(String, default="test_map")  # Map filename without .tmx extension
+    x_coord = Column(Integer, nullable=False)
+    y_coord = Column(Integer, nullable=False)
+    map_id = Column(String, nullable=False)
 
     # Relationships
     skills = relationship(
@@ -42,9 +42,6 @@ class Player(Base):
         defaults = {
             "role": PlayerRole.PLAYER,
             "is_banned": False,
-            "x_coord": 5,
-            "y_coord": 5,
-            "map_id": "test_map",
         }
         for key, value in defaults.items():
             kwargs.setdefault(key, value)
