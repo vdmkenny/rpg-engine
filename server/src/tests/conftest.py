@@ -35,13 +35,16 @@ class FakeValkey:
     Mimics the behavior of a real Valkey client including:
     - Returning bytes for keys and values (like real Valkey)
     - Maintaining state across operations
-    - Supporting hash operations (hset, hgetall, hget)
+    - Supporting hash operations (hset, hgetall, hget, hdel)
     - Supporting key operations (delete, exists, keys)
+    - Supporting set operations (sadd, srem, smembers)
+    - Supporting string operations (set, get, incr)
     """
     
     def __init__(self):
         self._data: Dict[str, Dict[str, str]] = {}
         self._string_data: Dict[str, str] = {}
+        self._set_data: Dict[str, set] = {}
     
     async def hset(self, key: str, mapping: Dict[str, str]) -> int:
         """Set multiple hash fields."""
@@ -65,6 +68,18 @@ class FakeValkey:
         # Return bytes like real Valkey does
         return {k.encode(): v.encode() for k, v in self._data[key].items()}
     
+    async def hdel(self, key: str, fields: list) -> int:
+        """Delete one or more hash fields."""
+        if key not in self._data:
+            return 0
+        deleted = 0
+        for field in fields:
+            field_str = str(field)
+            if field_str in self._data[key]:
+                del self._data[key][field_str]
+                deleted += 1
+        return deleted
+    
     async def delete(self, key: str) -> int:
         """Delete a key."""
         deleted = 0
@@ -74,11 +89,14 @@ class FakeValkey:
         if key in self._string_data:
             del self._string_data[key]
             deleted += 1
+        if key in self._set_data:
+            del self._set_data[key]
+            deleted += 1
         return deleted
     
     async def exists(self, key: str) -> int:
         """Check if a key exists."""
-        if key in self._data or key in self._string_data:
+        if key in self._data or key in self._string_data or key in self._set_data:
             return 1
         return 0
     
@@ -93,22 +111,75 @@ class FakeValkey:
             return self._string_data[key].encode()
         return None
     
+    async def incr(self, key: str) -> int:
+        """Increment the integer value of a key by one."""
+        if key in self._string_data:
+            value = int(self._string_data[key])
+        else:
+            value = 0
+        value += 1
+        self._string_data[key] = str(value)
+        return value
+    
     async def keys(self, pattern: str = "*") -> list:
         """Get keys matching a pattern."""
         import fnmatch
-        all_keys = list(self._data.keys()) + list(self._string_data.keys())
+        all_keys = list(self._data.keys()) + list(self._string_data.keys()) + list(self._set_data.keys())
         if pattern == "*":
             return [k.encode() for k in all_keys]
         return [k.encode() for k in all_keys if fnmatch.fnmatch(k, pattern)]
+    
+    # Set operations
+    async def sadd(self, key: str, members: list) -> int:
+        """Add one or more members to a set."""
+        if key not in self._set_data:
+            self._set_data[key] = set()
+        added = 0
+        for member in members:
+            member_str = str(member)
+            if member_str not in self._set_data[key]:
+                self._set_data[key].add(member_str)
+                added += 1
+        return added
+    
+    async def srem(self, key: str, members: list) -> int:
+        """Remove one or more members from a set."""
+        if key not in self._set_data:
+            return 0
+        removed = 0
+        for member in members:
+            member_str = str(member)
+            if member_str in self._set_data[key]:
+                self._set_data[key].remove(member_str)
+                removed += 1
+        return removed
+    
+    async def smembers(self, key: str) -> set:
+        """Get all members of a set."""
+        if key not in self._set_data:
+            return set()
+        # Return bytes like real Valkey does
+        return {m.encode() for m in self._set_data[key]}
+    
+    async def sismember(self, key: str, member: str) -> int:
+        """Check if a member exists in a set."""
+        if key not in self._set_data:
+            return 0
+        return 1 if str(member) in self._set_data[key] else 0
     
     def clear(self):
         """Clear all data (useful between tests)."""
         self._data.clear()
         self._string_data.clear()
+        self._set_data.clear()
     
     def get_hash_data(self, key: str) -> Dict[str, str]:
         """Direct access to hash data for test assertions."""
         return self._data.get(key, {})
+    
+    def get_set_data(self, key: str) -> set:
+        """Direct access to set data for test assertions."""
+        return self._set_data.get(key, set())
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)

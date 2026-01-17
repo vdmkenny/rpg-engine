@@ -1,9 +1,14 @@
 """
 Service for managing player inventory.
+
+Supports both database-only and Valkey-first operations:
+- When a player is online, inventory data is in Valkey for fast access
+- When a player is offline, inventory data is only in the database
+- Pass state_manager parameter to use Valkey-first operations during gameplay
 """
 
 import logging
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +35,9 @@ from ..schemas.item import (
     MergeStacksResult,
 )
 from .item_service import ItemService
+
+if TYPE_CHECKING:
+    from .game_state_manager import GameStateManager
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +209,7 @@ class InventoryService:
         item_id: int,
         quantity: int = 1,
         durability: Optional[int] = None,
+        state_manager: Optional["GameStateManager"] = None,
     ) -> AddItemResult:
         """
         Add an item to a player's inventory.
@@ -215,6 +224,7 @@ class InventoryService:
             item_id: Item database ID
             quantity: Number of items to add
             durability: Current durability (uses max if None)
+            state_manager: Optional GameStateManager for online player operations
 
         Returns:
             AddItemResult with success status and details
@@ -225,7 +235,7 @@ class InventoryService:
                 message="Quantity must be positive",
             )
 
-        # Get item info
+        # Get item info (always from DB for metadata)
         item = await ItemService.get_item_by_id(db, item_id)
         if not item:
             return AddItemResult(
@@ -237,6 +247,129 @@ class InventoryService:
         if durability is None and item.max_durability is not None:
             durability = item.max_durability
 
+        # Use Valkey-first path if player is online
+        if state_manager and state_manager.is_online(player_id):
+            return await InventoryService._add_item_valkey(
+                state_manager, player_id, item, quantity, durability
+            )
+
+        # Database-only path (for registration, offline operations, etc.)
+        return await InventoryService._add_item_db(
+            db, player_id, item, quantity, durability
+        )
+
+    @staticmethod
+    async def _add_item_valkey(
+        state_manager: "GameStateManager",
+        player_id: int,
+        item: Item,
+        quantity: int,
+        durability: Optional[int],
+    ) -> AddItemResult:
+        """Valkey-first implementation of add_item using GameStateManager."""
+        remaining_quantity = quantity
+        first_slot = None
+        max_slots = settings.INVENTORY_MAX_SLOTS
+
+        # Get current inventory from Valkey via state manager
+        inventory = await state_manager.get_inventory(player_id)
+
+        # Try to stack with existing items
+        if item.max_stack_size > 1:
+            for slot, data in inventory.items():
+                if data["item_id"] == item.id:
+                    space_in_stack = item.max_stack_size - data["quantity"]
+                    if space_in_stack > 0:
+                        add_to_stack = min(remaining_quantity, space_in_stack)
+                        new_quantity = data["quantity"] + add_to_stack
+                        await state_manager.set_inventory_slot(
+                            player_id, slot,
+                            data["item_id"], new_quantity, data.get("durability")
+                        )
+                        remaining_quantity -= add_to_stack
+                        if first_slot is None:
+                            first_slot = slot
+
+                        logger.debug(
+                            "Added to existing stack (Valkey)",
+                            extra={
+                                "player_id": player_id,
+                                "slot": slot,
+                                "added": add_to_stack,
+                                "new_quantity": new_quantity,
+                            },
+                        )
+
+                    if remaining_quantity <= 0:
+                        break
+
+        # Add remaining items to new slots
+        used_slots = set(inventory.keys())
+        slot = 0
+        while remaining_quantity > 0:
+            # Find next free slot
+            while slot in used_slots and slot < max_slots:
+                slot += 1
+
+            if slot >= max_slots:
+                return AddItemResult(
+                    success=remaining_quantity < quantity,
+                    message="Inventory full" if remaining_quantity == quantity else "Partial add - inventory full",
+                    slot=first_slot,
+                    overflow_quantity=remaining_quantity,
+                )
+
+            # Determine quantity for this slot
+            slot_quantity = min(remaining_quantity, item.max_stack_size)
+
+            await state_manager.set_inventory_slot(
+                player_id, slot,
+                item.id, slot_quantity, durability
+            )
+
+            if first_slot is None:
+                first_slot = slot
+
+            used_slots.add(slot)
+            remaining_quantity -= slot_quantity
+            slot += 1
+
+            logger.debug(
+                "Added new inventory slot (Valkey)",
+                extra={
+                    "player_id": player_id,
+                    "slot": slot - 1,
+                    "item_id": item.id,
+                    "quantity": slot_quantity,
+                },
+            )
+
+        logger.info(
+            "Added item to inventory (Valkey)",
+            extra={
+                "player_id": player_id,
+                "item_id": item.id,
+                "quantity": quantity,
+                "first_slot": first_slot,
+            },
+        )
+
+        return AddItemResult(
+            success=True,
+            message="Item added to inventory",
+            slot=first_slot,
+            overflow_quantity=0,
+        )
+
+    @staticmethod
+    async def _add_item_db(
+        db: AsyncSession,
+        player_id: int,
+        item: Item,
+        quantity: int,
+        durability: Optional[int],
+    ) -> AddItemResult:
+        """Database-only implementation of add_item (original logic)."""
         remaining_quantity = quantity
         first_slot = None
 
@@ -246,7 +379,7 @@ class InventoryService:
             result = await db.execute(
                 select(PlayerInventory)
                 .where(PlayerInventory.player_id == player_id)
-                .where(PlayerInventory.item_id == item_id)
+                .where(PlayerInventory.item_id == item.id)
                 .options(selectinload(PlayerInventory.item))
                 .order_by(PlayerInventory.slot)
             )
@@ -291,7 +424,7 @@ class InventoryService:
 
             new_inv = PlayerInventory(
                 player_id=player_id,
-                item_id=item_id,
+                item_id=item.id,
                 slot=slot,
                 quantity=slot_quantity,
                 current_durability=durability,
@@ -309,7 +442,7 @@ class InventoryService:
                 extra={
                     "player_id": player_id,
                     "slot": slot,
-                    "item_id": item_id,
+                    "item_id": item.id,
                     "quantity": slot_quantity,
                 },
             )
@@ -320,7 +453,7 @@ class InventoryService:
             "Added item to inventory",
             extra={
                 "player_id": player_id,
-                "item_id": item_id,
+                "item_id": item.id,
                 "quantity": quantity,
                 "first_slot": first_slot,
             },
@@ -339,6 +472,7 @@ class InventoryService:
         player_id: int,
         slot: int,
         quantity: int = 1,
+        state_manager: Optional["GameStateManager"] = None,
     ) -> RemoveItemResult:
         """
         Remove items from a specific inventory slot.
@@ -348,6 +482,7 @@ class InventoryService:
             player_id: Player ID
             slot: Slot number to remove from
             quantity: Number of items to remove
+            state_manager: Optional GameStateManager for online player operations
 
         Returns:
             RemoveItemResult with success status
@@ -359,6 +494,13 @@ class InventoryService:
                 removed_quantity=0,
             )
 
+        # Use Valkey-first path if player is online
+        if state_manager and state_manager.is_online(player_id):
+            return await InventoryService._remove_item_valkey(
+                state_manager, player_id, slot, quantity
+            )
+
+        # Database-only path
         inv = await InventoryService.get_item_at_slot(db, player_id, slot)
         if not inv:
             return RemoveItemResult(
@@ -385,6 +527,56 @@ class InventoryService:
 
         logger.info(
             "Removed item from inventory",
+            extra={
+                "player_id": player_id,
+                "slot": slot,
+                "quantity": quantity,
+            },
+        )
+
+        return RemoveItemResult(
+            success=True,
+            message="Item removed",
+            removed_quantity=quantity,
+        )
+
+    @staticmethod
+    async def _remove_item_valkey(
+        state_manager: "GameStateManager",
+        player_id: int,
+        slot: int,
+        quantity: int,
+    ) -> RemoveItemResult:
+        """Valkey-first implementation of remove_item using GameStateManager."""
+        slot_data = await state_manager.get_inventory_slot(player_id, slot)
+
+        if not slot_data:
+            return RemoveItemResult(
+                success=False,
+                message="Slot is empty",
+                removed_quantity=0,
+            )
+
+        if slot_data["quantity"] < quantity:
+            return RemoveItemResult(
+                success=False,
+                message=f"Not enough items (have {slot_data['quantity']}, need {quantity})",
+                removed_quantity=0,
+            )
+
+        if slot_data["quantity"] == quantity:
+            # Remove entire stack
+            await state_manager.delete_inventory_slot(player_id, slot)
+        else:
+            # Reduce quantity
+            new_quantity = slot_data["quantity"] - quantity
+            await state_manager.set_inventory_slot(
+                player_id, slot,
+                slot_data["item_id"], new_quantity, slot_data.get("durability")
+            )
+
+        logger.info(
+            "Removed item from inventory (Valkey)",
             extra={
                 "player_id": player_id,
                 "slot": slot,

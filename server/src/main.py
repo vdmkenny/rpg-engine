@@ -14,6 +14,7 @@ from server.src.services.map_service import get_map_manager
 from server.src.core.database import get_valkey, AsyncSessionLocal
 from server.src.game.game_loop import game_loop, cleanup_disconnected_player
 from server.src.services.ground_item_service import GroundItemService
+from server.src.services.batch_sync_service import BatchSyncService
 from common.src.protocol import MessageType, GameMessage, ServerShutdownPayload
 
 # Initialize logging and metrics as early as possible
@@ -79,6 +80,35 @@ async def lifespan(app: FastAPI):
                 pass  # Client may already be disconnected
     
     logger.info("Sent SERVER_SHUTDOWN to all clients")
+    
+    # Sync all active player state to database before shutdown
+    try:
+        async with AsyncSessionLocal() as db:
+            # Build map of active players from the connection manager
+            active_players = {}
+            for map_id, map_connections in websockets.manager.connections_by_map.items():
+                for username in map_connections.keys():
+                    # Get player_id from Valkey
+                    player_key = f"player:{username}"
+                    player_data_raw = await valkey.hgetall(player_key)
+                    if player_data_raw:
+                        player_id_bytes = player_data_raw.get(b"player_id") or player_data_raw.get("player_id")
+                        if player_id_bytes:
+                            player_id = int(
+                                player_id_bytes.decode()
+                                if isinstance(player_id_bytes, bytes)
+                                else player_id_bytes
+                            )
+                            active_players[username] = player_id
+            
+            # Sync all active players
+            if active_players:
+                synced_count = await BatchSyncService.sync_all_players_on_shutdown(
+                    valkey, db, active_players
+                )
+                logger.info(f"Synced {synced_count} active players to database on shutdown")
+    except Exception as e:
+        logger.error(f"Error syncing players on shutdown: {e}", exc_info=True)
     
     # Sync ground items from Valkey to database before shutdown
     try:

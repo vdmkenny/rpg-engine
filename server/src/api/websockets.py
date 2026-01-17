@@ -24,11 +24,16 @@ from server.src.core.metrics import (
 )
 from server.src.core.items import InventorySortType, EquipmentSlot
 from server.src.models.player import Player
+from server.src.models.item import PlayerInventory, PlayerEquipment
+from server.src.models.skill import PlayerSkill, Skill
 from server.src.services.map_service import map_manager
 from server.src.services.inventory_service import InventoryService
 from server.src.services.equipment_service import EquipmentService
 from server.src.services.skill_service import SkillService
 from server.src.services.ground_item_service import GroundItemService
+from server.src.services.player_state_valkey_service import PlayerStateValkeyService
+from server.src.services.batch_sync_service import BatchSyncService
+from sqlalchemy.orm import selectinload
 from common.src.protocol import (
     GameMessage,
     MessageType,
@@ -1126,6 +1131,62 @@ async def websocket_endpoint(
                 "player_id": str(player.id),
             },
         )
+
+        # Load inventory to Valkey for hot access during gameplay
+        inventory_result = await db.execute(
+            select(PlayerInventory)
+            .where(PlayerInventory.player_id == player.id)
+            .options(selectinload(PlayerInventory.item))
+        )
+        inventory_items = [
+            {
+                "slot": inv.slot,
+                "item_id": inv.item_id,
+                "quantity": inv.quantity,
+                "current_durability": inv.current_durability,
+            }
+            for inv in inventory_result.scalars().all()
+        ]
+        await PlayerStateValkeyService.load_inventory_to_valkey(
+            valkey, player.id, inventory_items
+        )
+
+        # Load equipment to Valkey
+        equipment_result = await db.execute(
+            select(PlayerEquipment)
+            .where(PlayerEquipment.player_id == player.id)
+            .options(selectinload(PlayerEquipment.item))
+        )
+        equipment_items = [
+            {
+                "equipment_slot": eq.equipment_slot,
+                "item_id": eq.item_id,
+                "quantity": eq.quantity,
+                "current_durability": eq.current_durability,
+            }
+            for eq in equipment_result.scalars().all()
+        ]
+        await PlayerStateValkeyService.load_equipment_to_valkey(
+            valkey, player.id, equipment_items
+        )
+
+        # Load skills to Valkey
+        skills_result = await db.execute(
+            select(PlayerSkill, Skill)
+            .join(Skill)
+            .where(PlayerSkill.player_id == player.id)
+        )
+        skills = [
+            {
+                "skill_name": skill.name,
+                "skill_id": player_skill.skill_id,
+                "level": player_skill.current_level,
+                "experience": player_skill.experience,
+            }
+            for player_skill, skill in skills_result.all()
+        ]
+        await PlayerStateValkeyService.load_skills_to_valkey(valkey, player.id, skills)
+
         logger.info(
             "Player connected to WebSocket",
             extra={
@@ -1134,6 +1195,9 @@ async def websocket_endpoint(
                 "map_id": validated_map,
                 "current_hp": current_hp,
                 "max_hp": max_hp,
+                "inventory_slots": len(inventory_items),
+                "equipment_slots": len(equipment_items),
+                "skills_loaded": len(skills),
             },
         )
 
@@ -1398,9 +1462,28 @@ async def websocket_endpoint(
             # Get the player's map before disconnection
             player_map = manager.client_to_map.get(username)
 
-            # Sync data to DB and purge from Valkey on disconnect
-            await sync_player_to_db(username, valkey, db)
-            await valkey.delete(f"player:{username}")
+            # Get player_id from Valkey for sync
+            player_key = f"player:{username}"
+            player_data_raw = await valkey.hgetall(player_key)
+            player_id = None
+            if player_data_raw:
+                player_id_bytes = player_data_raw.get(b"player_id") or player_data_raw.get("player_id")
+                if player_id_bytes:
+                    player_id = int(
+                        player_id_bytes.decode()
+                        if isinstance(player_id_bytes, bytes)
+                        else player_id_bytes
+                    )
+
+            # Sync all player data to DB (position, inventory, equipment, skills)
+            if player_id:
+                await BatchSyncService.sync_single_player(valkey, db, player_id, username)
+            else:
+                # Fallback to legacy sync if player_id not found
+                await sync_player_to_db(username, valkey, db)
+
+            # Delete player position key (player state keys are deleted by sync_single_player)
+            await valkey.delete(player_key)
             logger.debug("Player cache purged", extra={"username": username})
 
             # Notify other players on the same map about player leaving

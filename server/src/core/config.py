@@ -168,6 +168,12 @@ class Settings(BaseSettings):
         game_config.get("game", {}).get("hp_regen", {}).get("interval_ticks", 200)
     )
 
+    # Database sync interval (in game ticks)
+    # All gameplay data is cached in Valkey and batch-synced to PostgreSQL at this interval
+    DB_SYNC_INTERVAL_TICKS: int = int(
+        game_config.get("game", {}).get("db_sync_interval_ticks", 200)
+    )
+
     # Death and respawn settings from config.yml
     DEATH_RESPAWN_DELAY: float = float(
         game_config.get("game", {}).get("death", {}).get("respawn_delay", 5.0)

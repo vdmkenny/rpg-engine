@@ -21,6 +21,8 @@ from server.src.core.metrics import (
 )
 from server.src.services.map_service import get_map_manager
 from server.src.services.ground_item_valkey_service import GroundItemValkeyService
+from server.src.services.batch_sync_service import BatchSyncService
+from server.src.core.database import AsyncSessionLocal
 from common.src.protocol import (
     GameMessage,
     MessageType,
@@ -349,6 +351,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
     global _global_tick_counter
     tick_interval = 1 / settings.GAME_TICK_RATE
     hp_regen_interval = settings.HP_REGEN_INTERVAL_TICKS
+    db_sync_interval = settings.DB_SYNC_INTERVAL_TICKS
 
     while True:
         loop_start_time = time.time()
@@ -358,6 +361,20 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
             
             # Increment global tick counter
             _global_tick_counter += 1
+
+            # Periodic batch sync of dirty data to database
+            if _global_tick_counter % db_sync_interval == 0:
+                try:
+                    async with AsyncSessionLocal() as db:
+                        await BatchSyncService.sync_all(valkey, db)
+                except Exception as sync_error:
+                    logger.error(
+                        "Batch sync failed",
+                        extra={
+                            "error": str(sync_error),
+                            "tick": _global_tick_counter,
+                        },
+                    )
 
             # Process each active map
             active_maps = list(manager.connections_by_map.keys())

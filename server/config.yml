@@ -2,8 +2,14 @@
 game:
   # The rate at which the game loop runs, in ticks per second.
   tick_rate: 20
-  # The interval, in ticks, at which player data is synced from Valkey to the database.
-  db_sync_interval_ticks: 200 # e.g., 200 ticks / 20 ticks/sec = 10 seconds
+  
+  # Interval in ticks between batch database syncs.
+  # All gameplay data (inventory, equipment, skills, ground items) is cached in
+  # Valkey and batch-written to PostgreSQL at this interval.
+  # 200 ticks at 20 TPS = sync every 10 seconds
+  # Lower values = more frequent saves, higher DB load
+  # Higher values = less DB load, more data loss on crash
+  db_sync_interval_ticks: 200
   
   # Movement configuration
   movement:
