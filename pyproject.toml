@@ -16,40 +16,40 @@ packages = [
 
 [tool.poetry.dependencies]
 python = "~3.12"
-pydantic = "2.11.9"
-msgpack = "1.1.1"
-websockets = "15.0.1"
+pydantic = "2.12.5"
+msgpack = "1.1.2"
+websockets = "16.0"
 
 [tool.poetry.group.server]
 optional = true
 
 [tool.poetry.group.server.dependencies]
-fastapi = "0.116.1"
-uvicorn = { version = "0.35.0", extras = ["standard"] }
-sqlalchemy = "2.0.43"
-alembic = "1.16.5"
-asyncpg = "0.30.0"
-psycopg2-binary = "2.9.9"
-valkey-glide = "1.3.0"
-pydantic-settings = "2.10.1"
+fastapi = "0.128.0"
+uvicorn = { version = "0.40.0", extras = ["standard"] }
+sqlalchemy = "2.0.45"
+alembic = "1.18.1"
+asyncpg = "0.31.0"
+psycopg2-binary = "2.9.11"
+valkey-glide = "2.2.5"
+pydantic-settings = "2.12.0"
 passlib = "^1.7.4"
 python-jose = { version = "3.5.0", extras = ["cryptography"] }
-python-multipart = "0.0.20"
+python-multipart = "0.0.21"
 pyyaml = "^6.0"
 pytmx = "^3.32"
-pygame = "2.6.0"
-prometheus-client = "^0.21.1"
-python-json-logger = "^2.0.7"
+pygame = "2.6.1"
+prometheus-client = "0.24.1"
+python-json-logger = "3.3.0"
 
 [tool.poetry.group.client]
 optional = true
 
 [tool.poetry.group.client.dependencies]
-pygame = "2.6.0"
-aiohttp = "3.10.5"
-pydantic = "2.11.9"
-msgpack = "1.1.1"
-websockets = "15.0.1"
+pygame = "2.6.1"
+aiohttp = "3.13.3"
+pydantic = "2.12.5"
+msgpack = "1.1.2"
+websockets = "16.0"
 
 [tool.poetry.group.dev]
 optional = true
@@ -60,4 +60,4 @@ pytest-asyncio = ">=1.2.0"
 pytest-xdist = ">=3.8.0"
 httpx = "0.28.1"
 Faker = ">=37.8.0"
-aiosqlite = "^0.19.0"
+aiosqlite = "0.22.1"
