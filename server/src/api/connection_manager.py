@@ -152,3 +152,10 @@ class ConnectionManager:
             except Exception:
                 # Ignore errors sending to disconnected/broken connections
                 pass
+
+    def clear(self):
+        """
+        Clear all connections. Used for test isolation.
+        """
+        self.connections_by_map.clear()
+        self.client_to_map.clear()

@@ -7,12 +7,8 @@ Covers:
 - Chunk requests (valid, security)
 - Game loop diff broadcasting
 
-These are integration tests that use the real app with TestClient.
-
-NOTE: Some integration tests have asyncpg connection pool isolation issues
-when running sequentially with Starlette's sync TestClient. Tests that require
-database registration (TestMovement, TestChat, TestChunkRequests) should be
-run individually or with test isolation fixtures.
+Integration tests use a single TestClient per class to avoid event loop issues
+with asyncpg connection pools.
 """
 
 import os
@@ -23,6 +19,8 @@ from typing import Dict, Any
 from starlette.testclient import TestClient
 
 from server.src.main import app
+from server.src.core.database import get_valkey, reset_engine
+from server.src.api.websockets import manager
 from server.src.game.game_loop import (
     get_visible_entities,
     compute_entity_diff,
@@ -32,6 +30,7 @@ from server.src.game.game_loop import (
     player_chunk_positions,
 )
 from common.src.protocol import MessageType, Direction
+from server.src.tests.conftest import FakeValkey
 
 
 # Skip WebSocket integration tests unless RUN_INTEGRATION_TESTS is set
@@ -40,11 +39,17 @@ SKIP_WS_INTEGRATION = pytest.mark.skipif(
     reason="WebSocket integration tests require RUN_INTEGRATION_TESTS=1"
 )
 
-# Mark for tests that have asyncpg connection pool issues when run in sequence
-# These tests pass when run individually
-FLAKY_DB_INTEGRATION = pytest.mark.skip(
-    reason="Flaky due to asyncpg connection pool isolation with TestClient - run individually"
-)
+
+# Global FakeValkey instance for tests
+_test_valkey: FakeValkey | None = None
+
+
+def get_test_valkey() -> FakeValkey:
+    """Get or create the test valkey instance."""
+    global _test_valkey
+    if _test_valkey is None:
+        _test_valkey = FakeValkey()
+    return _test_valkey
 
 
 def unique_username(prefix: str = "user") -> str:
@@ -53,16 +58,21 @@ def unique_username(prefix: str = "user") -> str:
 
 
 def register_and_login(client, username: str, password: str = "password123") -> str:
-    """Register a user and return their JWT token."""
+    """Register a user via API and return their JWT token.
+    
+    Uses the real PostgreSQL database configured via DATABASE_URL.
+    """
+    # Register the user
     client.post(
         "/auth/register",
         json={"username": username, "password": password},
     )
-    response = client.post(
+    # Login to get the token
+    login_response = client.post(
         "/auth/login",
         data={"username": username, "password": password},
     )
-    return response.json()["access_token"]
+    return login_response.json()["access_token"]
 
 
 def authenticate_websocket(websocket, token: str) -> Dict[str, Any]:
@@ -87,152 +97,211 @@ def authenticate_websocket(websocket, token: str) -> Dict[str, Any]:
     return response
 
 
+def receive_message_of_type(
+    websocket, expected_types: list[str], max_attempts: int = 5
+) -> Dict[str, Any]:
+    """Receive messages until we get one of the expected types.
+    
+    The game loop may send GAME_STATE_UPDATE messages at any time, so we need
+    to consume them while waiting for specific responses.
+    """
+    for _ in range(max_attempts):
+        response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
+        if response["type"] in expected_types:
+            return response
+        # Skip GAME_STATE_UPDATE messages from game loop
+        if response["type"] == MessageType.GAME_STATE_UPDATE.value:
+            continue
+        # Unexpected message type - return it for test to handle
+        return response
+    raise TimeoutError(
+        f"Did not receive expected message types {expected_types} after {max_attempts} attempts"
+    )
+
+
+@pytest.fixture(scope="class")
+def integration_client():
+    """
+    Create a TestClient for each test class.
+    
+    Using class scope ensures each test class gets its own event loop context,
+    avoiding asyncpg connection pool issues when background tasks from one
+    class try to run in another class's event loop.
+    """
+    # Reset engine to ensure fresh connections for this class
+    reset_engine()
+    
+    # Clear any state from previous test runs
+    manager.clear()
+    player_visible_state.clear()
+    player_chunk_positions.clear()
+    
+    # Set up FakeValkey override
+    test_valkey = get_test_valkey()
+    test_valkey.clear()
+    
+    async def override_get_valkey():
+        return test_valkey
+    
+    app.dependency_overrides[get_valkey] = override_get_valkey
+    
+    with TestClient(app) as client:
+        yield client
+    
+    # Cleanup after class completes
+    manager.clear()
+    player_visible_state.clear()
+    player_chunk_positions.clear()
+    app.dependency_overrides.clear()
+
+
 @SKIP_WS_INTEGRATION
 class TestMovement:
     """Tests for player movement functionality."""
 
-    @FLAKY_DB_INTEGRATION
-    def test_move_valid_direction(self):
+    def test_move_valid_direction(self, integration_client):
         """Valid movement should return GAME_STATE_UPDATE."""
-        with TestClient(app) as client:
-            username = unique_username("move")
-            token = register_and_login(client, username)
+        client = integration_client
+        username = unique_username("move")
+        token = register_and_login(client, username)
+        
+        with client.websocket_connect("/ws") as websocket:
+            welcome = authenticate_websocket(websocket, token)
+            assert welcome["type"] == MessageType.WELCOME.value
             
-            with client.websocket_connect("/ws") as websocket:
-                welcome = authenticate_websocket(websocket, token)
-                assert welcome["type"] == MessageType.WELCOME.value
-                
-                # Send move intent
-                move_message = {
-                    "type": MessageType.MOVE_INTENT.value,
-                    "payload": {"direction": Direction.DOWN.value},
-                }
-                websocket.send_bytes(msgpack.packb(move_message, use_bin_type=True))
-                
-                # Should receive GAME_STATE_UPDATE confirming the move
-                response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
-                assert response["type"] == MessageType.GAME_STATE_UPDATE.value
-                
-                # The response should have a valid payload structure
-                assert "payload" in response
+            # Send move intent
+            move_message = {
+                "type": MessageType.MOVE_INTENT.value,
+                "payload": {"direction": Direction.DOWN.value},
+            }
+            websocket.send_bytes(msgpack.packb(move_message, use_bin_type=True))
+            
+            # Should receive GAME_STATE_UPDATE confirming the move
+            response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
+            assert response["type"] == MessageType.GAME_STATE_UPDATE.value
+            
+            # The response should have a valid payload structure
+            assert "payload" in response
 
-    @FLAKY_DB_INTEGRATION
-    def test_move_invalid_direction(self):
+    def test_move_invalid_direction(self, integration_client):
         """Invalid direction should be rejected."""
-        with TestClient(app) as client:
-            username = unique_username("invaliddir")
-            token = register_and_login(client, username)
+        client = integration_client
+        username = unique_username("invaliddir")
+        token = register_and_login(client, username)
+        
+        with client.websocket_connect("/ws") as websocket:
+            authenticate_websocket(websocket, token)
             
-            with client.websocket_connect("/ws") as websocket:
-                authenticate_websocket(websocket, token)
-                
-                # Send invalid direction
-                move_message = {
-                    "type": MessageType.MOVE_INTENT.value,
-                    "payload": {"direction": "INVALID_DIRECTION"},
-                }
-                websocket.send_bytes(msgpack.packb(move_message, use_bin_type=True))
-                
-                # Should receive error or the server should handle gracefully
-                response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
-                # Accept either ERROR or no crash
-                assert response["type"] in [
-                    MessageType.ERROR.value,
-                    MessageType.GAME_STATE_UPDATE.value,
-                ]
+            # Send invalid direction
+            move_message = {
+                "type": MessageType.MOVE_INTENT.value,
+                "payload": {"direction": "INVALID_DIRECTION"},
+            }
+            websocket.send_bytes(msgpack.packb(move_message, use_bin_type=True))
+            
+            # Should receive error or the server should handle gracefully
+            response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
+            # Accept either ERROR or no crash
+            assert response["type"] in [
+                MessageType.ERROR.value,
+                MessageType.GAME_STATE_UPDATE.value,
+            ]
 
 
 @SKIP_WS_INTEGRATION
 class TestChat:
     """Tests for chat functionality."""
 
-    @FLAKY_DB_INTEGRATION
-    def test_chat_send_message(self):
+    def test_chat_send_message(self, integration_client):
         """Sending a chat message should work."""
-        with TestClient(app) as client:
-            username = unique_username("chat")
-            token = register_and_login(client, username)
+        client = integration_client
+        username = unique_username("chat")
+        token = register_and_login(client, username)
+        
+        with client.websocket_connect("/ws") as websocket:
+            authenticate_websocket(websocket, token)
             
-            with client.websocket_connect("/ws") as websocket:
-                authenticate_websocket(websocket, token)
-                
-                # Send chat message
-                chat_message = {
-                    "type": MessageType.SEND_CHAT_MESSAGE.value,
-                    "payload": {
-                        "message": "Hello, world!",
-                        "channel": "local",
-                    },
-                }
-                websocket.send_bytes(msgpack.packb(chat_message, use_bin_type=True))
-                
-                # Should receive the chat message back
-                response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
-                assert response["type"] == MessageType.NEW_CHAT_MESSAGE.value
-                assert response["payload"]["message"] == "Hello, world!"
+            # Send chat message
+            chat_message = {
+                "type": MessageType.SEND_CHAT_MESSAGE.value,
+                "payload": {
+                    "message": "Hello, world!",
+                    "channel": "local",
+                },
+            }
+            websocket.send_bytes(msgpack.packb(chat_message, use_bin_type=True))
+            
+            # Should receive the chat message back
+            response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
+            assert response["type"] == MessageType.NEW_CHAT_MESSAGE.value
+            assert response["payload"]["message"] == "Hello, world!"
 
 
 @SKIP_WS_INTEGRATION
 class TestChunkRequests:
     """Tests for chunk request functionality."""
 
-    @FLAKY_DB_INTEGRATION
-    def test_chunk_request_valid(self):
+    def test_chunk_request_valid(self, integration_client):
         """Valid chunk request should return chunk data."""
-        with TestClient(app) as client:
-            username = unique_username("chunk")
-            token = register_and_login(client, username)
+        client = integration_client
+        username = unique_username("chunk")
+        token = register_and_login(client, username)
+        
+        with client.websocket_connect("/ws") as websocket:
+            authenticate_websocket(websocket, token)
             
-            with client.websocket_connect("/ws") as websocket:
-                authenticate_websocket(websocket, token)
-                
-                # Request chunks
-                chunk_request = {
-                    "type": MessageType.REQUEST_CHUNKS.value,
-                    "payload": {
-                        "map_id": "samplemap",
-                        "center_x": 10,
-                        "center_y": 10,
-                        "radius": 1,
-                    },
-                }
-                websocket.send_bytes(msgpack.packb(chunk_request, use_bin_type=True))
-                
-                # Should receive chunk data
-                response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
-                assert response["type"] in [
-                    MessageType.CHUNK_DATA.value,
-                    MessageType.ERROR.value,  # Acceptable if map setup differs
-                ]
+            # Request chunks
+            chunk_request = {
+                "type": MessageType.REQUEST_CHUNKS.value,
+                "payload": {
+                    "map_id": "samplemap",
+                    "center_x": 10,
+                    "center_y": 10,
+                    "radius": 1,
+                },
+            }
+            websocket.send_bytes(msgpack.packb(chunk_request, use_bin_type=True))
+            
+            # Should receive chunk data (may need to skip GAME_STATE_UPDATEs)
+            response = receive_message_of_type(
+                websocket,
+                [MessageType.CHUNK_DATA.value, MessageType.ERROR.value],
+            )
+            assert response["type"] in [
+                MessageType.CHUNK_DATA.value,
+                MessageType.ERROR.value,  # Acceptable if map setup differs
+            ]
 
-    @FLAKY_DB_INTEGRATION
-    def test_chunk_request_excessive_radius(self):
+    def test_chunk_request_excessive_radius(self, integration_client):
         """Chunk request with radius > 5 should be clamped or rejected."""
-        with TestClient(app) as client:
-            username = unique_username("bigchunk")
-            token = register_and_login(client, username)
+        client = integration_client
+        username = unique_username("bigchunk")
+        token = register_and_login(client, username)
+        
+        with client.websocket_connect("/ws") as websocket:
+            authenticate_websocket(websocket, token)
             
-            with client.websocket_connect("/ws") as websocket:
-                authenticate_websocket(websocket, token)
-                
-                # Request chunks with excessive radius
-                chunk_request = {
-                    "type": MessageType.REQUEST_CHUNKS.value,
-                    "payload": {
-                        "map_id": "samplemap",
-                        "center_x": 10,
-                        "center_y": 10,
-                        "radius": 100,  # Way too large
-                    },
-                }
-                websocket.send_bytes(msgpack.packb(chunk_request, use_bin_type=True))
-                
-                # Should be rejected or clamped
-                response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
-                assert response["type"] in [
-                    MessageType.CHUNK_DATA.value,
-                    MessageType.ERROR.value,
-                ]
+            # Request chunks with excessive radius
+            chunk_request = {
+                "type": MessageType.REQUEST_CHUNKS.value,
+                "payload": {
+                    "map_id": "samplemap",
+                    "center_x": 10,
+                    "center_y": 10,
+                    "radius": 100,  # Way too large
+                },
+            }
+            websocket.send_bytes(msgpack.packb(chunk_request, use_bin_type=True))
+            
+            # Should be rejected or clamped (may need to skip GAME_STATE_UPDATEs)
+            response = receive_message_of_type(
+                websocket,
+                [MessageType.CHUNK_DATA.value, MessageType.ERROR.value],
+            )
+            assert response["type"] in [
+                MessageType.CHUNK_DATA.value,
+                MessageType.ERROR.value,
+            ]
 
 
 # ============================================================================

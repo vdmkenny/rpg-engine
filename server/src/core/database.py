@@ -28,9 +28,29 @@ AsyncSessionLocal = sessionmaker(
 )
 
 
+def reset_engine():
+    """
+    Reset the database engine and session factory.
+    
+    This is needed for test isolation when using Starlette's TestClient,
+    which creates a new event loop for each test. Connections from the
+    previous event loop become invalid and must be discarded.
+    
+    Note: This function must be called synchronously before TestClient starts.
+    The old engine's connections will be garbage collected.
+    """
+    global engine, AsyncSessionLocal
+    # Create a fresh engine (old connections will be garbage collected)
+    engine = create_async_engine(settings.DATABASE_URL, echo=True, future=True)
+    AsyncSessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=engine, class_=AsyncSession
+    )
+
+
 async def get_db() -> AsyncSession:
     """
     Dependency to get a database session.
+    Uses the current AsyncSessionLocal which may be reset between tests.
     """
     async with AsyncSessionLocal() as session:
         yield session

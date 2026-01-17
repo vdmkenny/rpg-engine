@@ -691,11 +691,16 @@ async def websocket_endpoint(
         packed_new_player = msgpack.packb(new_player_message, use_bin_type=True)
         if packed_new_player:
             # Send to all other players on the same map (exclude the new player)
-            for other_username, other_websocket in manager.connections_by_map.get(
+            for other_username, other_websocket in list(manager.connections_by_map.get(
                 validated_map, {}
-            ).items():
+            ).items()):
                 if other_username != username:
-                    await other_websocket.send_bytes(packed_new_player)
+                    try:
+                        await other_websocket.send_bytes(packed_new_player)
+                    except Exception:
+                        # Ignore errors sending to disconnected/broken connections
+                        # They will be cleaned up by their own disconnect handler
+                        pass
 
         # Main message loop
         while True:
