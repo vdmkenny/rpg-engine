@@ -356,104 +356,110 @@ class TestPickupItemWithRealItems:
 @SKIP_WS_INTEGRATION
 class TestPickupStackableItem:
     """
-    Integration tests for picking up stackable items.
+    Tests for picking up stackable items that merge with inventory.
     
-    These tests require PostgreSQL due to the FOR UPDATE clause used
-    to prevent race conditions during pickup.
+    Tests the service layer directly with async/await pattern.
+    Note: Stacking behavior works with SQLite for unit tests, but
+    the FOR UPDATE clause in pickup_item requires PostgreSQL for
+    race condition safety in production.
     """
 
-    def test_pickup_stackable_item_stacks_with_inventory(self, integration_client):
+    @pytest.mark.asyncio
+    async def test_pickup_stackable_item_stacks_with_inventory(self):
         """Picking up a stackable item should add to existing stack in inventory."""
-        import time
-        from datetime import datetime, timedelta, timezone
-        from sqlalchemy import select
-        from server.src.core.database import AsyncSessionLocal
+        from datetime import datetime, timedelta
+        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+        from sqlalchemy.orm import sessionmaker
+        from server.src.models.base import Base
+        from server.src.models.player import Player
         from server.src.models.item import GroundItem
-        from server.src.services.item_service import ItemService
+        from server.src.core.security import get_password_hash
         from server.src.services.inventory_service import InventoryService
-        import asyncio
+        from server.src.services.ground_item_service import GroundItemService
+        from server.src.services.item_service import ItemService
         
-        client = integration_client
-        username = unique_username("pickup_stack")
-        token = register_and_login(client, username)
-
-        with client.websocket_connect("/ws") as websocket:
-            welcome = authenticate_websocket(websocket, token)
-            assert welcome["type"] == MessageType.WELCOME.value
+        # Set up in-memory database
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        
+        AsyncSessionLocal = sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False
+        )
+        
+        async with AsyncSessionLocal() as session:
+            # Sync items to database
+            await ItemService.sync_items_to_db(session)
             
-            player_data = welcome["payload"]["player"]
-            player_x = player_data["x"]
-            player_y = player_data["y"]
-            map_id = player_data["map_id"]
-            
-            # Get player_id from welcome message
-            player_id = get_player_id_from_welcome(welcome)
-            
-            async def setup_and_test():
-                async with AsyncSessionLocal() as session:
-                    # Get bronze_arrow item
-                    bronze_arrow = await ItemService.get_item_by_name(session, "bronze_arrow")
-                    if not bronze_arrow:
-                        return None, "bronze_arrow not found"
-                    
-                    # Add 5 arrows to player's inventory
-                    await InventoryService.add_item(session, player_id, bronze_arrow.id, quantity=5)
-                    
-                    # Create ground item with 10 arrows at player's position
-                    now = datetime.now(timezone.utc).replace(tzinfo=None)
-                    ground_item = GroundItem(
-                        item_id=bronze_arrow.id,
-                        map_id=map_id,
-                        x=player_x,
-                        y=player_y,
-                        quantity=10,
-                        dropped_by=player_id,  # Owned by player (no loot protection)
-                        dropped_at=now,
-                        public_at=now,
-                        despawn_at=now + timedelta(minutes=5),
-                    )
-                    session.add(ground_item)
-                    await session.commit()
-                    await session.refresh(ground_item)
-                    
-                    return ground_item.id, None
-            
-            # Run setup
-            loop = asyncio.new_event_loop()
-            ground_item_id, error = loop.run_until_complete(setup_and_test())
-            loop.close()
-            
-            if error:
-                pytest.skip(error)
+            # Get a stackable item (arrows)
+            bronze_arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+            if not bronze_arrows:
+                await engine.dispose()
+                pytest.skip("bronze_arrows not found in items")
                 return
             
-            # Send PICKUP_ITEM message
-            send_ws_message(
-                websocket,
-                MessageType.PICKUP_ITEM,
-                {"ground_item_id": ground_item_id},
+            # Create test player
+            player = Player(
+                username="pickup_stack_user",
+                hashed_password=get_password_hash("test123"),
+                x_coord=10,
+                y_coord=10,
+                map_id="samplemap",
             )
-
-            # Should receive OPERATION_RESULT with success
-            response = receive_message_of_type(
-                websocket, [MessageType.OPERATION_RESULT.value]
+            session.add(player)
+            await session.commit()
+            await session.refresh(player)
+            
+            # Add 5 arrows to player's inventory first
+            await InventoryService.add_item(session, player.id, bronze_arrows.id, quantity=5)
+            
+            # Create a ground item with 10 arrows at player's position
+            now = datetime.now()
+            ground_item = GroundItem(
+                item_id=bronze_arrows.id,
+                map_id="samplemap",
+                x=10,
+                y=10,
+                quantity=10,
+                dropped_by=player.id,  # Owned by player (no loot protection)
+                dropped_at=now,
+                public_at=now,  # Already public
+                despawn_at=now + timedelta(minutes=5),  # Won't expire
             )
-
-            assert response["type"] == MessageType.OPERATION_RESULT.value
-            assert response["payload"]["operation"] == "pickup_item"
-            assert response["payload"]["success"] is True, f"Pickup failed: {response['payload']['message']}"
+            session.add(ground_item)
+            await session.commit()
+            await session.refresh(ground_item)
+            
+            ground_item_id = ground_item.id
+            
+            # Pick up the ground item - should merge with existing stack
+            result = await GroundItemService.pickup_item(
+                db=session,
+                player_id=player.id,
+                ground_item_id=ground_item_id,
+                player_x=10,
+                player_y=10,
+                player_map_id="samplemap",
+            )
+            
+            assert result.success is True, f"Pickup failed: {result.message}"
             
             # Verify inventory has 15 arrows total (5 + 10)
-            async def verify_inventory():
-                async with AsyncSessionLocal() as session:
-                    inventory = await InventoryService.get_inventory(session, player_id)
-                    total_arrows = sum(
-                        inv.quantity for inv in inventory if inv.item.name == "bronze_arrow"
-                    )
-                    return total_arrows
-            
-            loop = asyncio.new_event_loop()
-            total_arrows = loop.run_until_complete(verify_inventory())
-            loop.close()
-            
+            inventory = await InventoryService.get_inventory(session, player.id)
+            total_arrows = sum(
+                inv.quantity for inv in inventory if inv.item.name == "bronze_arrows"
+            )
             assert total_arrows == 15, f"Expected 15 arrows, got {total_arrows}"
+            
+            # Verify only 1 inventory slot is used (items should stack)
+            arrow_slots = [inv for inv in inventory if inv.item.name == "bronze_arrows"]
+            assert len(arrow_slots) == 1, f"Expected 1 arrow slot, got {len(arrow_slots)}"
+            
+            # Verify ground item was removed
+            from sqlalchemy.future import select
+            remaining = await session.execute(
+                select(GroundItem).where(GroundItem.id == ground_item_id)
+            )
+            assert remaining.scalar_one_or_none() is None
+        
+        await engine.dispose()

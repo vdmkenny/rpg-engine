@@ -1159,6 +1159,7 @@ async def websocket_endpoint(
             payload={
                 "message": f"Welcome {username}!",
                 "player": {
+                    "id": player.id,
                     "username": username,
                     "x": validated_x,
                     "y": validated_y,
