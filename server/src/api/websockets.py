@@ -617,7 +617,7 @@ async def websocket_endpoint(
             type=MessageType.WELCOME,
             payload={
                 "message": f"Welcome {username}!",
-                "player": {"x": validated_x, "y": validated_y, "map_id": validated_map},
+                "player": {"username": username, "x": validated_x, "y": validated_y, "map_id": validated_map},
                 "config": {
                     "move_cooldown": settings.MOVE_COOLDOWN,
                     "animation_duration": settings.ANIMATION_DURATION,
@@ -737,6 +737,12 @@ async def websocket_endpoint(
             extra={"username": username, "reason": e.reason or "Normal disconnect"},
         )
         metrics.track_websocket_connection("disconnected")
+        # If we raised WebSocketDisconnect ourselves (e.g., auth failure), close the connection
+        if e.code and e.code != 1000:
+            try:
+                await websocket.close(code=e.code, reason=e.reason or "")
+            except Exception:
+                pass  # Already closed
     except JWTError:
         logger.warning("JWT validation failed for WebSocket connection")
         metrics.track_websocket_connection("auth_failed")
