@@ -15,7 +15,7 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = "~3.12"
+python = "~3.14"
 pydantic = "2.12.5"
 msgpack = "1.1.2"
 websockets = "16.0"
@@ -33,6 +33,7 @@ psycopg2-binary = "2.9.11"
 valkey-glide = "2.2.5"
 pydantic-settings = "2.12.0"
 passlib = "^1.7.4"
+bcrypt = "^4.2.0"
 python-jose = { version = "3.5.0", extras = ["cryptography"] }
 python-multipart = "0.0.21"
 pyyaml = "^6.0"

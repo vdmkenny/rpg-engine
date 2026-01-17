@@ -1,9 +1,15 @@
 # Python base image
-FROM python:3.12-slim
+FROM python:3.14-slim
 
-# Install system dependencies
+# Install system dependencies (including SDL for pygame build from source on Python 3.14)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        gcc \
+        libsdl2-dev \
+        libsdl2-image-dev \
+        libsdl2-mixer-dev \
+        libsdl2-ttf-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Install poetry

@@ -40,8 +40,13 @@ def reset_engine():
     The old engine's connections will be garbage collected.
     """
     global engine, AsyncSessionLocal
-    # Create a fresh engine (old connections will be garbage collected)
-    engine = create_async_engine(settings.DATABASE_URL, echo=settings.DATABASE_ECHO, future=True)
+    # Create a fresh engine with pool_pre_ping to check connections before use
+    engine = create_async_engine(
+        settings.DATABASE_URL, 
+        echo=settings.DATABASE_ECHO, 
+        future=True,
+        pool_pre_ping=True,  # Check connections are valid before using
+    )
     AsyncSessionLocal = sessionmaker(
         autocommit=False, autoflush=False, bind=engine, class_=AsyncSession
     )
