@@ -66,6 +66,7 @@ class Direction(str, Enum):
 class GameMessage(BaseModel):
     type: MessageType
     payload: Dict[str, Any]
+    protocol_version: str = "1.0"
 
 
 # --- Specific Payload Schemas ---
@@ -73,6 +74,64 @@ class GameMessage(BaseModel):
 
 class MoveIntentPayload(BaseModel):
     direction: Direction
+
+
+# --- Authentication Payload Schemas ---
+
+
+class AuthenticatePayload(BaseModel):
+    """Payload for AUTHENTICATE messages from client."""
+    token: str
+
+
+# --- Welcome Payload Schemas ---
+
+
+class PlayerInfo(BaseModel):
+    """Player information sent in WELCOME message."""
+    username: str
+    x: int
+    y: int
+    map_id: str
+    current_hp: int
+    max_hp: int
+
+
+class GameConfig(BaseModel):
+    """Game configuration sent in WELCOME message."""
+    tick_rate: int
+    chunk_size: int
+    movement_cooldown_ms: int
+
+
+class WelcomePayload(BaseModel):
+    """Payload for WELCOME messages to client."""
+    player: PlayerInfo
+    config: GameConfig
+
+
+# --- Chat Payload Schemas ---
+
+
+class SendChatMessagePayload(BaseModel):
+    """Payload for SEND_CHAT_MESSAGE from client."""
+    message: str
+
+
+class ChatMessagePayload(BaseModel):
+    """Payload for NEW_CHAT_MESSAGE to client."""
+    username: str
+    message: str
+    timestamp: Optional[str] = None  # ISO format timestamp
+
+
+# --- Error Payload Schemas ---
+
+
+class ErrorPayload(BaseModel):
+    """Payload for ERROR messages to client."""
+    message: str
+    code: Optional[str] = None  # Optional error code for programmatic handling
 
 
 class GameStateUpdatePayload(BaseModel):
@@ -114,6 +173,8 @@ class ChunkData(BaseModel):
 class ChunkDataPayload(BaseModel):
     map_id: str
     chunks: List[Dict[str, Any]]  # List of chunk data
+    player_x: Optional[int] = None  # Player's tile X position (for context)
+    player_y: Optional[int] = None  # Player's tile Y position (for context)
 
 
 class PlayerDisconnectPayload(BaseModel):

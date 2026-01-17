@@ -8,7 +8,6 @@ Handles:
 """
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -17,13 +16,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.src.core.config import settings
+from server.src.core.logging_config import get_logger
 from server.src.core.skills import HITPOINTS_START_LEVEL
 from server.src.models.player import Player
 from server.src.services.equipment_service import EquipmentService
 from server.src.services.ground_item_service import GroundItemService
 from server.src.services.map_service import get_map_manager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

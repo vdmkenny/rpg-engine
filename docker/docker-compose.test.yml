@@ -21,7 +21,7 @@ services:
       - rpg_net
 
   test_db:
-    image: postgres:17
+    image: postgres:18
     platform: linux/amd64 # Specify platform to avoid warnings on ARM hosts
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rpg_test -d rpg_test"]

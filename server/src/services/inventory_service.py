@@ -7,7 +7,6 @@ Supports both database-only and Valkey-first operations:
 - Pass state_manager parameter to use Valkey-first operations during gameplay
 """
 
-import logging
 from typing import Optional, TYPE_CHECKING
 
 from sqlalchemy import select, delete, func
@@ -35,11 +34,12 @@ from ..schemas.item import (
     MergeStacksResult,
 )
 from .item_service import ItemService
+from ..core.logging_config import get_logger
 
 if TYPE_CHECKING:
     from .game_state_manager import GameStateManager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class InventoryService:

@@ -12,7 +12,6 @@ Ground items are stored in both:
 - Valkey (hot data for game loop performance)
 """
 
-import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -23,6 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from ..core.config import settings
 from ..core.items import ItemRarity
+from ..core.logging_config import get_logger
 from ..models.item import Item, GroundItem, PlayerInventory, PlayerEquipment
 from ..schemas.item import (
     DropItemResult,
@@ -44,7 +44,7 @@ def _utc_now_naive() -> datetime:
     """
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class GroundItemService:

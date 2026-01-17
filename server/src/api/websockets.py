@@ -49,6 +49,7 @@ from common.src.protocol import (
     OperationResultPayload,
     PlayerDiedPayload,
     PlayerRespawnPayload,
+    ErrorPayload,
 )
 from server.src.game.game_loop import cleanup_disconnected_player, register_player_login
 
@@ -518,7 +519,8 @@ async def handle_chunk_request(
         if chunks is None:
             # Send error response
             error_message = GameMessage(
-                type=MessageType.ERROR, payload={"message": f"Map '{map_id}' not found"}
+                type=MessageType.ERROR,
+                payload=ErrorPayload(message=f"Map '{map_id}' not found").model_dump(),
             )
             await websocket.send_bytes(
                 msgpack.packb(error_message.model_dump(), use_bin_type=True)
@@ -590,7 +592,7 @@ async def handle_chunk_request(
         # Send error response
         error_message = GameMessage(
             type=MessageType.ERROR,
-            payload={"message": "Failed to process chunk request"},
+            payload=ErrorPayload(message="Failed to process chunk request").model_dump(),
         )
         await websocket.send_bytes(
             msgpack.packb(error_message.model_dump(), use_bin_type=True)

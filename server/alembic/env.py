@@ -1,5 +1,6 @@
 import sys
 from logging.config import fileConfig
+from pathlib import Path
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
@@ -7,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from alembic import context
 
-# Add the project root to the Python path
-sys.path.insert(0, "/app")
+# Add the project root to the Python path (works in Docker and locally)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

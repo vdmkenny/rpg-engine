@@ -2,7 +2,6 @@
 Service for managing player equipment.
 """
 
-import logging
 from typing import Optional
 
 from sqlalchemy import select, delete
@@ -11,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from ..core.config import settings
 from ..core.items import EquipmentSlot, ItemCategory
+from ..core.logging_config import get_logger
 from ..models.item import Item, PlayerEquipment, PlayerInventory
 from ..models.player import Player
 from ..models.skill import PlayerSkill, Skill
@@ -27,7 +27,7 @@ from .inventory_service import InventoryService
 from .ground_item_service import GroundItemService
 from .skill_service import SkillService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class EquipmentService:

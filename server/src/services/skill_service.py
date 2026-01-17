@@ -5,7 +5,6 @@ Handles skill synchronization, granting skills to players,
 and experience/level calculations.
 """
 
-import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -13,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from server.src.core.logging_config import get_logger
 from server.src.models.skill import Skill, PlayerSkill
 from server.src.core.skills import (
     SkillType,
@@ -25,7 +25,7 @@ from server.src.core.skills import (
     HITPOINTS_START_LEVEL,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
