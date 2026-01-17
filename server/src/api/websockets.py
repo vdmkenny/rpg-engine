@@ -27,6 +27,7 @@ from server.src.models.player import Player
 from server.src.services.map_service import map_manager
 from server.src.services.inventory_service import InventoryService
 from server.src.services.equipment_service import EquipmentService
+from server.src.services.skill_service import SkillService
 from server.src.services.ground_item_service import GroundItemService
 from common.src.protocol import (
     GameMessage,
@@ -41,8 +42,10 @@ from common.src.protocol import (
     UnequipItemPayload,
     PickupItemPayload,
     OperationResultPayload,
+    PlayerDiedPayload,
+    PlayerRespawnPayload,
 )
-from server.src.game.game_loop import cleanup_disconnected_player
+from server.src.game.game_loop import cleanup_disconnected_player, register_player_login
 
 router = APIRouter()
 manager = ConnectionManager()
@@ -94,6 +97,70 @@ class OperationRateLimiter:
 
 # Global rate limiter instance
 operation_rate_limiter = OperationRateLimiter()
+
+
+def create_death_broadcast_callback(valkey: GlideClient):
+    """
+    Create a broadcast callback for PLAYER_DIED and PLAYER_RESPAWN messages.
+    
+    This callback is passed to HpService.full_death_sequence() when a player dies.
+    It broadcasts death/respawn messages to nearby players on the same map.
+    
+    Usage (when combat is implemented):
+        damage_result = await HpService.deal_damage(db, valkey, username, damage)
+        if damage_result.player_died:
+            broadcast_callback = create_death_broadcast_callback(valkey)
+            await HpService.full_death_sequence(db, valkey, username, broadcast_callback)
+    
+    Args:
+        valkey: Valkey client for looking up player positions
+        
+    Returns:
+        Async callback function(message_type, payload, username)
+    """
+    async def broadcast_callback(message_type: str, payload: dict, username: str):
+        """Broadcast death/respawn messages to players on the same map."""
+        # Get the map from the payload (death location or respawn location)
+        map_id = payload.get("map_id")
+        if not map_id:
+            logger.warning(
+                "No map_id in death/respawn payload",
+                extra={"username": username, "message_type": message_type},
+            )
+            return
+        
+        # Create the appropriate message
+        if message_type == "PLAYER_DIED":
+            message = GameMessage(
+                type=MessageType.PLAYER_DIED,
+                payload=PlayerDiedPayload(**payload).model_dump(),
+            )
+        elif message_type == "PLAYER_RESPAWN":
+            message = GameMessage(
+                type=MessageType.PLAYER_RESPAWN,
+                payload=PlayerRespawnPayload(**payload).model_dump(),
+            )
+        else:
+            logger.warning(
+                "Unknown message type for death broadcast",
+                extra={"message_type": message_type, "username": username},
+            )
+            return
+        
+        # Broadcast to all players on the map
+        packed_message = msgpack.packb(message.model_dump(), use_bin_type=True)
+        if packed_message:
+            await manager.broadcast_to_map(map_id, packed_message)
+            logger.info(
+                "Broadcast death/respawn message",
+                extra={
+                    "message_type": message_type,
+                    "username": username,
+                    "map_id": map_id,
+                },
+            )
+    
+    return broadcast_callback
 
 
 async def get_token_from_ws(websocket: WebSocket) -> str:
@@ -700,6 +767,7 @@ async def handle_drop_item(
             x=x,
             y=y,
             quantity=drop_payload.quantity,
+            valkey=valkey,
         )
 
         await send_operation_result(
@@ -849,6 +917,7 @@ async def handle_pickup_item(
             player_x=x,
             player_y=y,
             player_map_id=map_id,
+            valkey=valkey,
         )
 
         await send_operation_result(
@@ -888,6 +957,7 @@ async def sync_player_to_db(username: str, valkey: GlideClient, db: AsyncSession
         x_coord = int(player_data.get("x", 0))
         y_coord = int(player_data.get("y", 0))
         map_id = player_data.get("map_id", settings.DEFAULT_MAP)
+        current_hp = int(player_data.get("current_hp", 10))
 
         query = select(Player).where(Player.username == username)
         result = await db.execute(query)
@@ -897,6 +967,7 @@ async def sync_player_to_db(username: str, valkey: GlideClient, db: AsyncSession
             player.x_coord = x_coord
             player.y_coord = y_coord
             player.map_id = map_id
+            player.current_hp = current_hp
             await db.commit()
             logger.info(
                 "Player data synced to database",
@@ -904,6 +975,7 @@ async def sync_player_to_db(username: str, valkey: GlideClient, db: AsyncSession
                     "username": username,
                     "position": {"x": x_coord, "y": y_coord},
                     "map_id": map_id,
+                    "current_hp": current_hp,
                 },
             )
         else:
@@ -1029,6 +1101,16 @@ async def websocket_endpoint(
             player.y_coord = validated_y
             await db.commit()
 
+        # Calculate max HP for this player
+        max_hp = await EquipmentService.get_max_hp(db, player.id)
+        current_hp = player.current_hp
+
+        # Ensure current HP doesn't exceed max HP (equipment might have changed)
+        if current_hp > max_hp:
+            current_hp = max_hp
+            player.current_hp = current_hp
+            await db.commit()
+
         player_key = f"player:{username}"
         await valkey.hset(
             player_key,
@@ -1039,6 +1121,9 @@ async def websocket_endpoint(
                 "facing_direction": "DOWN",  # Default facing direction
                 "is_moving": "false",
                 "last_move_time": "0",
+                "current_hp": str(current_hp),
+                "max_hp": str(max_hp),
+                "player_id": str(player.id),
             },
         )
         logger.info(
@@ -1047,10 +1132,15 @@ async def websocket_endpoint(
                 "username": username,
                 "initial_position": {"x": validated_x, "y": validated_y},
                 "map_id": validated_map,
+                "current_hp": current_hp,
+                "max_hp": max_hp,
             },
         )
 
         await manager.connect(websocket, username, validated_map)
+        
+        # Register player login tick for staggered HP regeneration
+        register_player_login(username)
 
         # Update metrics for active connections
         total_connections = sum(
@@ -1068,7 +1158,14 @@ async def websocket_endpoint(
             type=MessageType.WELCOME,
             payload={
                 "message": f"Welcome {username}!",
-                "player": {"username": username, "x": validated_x, "y": validated_y, "map_id": validated_map},
+                "player": {
+                    "username": username,
+                    "x": validated_x,
+                    "y": validated_y,
+                    "map_id": validated_map,
+                    "current_hp": current_hp,
+                    "max_hp": max_hp,
+                },
                 "config": {
                     "move_cooldown": settings.MOVE_COOLDOWN,
                     "animation_duration": settings.ANIMATION_DURATION,

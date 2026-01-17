@@ -2,7 +2,7 @@
 Tests for the skills system.
 
 Tests cover:
-- XP formula calculations (RuneScape-style with multipliers)
+- XP formula calculations (with multipliers)
 - Level calculations from XP
 - Skill definitions and metadata
 - Skill service operations (sync, grant, add XP)
@@ -17,6 +17,7 @@ from server.src.core.skills import (
     SkillType,
     SkillCategory,
     MAX_LEVEL,
+    HITPOINTS_START_LEVEL,
     base_xp_for_level,
     xp_for_level,
     level_for_xp,
@@ -35,7 +36,7 @@ from server.src.services.skill_service import SkillService, LevelUpResult
 
 
 class TestXPFormula:
-    """Test the RuneScape-style XP formula calculations."""
+    """Test the XP formula calculations."""
 
     def test_level_1_requires_zero_xp(self):
         """Level 1 should require 0 XP."""
@@ -54,7 +55,7 @@ class TestXPFormula:
     def test_level_99_xp_approximately_13m(self):
         """Level 99 should require approximately 13 million XP with 1.0 multiplier."""
         xp = base_xp_for_level(99)
-        # RuneScape level 99 is approximately 13,034,431 XP
+        # Level 99 is approximately 13,034,431 XP
         assert 13_000_000 <= xp <= 13_100_000
 
     def test_xp_multiplier_scales_requirements(self):
@@ -221,7 +222,7 @@ class TestSkillDefinitions:
 
     def test_expected_skills_exist(self):
         """All expected skills should be defined."""
-        expected = ["attack", "strength", "defence", "mining", "fishing", "woodcutting", "cooking", "crafting"]
+        expected = ["attack", "strength", "defence", "mining", "fishing", "woodcutting", "cooking", "crafting", "hitpoints"]
         actual = SkillType.all_skill_names()
         for skill in expected:
             assert skill in actual, f"Missing skill: {skill}"
@@ -296,8 +297,20 @@ class TestSkillServiceGrant:
         assert len(player_skills) == len(SkillType)
         
         for ps in player_skills:
-            assert ps.current_level == 1
-            assert ps.experience == 0
+            # Get skill name to check if it's hitpoints
+            result = await session.execute(
+                select(Skill).where(Skill.id == ps.skill_id)
+            )
+            skill = result.scalar_one()
+            if skill.name == "hitpoints":
+                # Hitpoints starts at level 10 with XP to match
+                assert ps.current_level == HITPOINTS_START_LEVEL
+                # Hitpoints should have the XP required for level 10
+                assert ps.experience > 0
+            else:
+                # All other skills start at level 1
+                assert ps.current_level == 1
+                assert ps.experience == 0
 
     @pytest.mark.asyncio
     async def test_grant_skills_is_idempotent(
@@ -437,9 +450,11 @@ class TestSkillServiceGetPlayerSkills:
         await SkillService.sync_skills_to_db(session)
         await SkillService.grant_all_skills_to_player(session, player.id)
         
-        # All skills start at level 1
+        # All skills start at level 1 except Hitpoints which starts at level 10
+        # So total = (num_skills - 1) * 1 + 10 = num_skills + 9
+        expected_total = (len(SkillType) - 1) + HITPOINTS_START_LEVEL
         total = await SkillService.get_total_level(session, player.id)
-        assert total == len(SkillType)  # 8 skills * level 1 = 8
+        assert total == expected_total
         
         # Add some XP to level up one skill
         await SkillService.add_experience(

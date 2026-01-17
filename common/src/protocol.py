@@ -46,11 +46,14 @@ class MessageType(str, Enum):
     EQUIPMENT_UPDATE = "EQUIPMENT_UPDATE"
     STATS_UPDATE = "STATS_UPDATE"
 
-    # Server to Client - Ground Items
-    GROUND_ITEMS_UPDATE = "GROUND_ITEMS_UPDATE"
+
 
     # Server to Client - Operation Results
     OPERATION_RESULT = "OPERATION_RESULT"
+
+    # Server to Client - Death/Respawn
+    PLAYER_DIED = "PLAYER_DIED"
+    PLAYER_RESPAWN = "PLAYER_RESPAWN"
 
 
 class Direction(str, Enum):
@@ -73,7 +76,18 @@ class MoveIntentPayload(BaseModel):
 
 
 class GameStateUpdatePayload(BaseModel):
-    entities: List[Dict[str, Any]]  # e.g., [{"id": 1, "x": 10, "y": 15}]
+    """
+    Payload for GAME_STATE_UPDATE messages.
+
+    Contains all visible entity changes for a player. Entity types:
+    - "player": Other players with position and HP
+      {"type": "player", "username": str, "x": int, "y": int, "current_hp": int, "max_hp": int}
+    - "ground_item": Items on the ground
+      {"type": "ground_item", "id": int, "item_id": int, "x": int, "y": int, 
+       "quantity": int, "is_protected": bool, "display_name": str, "rarity": str}
+    """
+    entities: List[Dict[str, Any]]  # Added or updated entities
+    removed: Optional[List[Dict[str, Any]]] = None  # Removed entities (username or ground_item_id)
 
 
 class ChunkRequestPayload(BaseModel):
@@ -178,3 +192,42 @@ class OperationResultPayload(BaseModel):
     success: bool
     message: str
     data: Optional[Dict[str, Any]] = None  # Additional operation-specific data
+
+
+# --- Server Lifecycle Payload Schemas ---
+
+
+class ServerShutdownPayload(BaseModel):
+    """Payload for SERVER_SHUTDOWN messages."""
+    reason: str  # e.g., "Server maintenance", "Scheduled restart"
+    reconnect_seconds: Optional[int] = None  # Hint for when to reconnect
+
+
+# --- Death/Respawn Payload Schemas ---
+
+
+class PlayerDiedPayload(BaseModel):
+    """
+    Payload for PLAYER_DIED messages.
+
+    Sent to nearby players when a player dies.
+    """
+    username: str
+    x: int  # Death location
+    y: int
+    map_id: str
+    items_dropped: int  # Number of items dropped on death
+
+
+class PlayerRespawnPayload(BaseModel):
+    """
+    Payload for PLAYER_RESPAWN messages.
+
+    Sent to nearby players when a player respawns.
+    """
+    username: str
+    x: int  # Respawn location
+    y: int
+    map_id: str
+    current_hp: int
+    max_hp: int

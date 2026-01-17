@@ -6,12 +6,15 @@ Initializes the FastAPI application and includes the API routers.
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
+import msgpack
 from server.src.api import websockets, auth, assets
 from server.src.core.logging_config import setup_logging, get_logger
 from server.src.core.metrics import init_metrics, get_metrics, get_metrics_content_type
 from server.src.services.map_service import get_map_manager
-from server.src.core.database import get_valkey
+from server.src.core.database import get_valkey, AsyncSessionLocal
 from server.src.game.game_loop import game_loop, cleanup_disconnected_player
+from server.src.services.ground_item_service import GroundItemService
+from common.src.protocol import MessageType, GameMessage, ServerShutdownPayload
 
 # Initialize logging and metrics as early as possible
 setup_logging()
@@ -37,6 +40,15 @@ async def lifespan(app: FastAPI):
     
     # Initialize Valkey connection and start game loop
     valkey = await get_valkey()
+    
+    # Load ground items from database to Valkey
+    try:
+        async with AsyncSessionLocal() as db:
+            ground_items_loaded = await GroundItemService.load_ground_items_to_valkey(db, valkey)
+            logger.info(f"Loaded {ground_items_loaded} ground items from database to Valkey")
+    except Exception as e:
+        logger.warning(f"Could not load ground items from database: {e}")
+    
     _game_loop_task = asyncio.create_task(
         game_loop(websockets.manager, valkey),
         name="game_loop"
@@ -47,6 +59,34 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("RPG Server shutting down")
+    
+    # Broadcast SERVER_SHUTDOWN to all connected clients
+    shutdown_message = GameMessage(
+        type=MessageType.SERVER_SHUTDOWN,
+        payload=ServerShutdownPayload(
+            reason="Server shutting down",
+            reconnect_seconds=30,
+        ).model_dump(),
+    )
+    packed_shutdown = msgpack.packb(shutdown_message.model_dump(), use_bin_type=True)
+    
+    # Send to all connected clients
+    for map_connections in websockets.manager.connections_by_map.values():
+        for ws in map_connections.values():
+            try:
+                await ws.send_bytes(packed_shutdown)
+            except Exception:
+                pass  # Client may already be disconnected
+    
+    logger.info("Sent SERVER_SHUTDOWN to all clients")
+    
+    # Sync ground items from Valkey to database before shutdown
+    try:
+        async with AsyncSessionLocal() as db:
+            synced = await GroundItemService.sync_valkey_to_database(db, valkey)
+            logger.info(f"Synced {synced} ground items to database")
+    except Exception as e:
+        logger.warning(f"Could not sync ground items to database: {e}")
     
     # Cancel game loop
     if _game_loop_task:

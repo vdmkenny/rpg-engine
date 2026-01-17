@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from ..core.config import settings
 from ..core.items import EquipmentSlot, ItemCategory
 from ..models.item import Item, PlayerEquipment, PlayerInventory
+from ..models.player import Player
 from ..models.skill import PlayerSkill, Skill
 from ..schemas.item import (
     ItemStats,
@@ -24,6 +25,7 @@ from ..schemas.item import (
 from .item_service import ItemService
 from .inventory_service import InventoryService
 from .ground_item_service import GroundItemService
+from .skill_service import SkillService
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +148,121 @@ class EquipmentService:
             stats.fishing_bonus += item.fishing_bonus
 
         return stats
+
+    @staticmethod
+    async def get_max_hp(db: AsyncSession, player_id: int) -> int:
+        """
+        Calculate max HP for a player.
+
+        Max HP = Hitpoints skill level + equipment health_bonus.
+
+        Args:
+            db: Database session
+            player_id: Player ID
+
+        Returns:
+            Maximum HP value
+        """
+        # Get base HP from Hitpoints skill level
+        base_hp = await SkillService.get_hitpoints_level(db, player_id)
+
+        # Get equipment health bonus
+        equipment_stats = await EquipmentService.get_total_stats(db, player_id)
+        health_bonus = equipment_stats.health_bonus
+
+        return base_hp + health_bonus
+
+    @staticmethod
+    async def adjust_hp_for_equip(
+        db: AsyncSession, player_id: int, health_bonus: int
+    ) -> int:
+        """
+        Adjust player's current HP when equipping item with health bonus.
+
+        Equipping adds to both max HP and current HP.
+
+        Args:
+            db: Database session
+            player_id: Player ID
+            health_bonus: Health bonus from the equipped item
+
+        Returns:
+            New current HP value
+        """
+        if health_bonus <= 0:
+            return -1  # No adjustment needed
+
+        result = await db.execute(
+            select(Player).where(Player.id == player_id)
+        )
+        player = result.scalar_one_or_none()
+        if not player:
+            return -1
+
+        # Add health bonus to current HP
+        player.current_hp += health_bonus
+        await db.commit()
+
+        logger.info(
+            "Adjusted HP for equip",
+            extra={
+                "player_id": player_id,
+                "health_bonus": health_bonus,
+                "new_current_hp": player.current_hp,
+            },
+        )
+
+        return player.current_hp
+
+    @staticmethod
+    async def adjust_hp_for_unequip(
+        db: AsyncSession, player_id: int, health_bonus: int
+    ) -> int:
+        """
+        Adjust player's current HP when unequipping item with health bonus.
+
+        Unequipping removes from current HP, capped at new max HP.
+        Current HP will never drop below 1 from unequipping.
+
+        Args:
+            db: Database session
+            player_id: Player ID
+            health_bonus: Health bonus from the unequipped item
+
+        Returns:
+            New current HP value
+        """
+        if health_bonus <= 0:
+            return -1  # No adjustment needed
+
+        result = await db.execute(
+            select(Player).where(Player.id == player_id)
+        )
+        player = result.scalar_one_or_none()
+        if not player:
+            return -1
+
+        # Calculate new max HP (after unequipping, so without this item's bonus)
+        new_max_hp = await EquipmentService.get_max_hp(db, player_id)
+
+        # Remove health bonus from current HP, cap at new max, min 1
+        new_current_hp = player.current_hp - health_bonus
+        new_current_hp = max(1, min(new_current_hp, new_max_hp))
+
+        player.current_hp = new_current_hp
+        await db.commit()
+
+        logger.info(
+            "Adjusted HP for unequip",
+            extra={
+                "player_id": player_id,
+                "health_bonus": health_bonus,
+                "new_current_hp": new_current_hp,
+                "new_max_hp": new_max_hp,
+            },
+        )
+
+        return new_current_hp
 
     @staticmethod
     async def can_equip(
@@ -378,6 +495,31 @@ class EquipmentService:
 
         await db.commit()
 
+        # Handle HP adjustment for health_bonus changes
+        # Calculate net health bonus change (new item's bonus minus any unequipped item's bonus)
+        health_bonus_gained = item.health_bonus if item.health_bonus else 0
+        health_bonus_lost = 0
+        for eq in items_to_unequip:
+            if eq.item.health_bonus:
+                health_bonus_lost += eq.item.health_bonus
+
+        net_health_change = health_bonus_gained - health_bonus_lost
+        if net_health_change != 0:
+            result = await db.execute(
+                select(Player).where(Player.id == player_id)
+            )
+            player = result.scalar_one_or_none()
+            if player:
+                if net_health_change > 0:
+                    # Gained health bonus - add to current HP
+                    player.current_hp += net_health_change
+                else:
+                    # Lost health bonus - subtract from current HP, cap at max, min 1
+                    new_max_hp = await EquipmentService.get_max_hp(db, player_id)
+                    new_current_hp = player.current_hp + net_health_change  # net_health_change is negative
+                    player.current_hp = max(1, min(new_current_hp, new_max_hp))
+                await db.commit()
+
         # Get updated stats
         updated_stats = await EquipmentService.get_total_stats(db, player_id)
 
@@ -448,8 +590,13 @@ class EquipmentService:
 
         if add_result.success and add_result.overflow_quantity == 0:
             # Successfully added all to inventory
+            health_bonus_lost = item.health_bonus if item.health_bonus else 0
             await db.delete(equipped)
             await db.commit()
+
+            # Handle HP adjustment for health_bonus loss
+            if health_bonus_lost > 0:
+                await EquipmentService.adjust_hp_for_unequip(db, player_id, health_bonus_lost)
 
             updated_stats = await EquipmentService.get_total_stats(db, player_id)
 
@@ -487,8 +634,13 @@ class EquipmentService:
             )
 
             if ground_item:
+                health_bonus_lost = item.health_bonus if item.health_bonus else 0
                 await db.delete(equipped)
                 await db.commit()
+
+                # Handle HP adjustment for health_bonus loss
+                if health_bonus_lost > 0:
+                    await EquipmentService.adjust_hp_for_unequip(db, player_id, health_bonus_lost)
 
                 updated_stats = await EquipmentService.get_total_stats(db, player_id)
 

@@ -40,6 +40,7 @@ class SkillType(Enum):
     ATTACK = SkillDefinition("Attack", SkillCategory.COMBAT, "Melee accuracy")
     STRENGTH = SkillDefinition("Strength", SkillCategory.COMBAT, "Melee damage")
     DEFENCE = SkillDefinition("Defence", SkillCategory.COMBAT, "Damage reduction")
+    HITPOINTS = SkillDefinition("Hitpoints", SkillCategory.COMBAT, "Health points")
 
     # Gathering skills
     MINING = SkillDefinition(
@@ -86,11 +87,14 @@ class SkillType(Enum):
 # Default max level constant
 MAX_LEVEL: int = 99
 
+# Hitpoints starts at level 10
+HITPOINTS_START_LEVEL: int = 10
+
 
 @lru_cache(maxsize=256)
 def _base_xp_table(max_level: int = MAX_LEVEL) -> tuple[int, ...]:
     """
-    Pre-compute the base XP table using RuneScape formula.
+    Pre-compute the base XP table using standard formula.
 
     The formula for total XP at level L is:
     XP(L) = floor(sum(i=1 to L-1) of floor(i + 300 * 2^(i/7)) / 4)
@@ -112,7 +116,7 @@ def _base_xp_table(max_level: int = MAX_LEVEL) -> tuple[int, ...]:
 
 def base_xp_for_level(level: int) -> int:
     """
-    Calculate base XP required for a given level using RuneScape formula.
+    Calculate base XP required for a given level using standard formula.
 
     Args:
         level: The target level (1-99)

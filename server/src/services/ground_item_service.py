@@ -6,12 +6,17 @@ Ground items have:
 - Loot protection period (only dropper can pick up initially)
 - Visibility based on chunk range
 - Death drop mechanics
+
+Ground items are stored in both:
+- PostgreSQL (persistence across restarts)
+- Valkey (hot data for game loop performance)
 """
 
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from glide import GlideClient
 from sqlalchemy import select, delete, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -27,6 +32,7 @@ from ..schemas.item import (
 )
 from .item_service import ItemService
 from .inventory_service import InventoryService
+from .ground_item_valkey_service import GroundItemValkeyService
 
 
 def _utc_now_naive() -> datetime:
@@ -64,6 +70,7 @@ class GroundItemService:
         quantity: int = 1,
         dropped_by: Optional[int] = None,
         current_durability: Optional[int] = None,
+        valkey: Optional[GlideClient] = None,
     ) -> Optional[GroundItem]:
         """
         Create a ground item (drop item on the ground).
@@ -77,6 +84,7 @@ class GroundItemService:
             quantity: Number of items in stack
             dropped_by: Player ID who dropped the item (None for world spawns)
             current_durability: Current durability if applicable
+            valkey: Optional Valkey client (if provided, also adds to Valkey cache)
 
         Returns:
             The created GroundItem or None if item not found
@@ -116,6 +124,24 @@ class GroundItemService:
         await db.commit()
         await db.refresh(ground_item)
 
+        # Also add to Valkey cache if client provided
+        if valkey:
+            await GroundItemValkeyService.add_ground_item(
+                valkey=valkey,
+                ground_item_id=ground_item.id,
+                item_id=item_id,
+                item_name=item.name,
+                display_name=item.display_name,
+                rarity=rarity,
+                map_id=map_id,
+                x=x,
+                y=y,
+                quantity=quantity,
+                dropped_by_player_id=dropped_by,
+                public_at=public_at.timestamp(),
+                despawn_at=despawn_at.timestamp(),
+            )
+
         logger.info(
             "Created ground item",
             extra={
@@ -127,6 +153,7 @@ class GroundItemService:
                 "quantity": quantity,
                 "dropped_by": dropped_by,
                 "despawn_at": despawn_at.isoformat(),
+                "valkey_cached": valkey is not None,
             },
         )
 
@@ -141,6 +168,7 @@ class GroundItemService:
         x: int,
         y: int,
         quantity: Optional[int] = None,
+        valkey: Optional[GlideClient] = None,
     ) -> DropItemResult:
         """
         Drop an item from player's inventory onto the ground.
@@ -153,6 +181,7 @@ class GroundItemService:
             x: Player's tile X position
             y: Player's tile Y position
             quantity: Number to drop (None = entire stack)
+            valkey: Optional Valkey client (if provided, also adds to Valkey cache)
 
         Returns:
             DropItemResult with success status
@@ -188,6 +217,7 @@ class GroundItemService:
             quantity=drop_quantity,
             dropped_by=player_id,
             current_durability=inv_item.current_durability,
+            valkey=valkey,
         )
 
         if not ground_item:
@@ -205,6 +235,11 @@ class GroundItemService:
             # Rollback ground item creation
             await db.delete(ground_item)
             await db.commit()
+            # Also remove from Valkey if it was added
+            if valkey:
+                await GroundItemValkeyService.remove_ground_item(
+                    valkey, ground_item.id, map_id
+                )
             return DropItemResult(
                 success=False,
                 message=f"Failed to remove from inventory: {remove_result.message}",
@@ -234,6 +269,7 @@ class GroundItemService:
         player_x: int,
         player_y: int,
         player_map_id: str,
+        valkey: Optional[GlideClient] = None,
     ) -> PickupItemResult:
         """
         Pick up a ground item.
@@ -252,6 +288,7 @@ class GroundItemService:
             player_x: Player's current tile X
             player_y: Player's current tile Y
             player_map_id: Player's current map ID
+            valkey: Optional Valkey client (if provided, also removes from Valkey cache)
 
         Returns:
             PickupItemResult with success status
@@ -284,8 +321,12 @@ class GroundItemService:
         # Check if item has despawned
         now = _utc_now_naive()
         if ground_item.despawn_at <= now:
+            map_id = ground_item.map_id
             await db.delete(ground_item)
             await db.commit()
+            # Also remove from Valkey if provided
+            if valkey:
+                await GroundItemValkeyService.remove_ground_item(valkey, ground_item_id, map_id)
             return PickupItemResult(
                 success=False,
                 message="Item has despawned",
@@ -329,6 +370,11 @@ class GroundItemService:
             ground_item.quantity = add_result.overflow_quantity
             await db.commit()
             
+            # Update quantity in Valkey if provided
+            if valkey:
+                item_key = f"ground_item:{ground_item_id}"
+                await valkey.hset(item_key, {"quantity": str(add_result.overflow_quantity)})
+            
             logger.info(
                 "Partial item pickup",
                 extra={
@@ -346,8 +392,13 @@ class GroundItemService:
             )
 
         # Remove ground item completely
+        map_id = ground_item.map_id
         await db.delete(ground_item)
         await db.commit()
+        
+        # Also remove from Valkey if provided
+        if valkey:
+            await GroundItemValkeyService.remove_ground_item(valkey, ground_item_id, map_id)
 
         logger.info(
             "Player picked up item",
@@ -615,3 +666,120 @@ class GroundItemService:
             .options(selectinload(GroundItem.item))
         )
         return list(result.scalars().all())
+
+    @staticmethod
+    async def load_ground_items_to_valkey(
+        db: AsyncSession,
+        valkey: GlideClient,
+    ) -> int:
+        """
+        Load all ground items from database to Valkey on server startup.
+
+        Args:
+            db: Database session
+            valkey: Valkey client
+
+        Returns:
+            Number of items loaded
+        """
+        now = _utc_now_naive()
+
+        # Get all non-expired ground items with their item info
+        result = await db.execute(
+            select(GroundItem)
+            .where(GroundItem.despawn_at > now)
+            .options(selectinload(GroundItem.item))
+        )
+        ground_items = list(result.scalars().all())
+
+        if not ground_items:
+            logger.info("No ground items to load from database")
+            return 0
+
+        # Find max ID to set counter
+        max_id = max(gi.id for gi in ground_items)
+        await GroundItemValkeyService.set_next_id(valkey, max_id + 1)
+
+        # Load each item into Valkey
+        for gi in ground_items:
+            await GroundItemValkeyService.add_ground_item(
+                valkey=valkey,
+                ground_item_id=gi.id,
+                item_id=gi.item_id,
+                item_name=gi.item.name,
+                display_name=gi.item.display_name,
+                rarity=gi.item.rarity,
+                map_id=gi.map_id,
+                x=gi.x,
+                y=gi.y,
+                quantity=gi.quantity,
+                dropped_by_player_id=gi.dropped_by,
+                public_at=gi.public_at.timestamp() if gi.public_at else None,
+                despawn_at=gi.despawn_at.timestamp() if gi.despawn_at else None,
+            )
+
+        logger.info(
+            "Loaded ground items from database to Valkey",
+            extra={"count": len(ground_items)},
+        )
+        return len(ground_items)
+
+    @staticmethod
+    async def sync_valkey_to_database(
+        db: AsyncSession,
+        valkey: GlideClient,
+    ) -> int:
+        """
+        Sync ground items from Valkey back to database.
+
+        This updates quantities and removes items that have been picked up.
+        Called on server shutdown and periodically.
+
+        Note: This is a one-way sync from Valkey to DB. New items created
+        during normal operation are written to both DB and Valkey.
+
+        Args:
+            db: Database session
+            valkey: Valkey client
+
+        Returns:
+            Number of items synced
+        """
+        # Get all ground items from Valkey
+        valkey_items = await GroundItemValkeyService.get_all_ground_items(valkey)
+        valkey_ids = {item["id"] for item in valkey_items}
+
+        # Get all ground items from database
+        result = await db.execute(select(GroundItem))
+        db_items = list(result.scalars().all())
+
+        synced = 0
+
+        # Remove items from DB that are no longer in Valkey (picked up)
+        for db_item in db_items:
+            if db_item.id not in valkey_ids:
+                await db.delete(db_item)
+                synced += 1
+                logger.debug(
+                    "Removed ground item from DB (picked up)",
+                    extra={"ground_item_id": db_item.id},
+                )
+
+        # Update quantities for items still in Valkey
+        valkey_by_id = {item["id"]: item for item in valkey_items}
+        for db_item in db_items:
+            if db_item.id in valkey_by_id:
+                valkey_item = valkey_by_id[db_item.id]
+                if db_item.quantity != valkey_item["quantity"]:
+                    db_item.quantity = valkey_item["quantity"]
+                    synced += 1
+
+        await db.commit()
+
+        if synced > 0:
+            logger.info(
+                "Synced ground items from Valkey to database",
+                extra={"synced": synced},
+            )
+
+        return synced

@@ -18,6 +18,7 @@ from server.src.core.security import (
     get_password_hash,
     verify_password,
 )
+from server.src.core.skills import HITPOINTS_START_LEVEL
 from server.src.models.player import Player
 from server.src.schemas.player import PlayerCreate, PlayerPublic
 from server.src.schemas.token import Token
@@ -54,6 +55,7 @@ async def register_player(
         x_coord=spawn_x,
         y_coord=spawn_y,
         map_id=default_map_id,
+        current_hp=HITPOINTS_START_LEVEL,  # HP = Hitpoints level
     )
 
     db.add(db_player)

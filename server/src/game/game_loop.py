@@ -20,6 +20,7 @@ from server.src.core.metrics import (
     game_state_broadcasts_total,
 )
 from server.src.services.map_service import get_map_manager
+from server.src.services.ground_item_valkey_service import GroundItemValkeyService
 from common.src.protocol import (
     GameMessage,
     MessageType,
@@ -41,8 +42,16 @@ VISIBILITY_RADIUS = 1
 player_chunk_positions: Dict[str, Tuple[int, int]] = {}
 
 # Track last known visible state per player for diff calculation
-# {username: {other_username: {"x": int, "y": int}}}
-player_visible_state: Dict[str, Dict[str, Dict[str, Any]]] = {}
+# Contains both players and ground items in a nested structure:
+# {username: {"players": {other_username: {...}}, "ground_items": {ground_item_id: {...}}}}
+player_visible_state: Dict[str, Dict[str, Dict]] = {}
+
+# Global tick counter (incremented every game tick)
+_global_tick_counter: int = 0
+
+# Track when each player connected (in tick count) for staggered HP regen
+# {username: tick_count_at_login}
+player_login_ticks: Dict[str, int] = {}
 
 
 def get_chunk_coordinates(x: int, y: int, chunk_size: int = CHUNK_SIZE) -> Tuple[int, int]:
@@ -77,15 +86,15 @@ def get_visible_entities(
     player_username: str
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Get entities visible to a player based on chunk range.
+    Get player entities visible to a player based on chunk range.
     
     Args:
         player_x, player_y: Player's tile position
-        all_entities: All entities on the map
+        all_entities: All player entities on the map
         player_username: The player's username (to exclude self)
         
     Returns:
-        Dict of {username: entity_data} for visible entities
+        Dict of {username: entity_data} for visible player entities
     """
     visible = {}
     for entity in all_entities:
@@ -98,9 +107,12 @@ def get_visible_entities(
         
         if is_in_visible_range(player_x, player_y, entity_x, entity_y):
             visible[entity_username] = {
+                "type": "player",
                 "username": entity_username,
                 "x": entity_x,
                 "y": entity_y,
+                "current_hp": entity.get("current_hp", 0),
+                "max_hp": entity.get("max_hp", 0),
             }
     
     return visible
@@ -111,11 +123,11 @@ def compute_entity_diff(
     last_visible: Dict[str, Dict[str, Any]]
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Compute the difference between current and last visible state.
+    Compute the difference between current and last visible player state.
     
     Args:
-        current_visible: Currently visible entities
-        last_visible: Previously visible entities
+        current_visible: Currently visible player entities
+        last_visible: Previously visible player entities
         
     Returns:
         Dict with "added", "updated", and "removed" entity lists
@@ -133,13 +145,57 @@ def compute_entity_diff(
     
     # Entities that left visible range
     for username in last_keys - current_keys:
-        removed.append({"username": username})
+        removed.append({"type": "player", "username": username})
     
-    # Entities that may have moved
+    # Entities that may have moved or changed HP
     for username in current_keys & last_keys:
         current = current_visible[username]
         last = last_visible[username]
-        if current["x"] != last["x"] or current["y"] != last["y"]:
+        if (
+            current["x"] != last["x"] 
+            or current["y"] != last["y"]
+            or current.get("current_hp") != last.get("current_hp")
+            or current.get("max_hp") != last.get("max_hp")
+        ):
+            updated.append(current)
+    
+    return {"added": added, "updated": updated, "removed": removed}
+
+
+def compute_ground_item_diff(
+    current_visible: Dict[int, Dict[str, Any]], 
+    last_visible: Dict[int, Dict[str, Any]]
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Compute the difference between current and last visible ground item state.
+    
+    Args:
+        current_visible: Currently visible ground items {id: entity_data}
+        last_visible: Previously visible ground items {id: entity_data}
+        
+    Returns:
+        Dict with "added", "updated", and "removed" entity lists
+    """
+    added = []
+    updated = []
+    removed = []
+    
+    current_keys = set(current_visible.keys())
+    last_keys = set(last_visible.keys())
+    
+    # Ground items that appeared
+    for item_id in current_keys - last_keys:
+        added.append(current_visible[item_id])
+    
+    # Ground items that disappeared (picked up or despawned)
+    for item_id in last_keys - current_keys:
+        removed.append({"type": "ground_item", "id": item_id})
+    
+    # Ground items that changed (quantity changed due to partial pickup)
+    for item_id in current_keys & last_keys:
+        current = current_visible[item_id]
+        last = last_visible[item_id]
+        if current.get("quantity") != last.get("quantity"):
             updated.append(current)
     
     return {"added": added, "updated": updated, "removed": removed}
@@ -266,10 +322,17 @@ def cleanup_disconnected_player(username: str) -> None:
     """Clean up state tracking for a disconnected player."""
     player_chunk_positions.pop(username, None)
     player_visible_state.pop(username, None)
+    player_login_ticks.pop(username, None)
     
-    # Also remove this player from other players' visible state
+    # Also remove this player from other players' visible player state
     for other_state in player_visible_state.values():
-        other_state.pop(username, None)
+        players_dict = other_state.get("players", {})
+        players_dict.pop(username, None)
+
+
+def register_player_login(username: str) -> None:
+    """Register a player's login tick for staggered HP regen."""
+    player_login_ticks[username] = _global_tick_counter
 
 
 async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
@@ -283,13 +346,18 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
         manager: The connection manager.
         valkey: The Valkey client.
     """
+    global _global_tick_counter
     tick_interval = 1 / settings.GAME_TICK_RATE
+    hp_regen_interval = settings.HP_REGEN_INTERVAL_TICKS
 
     while True:
         loop_start_time = time.time()
         try:
             # Track game loop iteration
             game_loop_iterations_total.inc()
+            
+            # Increment global tick counter
+            _global_tick_counter += 1
 
             # Process each active map
             active_maps = list(manager.connections_by_map.keys())
@@ -310,12 +378,40 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     if data:
                         x = int(data.get(b"x", b"0"))
                         y = int(data.get(b"y", b"0"))
+                        current_hp = int(data.get(b"current_hp", b"10"))
+                        max_hp = int(data.get(b"max_hp", b"10"))
+                        
+                        # Per-player HP regeneration logic
+                        # Each player regens every hp_regen_interval ticks since their login
+                        login_tick = player_login_ticks.get(username, _global_tick_counter)
+                        ticks_since_login = _global_tick_counter - login_tick
+                        should_regen = (
+                            ticks_since_login > 0 
+                            and ticks_since_login % hp_regen_interval == 0
+                            and current_hp < max_hp
+                        )
+                        
+                        if should_regen:
+                            current_hp = min(current_hp + 1, max_hp)
+                            # Update Valkey with new HP
+                            await valkey.hset(player_key, {"current_hp": str(current_hp)})
+                            logger.debug(
+                                "HP regenerated",
+                                extra={
+                                    "username": username,
+                                    "new_hp": current_hp,
+                                    "max_hp": max_hp,
+                                    "ticks_since_login": ticks_since_login,
+                                },
+                            )
                         
                         all_player_data.append({
                             "id": username,
                             "username": username,
                             "x": x,
                             "y": y,
+                            "current_hp": current_hp,
+                            "max_hp": max_hp,
                         })
                         player_positions[username] = (x, y)
 
@@ -330,22 +426,66 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     
                     player_x, player_y = player_positions[username]
                     
-                    # Get entities currently visible to this player
-                    current_visible = get_visible_entities(
+                    # Get player entities currently visible to this player
+                    current_visible_players = get_visible_entities(
                         player_x, player_y, all_player_data, username
                     )
                     
-                    # Get last known visible state for this player
-                    last_visible = player_visible_state.get(username, {})
+                    # Get ground items visible to this player
+                    # We need the player_id for loot protection check
+                    player_key = f"player:{username}"
+                    player_data = await valkey.hgetall(player_key)
+                    player_id = int(player_data.get(b"player_id", b"0")) if player_data else None
                     
-                    # Compute diff
-                    diff = compute_entity_diff(current_visible, last_visible)
+                    visible_ground_items = await GroundItemValkeyService.get_visible_ground_items(
+                        valkey=valkey,
+                        map_id=map_id,
+                        player_x=player_x,
+                        player_y=player_y,
+                        player_id=player_id,
+                        tile_radius=32,  # Same as visibility range
+                    )
+                    
+                    # Convert to dict keyed by ground item ID
+                    current_visible_ground_items = {}
+                    for item in visible_ground_items:
+                        current_visible_ground_items[item["id"]] = {
+                            "type": "ground_item",
+                            "id": item["id"],
+                            "item_id": item["item_id"],
+                            "item_name": item["item_name"],
+                            "display_name": item["display_name"],
+                            "rarity": item["rarity"],
+                            "x": item["x"],
+                            "y": item["y"],
+                            "quantity": item["quantity"],
+                            "is_protected": item.get("is_protected", False),
+                        }
+                    
+                    # Get last known visible state for this player
+                    last_state = player_visible_state.get(username, {"players": {}, "ground_items": {}})
+                    last_visible_players = last_state.get("players", {})
+                    last_visible_ground_items = last_state.get("ground_items", {})
+                    
+                    # Compute diffs for players and ground items
+                    player_diff = compute_entity_diff(current_visible_players, last_visible_players)
+                    ground_item_diff = compute_ground_item_diff(current_visible_ground_items, last_visible_ground_items)
+                    
+                    # Combine diffs
+                    combined_diff = {
+                        "added": player_diff["added"] + ground_item_diff["added"],
+                        "updated": player_diff["updated"] + ground_item_diff["updated"],
+                        "removed": player_diff["removed"] + ground_item_diff["removed"],
+                    }
                     
                     # Send diff update if there are changes
-                    await send_diff_update(username, websocket, diff)
+                    await send_diff_update(username, websocket, combined_diff)
                     
                     # Update stored visible state
-                    player_visible_state[username] = current_visible
+                    player_visible_state[username] = {
+                        "players": current_visible_players,
+                        "ground_items": current_visible_ground_items,
+                    }
                     
                     # Check if player needs chunk updates
                     await send_chunk_update_if_needed(

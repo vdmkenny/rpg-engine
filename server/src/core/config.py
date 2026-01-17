@@ -163,6 +163,16 @@ class Settings(BaseSettings):
         )
     )
 
+    # HP regeneration settings from config.yml
+    HP_REGEN_INTERVAL_TICKS: int = int(
+        game_config.get("game", {}).get("hp_regen", {}).get("interval_ticks", 200)
+    )
+
+    # Death and respawn settings from config.yml
+    DEATH_RESPAWN_DELAY: float = float(
+        game_config.get("game", {}).get("death", {}).get("respawn_delay", 5.0)
+    )
+
     # Database settings
     DATABASE_ECHO: bool = os.getenv("DATABASE_ECHO", "").lower() in ("true", "1", "yes")
 

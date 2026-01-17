@@ -22,6 +22,7 @@ from server.src.core.skills import (
     xp_to_next_level,
     progress_to_next_level,
     MAX_LEVEL,
+    HITPOINTS_START_LEVEL,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,10 @@ class SkillService:
         db: AsyncSession, player_id: int
     ) -> list[PlayerSkill]:
         """
-        Create PlayerSkill rows for all skills at level 1 with 0 XP.
+        Create PlayerSkill rows for all skills.
+
+        Most skills start at level 1 with 0 XP.
+        Hitpoints starts at level 10 with the XP required for level 10.
 
         This is called when a new player is created to give them
         all available skills. Uses INSERT ON CONFLICT for efficiency
@@ -122,16 +126,29 @@ class SkillService:
             # Still no skills, return empty list
             return []
 
+        # Calculate XP needed for Hitpoints starting level
+        hitpoints_xp_multiplier = get_skill_xp_multiplier(SkillType.HITPOINTS)
+        hitpoints_start_xp = xp_for_level(HITPOINTS_START_LEVEL, hitpoints_xp_multiplier)
+
         # Build values for all skills in a single INSERT
-        values = [
-            {
-                "player_id": player_id,
-                "skill_id": skill_id,
-                "current_level": 1,
-                "experience": 0,
-            }
-            for skill_id in skill_id_map.values()
-        ]
+        values = []
+        for skill_name, skill_id in skill_id_map.items():
+            if skill_name == "hitpoints":
+                # Hitpoints starts at level 10
+                values.append({
+                    "player_id": player_id,
+                    "skill_id": skill_id,
+                    "current_level": HITPOINTS_START_LEVEL,
+                    "experience": hitpoints_start_xp,
+                })
+            else:
+                # All other skills start at level 1 with 0 XP
+                values.append({
+                    "player_id": player_id,
+                    "skill_id": skill_id,
+                    "current_level": 1,
+                    "experience": 0,
+                })
 
         # Use INSERT ON CONFLICT DO NOTHING for idempotency
         # If the player already has a skill, it won't be overwritten
@@ -306,3 +323,41 @@ class SkillService:
         )
         player_skills = result.scalars().all()
         return sum(ps.current_level for ps in player_skills)
+
+    @staticmethod
+    async def get_hitpoints_level(db: AsyncSession, player_id: int) -> int:
+        """
+        Get the player's Hitpoints skill level.
+
+        This is the base max HP before equipment bonuses.
+
+        Args:
+            db: Database session
+            player_id: The player's database ID
+
+        Returns:
+            Hitpoints level (minimum HITPOINTS_START_LEVEL if not found)
+        """
+        # Get the hitpoints skill ID
+        skill_result = await db.execute(
+            select(Skill).where(Skill.name == "hitpoints")
+        )
+        skill_record = skill_result.scalar_one_or_none()
+
+        if skill_record is None:
+            # Skill not synced yet, return default
+            return HITPOINTS_START_LEVEL
+
+        # Get player's hitpoints level
+        result = await db.execute(
+            select(PlayerSkill).where(
+                PlayerSkill.player_id == player_id,
+                PlayerSkill.skill_id == skill_record.id,
+            )
+        )
+        player_skill = result.scalar_one_or_none()
+
+        if player_skill is None:
+            return HITPOINTS_START_LEVEL
+
+        return player_skill.current_level

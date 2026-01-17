@@ -77,6 +77,64 @@ cd docker && docker-compose up --build
 cd docker && docker-compose --profile test run test-collision
 ```
 
+### Running Tests in Docker (Recommended)
+
+The preferred way to run tests is using Docker, which provides a consistent environment with PostgreSQL and Valkey:
+
+```bash
+# 1. Start the test containers (builds if needed)
+cd docker && docker-compose -f docker-compose.test.yml up -d --build
+
+# 2. Run unit tests only
+docker exec docker-server-1 pytest -v
+
+# 3. Run tests in parallel
+docker exec docker-server-1 pytest -v -n auto
+
+# 4. Run a specific test file
+docker exec docker-server-1 pytest server/src/tests/test_hitpoints.py -v
+
+# 5. Run tests matching a pattern
+docker exec docker-server-1 pytest -k "test_login" -v
+
+# 6. Stop test containers when done
+cd docker && docker-compose -f docker-compose.test.yml down
+```
+
+The Docker test environment provides:
+- **PostgreSQL** database on port 5433 (mapped from container's 5432)
+- **Valkey** (Redis-compatible) on port 6380 (mapped from container's 6379)
+- All Python dependencies pre-installed
+- Volume mount of the source code for live changes
+
+### Running Integration Tests
+
+Integration tests (WebSocket tests) require the server to be running and database migrations to be applied. These tests are skipped by default unless `RUN_INTEGRATION_TESTS=1` is set.
+
+```bash
+# 1. Start the test containers (if not already running)
+cd docker && docker-compose -f docker-compose.test.yml up -d --build
+
+# 2. Run database migrations (required before first run or after schema changes)
+docker exec docker-server-1 bash -c "cd server && alembic upgrade head"
+
+# 3. Start the server in the background inside the container
+docker exec -d docker-server-1 uvicorn server.src.main:app --host 0.0.0.0 --port 8000
+
+# 4. Wait a moment for server to start, then run all tests including integration tests
+docker exec docker-server-1 bash -c "sleep 2 && RUN_INTEGRATION_TESTS=1 pytest -v"
+
+# 5. Or run only integration tests (WebSocket tests)
+docker exec docker-server-1 bash -c "RUN_INTEGRATION_TESTS=1 pytest -v -k 'websocket'"
+
+# 6. Stop test containers when done
+cd docker && docker-compose -f docker-compose.test.yml down
+```
+
+**Note**: Integration tests connect to the running server via WebSocket and test real authentication, movement, chat, inventory, and equipment operations.
+
+**IMPORTANT FOR AI AGENTS**: When running tests, ALWAYS run integration tests as well. Use the full integration test workflow above to ensure both unit tests and WebSocket integration tests pass. Never skip integration tests when verifying changes.
+
 ### Running the Application
 
 ```bash

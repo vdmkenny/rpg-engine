@@ -33,6 +33,9 @@ class Player(Base):
     y_coord = Column(Integer, nullable=False)
     map_id = Column(String, nullable=False)
 
+    # Hitpoints (current HP, persisted - max HP derived from Hitpoints skill + equipment)
+    current_hp = Column(Integer, nullable=False, default=10)
+
     # Relationships
     skills = relationship(
         "PlayerSkill", back_populates="player", cascade="all, delete-orphan"

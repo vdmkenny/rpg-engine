@@ -87,7 +87,7 @@ class TestEquipmentSlot:
         assert len(EquipmentSlot) == 11
 
     def test_expected_slots_exist(self):
-        """All expected RuneScape-style slots should exist."""
+        """All expected equipment slots should exist."""
         expected = [
             "head", "cape", "amulet", "weapon", "body",
             "shield", "legs", "gloves", "boots", "ring", "ammo"

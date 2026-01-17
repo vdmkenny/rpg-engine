@@ -11,8 +11,7 @@ from typing import Optional
 
 
 class ItemRarity(Enum):
-    """
-    WoW-style item rarity with display colors.
+    """Item rarity with display colors.
 
     Each rarity has a value and associated hex color for UI display.
     """
@@ -63,7 +62,7 @@ class ItemCategory(Enum):
 
 
 class EquipmentSlot(Enum):
-    """RuneScape-style equipment slots (11 total)."""
+    """Equipment slots (11 total)."""
 
     HEAD = "head"
     CAPE = "cape"

@@ -405,16 +405,22 @@ class TestVisibilitySystem:
 
     def test_cleanup_disconnected_player(self):
         """Cleanup should remove all traces of a player."""
-        # Set up some state
-        player_visible_state["testuser"] = {"other": {"x": 1, "y": 1}}
-        player_visible_state["observer"] = {"testuser": {"x": 2, "y": 2}}
+        # Set up some state with the new nested structure
+        player_visible_state["testuser"] = {
+            "players": {"other": {"x": 1, "y": 1}},
+            "ground_items": {}
+        }
+        player_visible_state["observer"] = {
+            "players": {"testuser": {"x": 2, "y": 2}},
+            "ground_items": {}
+        }
         player_chunk_positions["testuser"] = (0, 0)
         
         cleanup_disconnected_player("testuser")
         
         assert "testuser" not in player_visible_state
         assert "testuser" not in player_chunk_positions
-        assert "testuser" not in player_visible_state.get("observer", {})
+        assert "testuser" not in player_visible_state.get("observer", {}).get("players", {})
 
 
 class TestFakeValkey:
