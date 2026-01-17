@@ -9,7 +9,7 @@ A 2D multiplayer RPG game with:
 - **Client**: Pygame thin client - async Python
 - **Common**: Shared Pydantic protocol definitions
 
-Python version: **3.12**
+Python version: **3.14**
 
 ## Project Structure
 
