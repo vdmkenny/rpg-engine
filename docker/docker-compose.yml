@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:17
+    image: postgres:18
     platform: linux/amd64
     container_name: rpg_db
     environment:

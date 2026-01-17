@@ -22,6 +22,7 @@ from server.src.models.player import Player
 from server.src.schemas.player import PlayerCreate, PlayerPublic
 from server.src.schemas.token import Token
 from server.src.services.map_service import map_manager
+from server.src.services.skill_service import SkillService
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -59,6 +60,10 @@ async def register_player(
     try:
         await db.commit()
         await db.refresh(db_player)
+
+        # Grant all skills to the new player
+        await SkillService.grant_all_skills_to_player(db, db_player.id)
+
         logger.info(
             "New player registered",
             extra={

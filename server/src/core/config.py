@@ -1,7 +1,7 @@
 import os
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -82,6 +82,55 @@ class Settings(BaseSettings):
     # Logging settings
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
+    # Skill settings from config.yml
+    SKILL_MAX_LEVEL: int = int(
+        game_config.get("game", {}).get("skills", {}).get("max_level", 99)
+    )
+    SKILL_XP_MULTIPLIERS: Dict[str, float] = game_config.get("game", {}).get(
+        "skills", {}
+    ).get("xp_multipliers", {})
+    SKILL_DEFAULT_XP_MULTIPLIER: float = float(
+        game_config.get("game", {}).get("skills", {}).get("default_xp_multiplier", 1.0)
+    )
+
+    # Inventory settings from config.yml
+    INVENTORY_MAX_SLOTS: int = int(
+        game_config.get("game", {}).get("inventory", {}).get("max_slots", 28)
+    )
+
+    # Equipment settings from config.yml
+    EQUIPMENT_DURABILITY_LOSS_PER_HIT: int = int(
+        game_config.get("game", {}).get("equipment", {}).get("durability_loss_per_hit", 1)
+    )
+    EQUIPMENT_REPAIR_COST_MULTIPLIER: float = float(
+        game_config.get("game", {}).get("equipment", {}).get("repair_cost_multiplier", 0.1)
+    )
+
+    # Ground items settings from config.yml
+    GROUND_ITEMS_DESPAWN_TIMES: Dict[str, int] = game_config.get("game", {}).get(
+        "ground_items", {}
+    ).get("despawn_times", {
+        "poor": 60,
+        "common": 120,
+        "uncommon": 180,
+        "rare": 300,
+        "epic": 600,
+        "legendary": 900,
+    })
+    GROUND_ITEMS_LOOT_PROTECTION_TIMES: Dict[str, int] = game_config.get("game", {}).get(
+        "ground_items", {}
+    ).get("loot_protection_times", {
+        "poor": 30,
+        "common": 45,
+        "uncommon": 60,
+        "rare": 90,
+        "epic": 120,
+        "legendary": 180,
+    })
+    GROUND_ITEMS_CLEANUP_INTERVAL: int = int(
+        game_config.get("game", {}).get("ground_items", {}).get("cleanup_interval", 30)
+    )
 
     # Database settings
     DATABASE_ECHO: bool = os.getenv("DATABASE_ECHO", "").lower() in ("true", "1", "yes")

@@ -37,6 +37,15 @@ class Player(Base):
     skills = relationship(
         "PlayerSkill", back_populates="player", cascade="all, delete-orphan"
     )
+    inventory = relationship(
+        "PlayerInventory", back_populates="player", cascade="all, delete-orphan"
+    )
+    equipment = relationship(
+        "PlayerEquipment", back_populates="player", cascade="all, delete-orphan"
+    )
+    dropped_items = relationship(
+        "GroundItem", back_populates="dropped_by_player", cascade="all, delete-orphan"
+    )
 
     def __init__(self, **kwargs):
         defaults = {

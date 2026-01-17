@@ -17,3 +17,69 @@ game:
     map_id: "samplemap"
     x: 25
     y: 25
+
+  # Skills configuration
+  skills:
+    # Maximum level a skill can reach
+    max_level: 99
+    
+    # Default XP multiplier for skills not explicitly configured
+    # 1.0 = standard RuneScape curve (~13M XP to level 99)
+    default_xp_multiplier: 1.0
+    
+    # Per-skill XP multipliers
+    # Lower values = faster leveling, Higher values = slower leveling
+    # Examples:
+    #   0.5 = ~6.5M XP to 99 (twice as fast)
+    #   1.0 = ~13M XP to 99 (standard)
+    #   2.0 = ~26M XP to 99 (twice as slow)
+    xp_multipliers:
+      # Combat skills
+      attack: 1.0
+      strength: 1.0
+      defence: 1.0
+      # Gathering skills (slightly faster progression)
+      mining: 0.8
+      fishing: 0.8
+      woodcutting: 0.8
+      # Crafting skills
+      cooking: 0.7
+      crafting: 1.0
+
+  # Inventory configuration
+  inventory:
+    # Number of inventory slots per player
+    max_slots: 28
+
+  # Equipment and durability configuration
+  equipment:
+    # How much durability is lost per combat action
+    durability_loss_per_hit: 1
+    # Repair cost = item_value * multiplier * damage_percent
+    repair_cost_multiplier: 0.1
+
+  # Ground items configuration
+  ground_items:
+    # Despawn times in seconds (item disappears from ground)
+    # Based on item rarity - rarer items last longer
+    despawn_times:
+      poor: 60        # 1 minute
+      common: 120     # 2 minutes
+      uncommon: 180   # 3 minutes
+      rare: 300       # 5 minutes
+      epic: 600       # 10 minutes
+      legendary: 900  # 15 minutes
+    
+    # Loot protection times in seconds
+    # During this time, only the player who dropped the item can pick it up
+    # After this time, anyone can pick it up (first come first serve)
+    loot_protection_times:
+      poor: 30        # 30 seconds
+      common: 45      # 45 seconds
+      uncommon: 60    # 1 minute
+      rare: 90        # 1.5 minutes
+      epic: 120       # 2 minutes
+      legendary: 180  # 3 minutes
+    
+    # How often the cleanup task runs to remove expired items (seconds)
+    cleanup_interval: 30

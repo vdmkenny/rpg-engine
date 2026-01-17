@@ -9,13 +9,28 @@ from typing import Dict, Any, List, Set, Optional, Tuple
 
 
 class MessageType(str, Enum):
-    # Client to Server
+    # Client to Server - Authentication & Movement
     AUTHENTICATE = "AUTHENTICATE"
     MOVE_INTENT = "MOVE_INTENT"
     SEND_CHAT_MESSAGE = "SEND_CHAT_MESSAGE"
     REQUEST_CHUNKS = "REQUEST_CHUNKS"
 
-    # Server to Client
+    # Client to Server - Inventory
+    REQUEST_INVENTORY = "REQUEST_INVENTORY"
+    MOVE_INVENTORY_ITEM = "MOVE_INVENTORY_ITEM"
+    SORT_INVENTORY = "SORT_INVENTORY"
+    DROP_ITEM = "DROP_ITEM"
+
+    # Client to Server - Equipment
+    REQUEST_EQUIPMENT = "REQUEST_EQUIPMENT"
+    EQUIP_ITEM = "EQUIP_ITEM"
+    UNEQUIP_ITEM = "UNEQUIP_ITEM"
+    REQUEST_STATS = "REQUEST_STATS"
+
+    # Client to Server - Ground Items
+    PICKUP_ITEM = "PICKUP_ITEM"
+
+    # Server to Client - Core
     WELCOME = "WELCOME"
     GAME_STATE_UPDATE = "GAME_STATE_UPDATE"
     NEW_CHAT_MESSAGE = "NEW_CHAT_MESSAGE"
@@ -23,6 +38,19 @@ class MessageType(str, Enum):
     ERROR = "ERROR"
     SERVER_SHUTDOWN = "SERVER_SHUTDOWN"
     PLAYER_DISCONNECT = "PLAYER_DISCONNECT"
+
+    # Server to Client - Inventory
+    INVENTORY_UPDATE = "INVENTORY_UPDATE"
+
+    # Server to Client - Equipment
+    EQUIPMENT_UPDATE = "EQUIPMENT_UPDATE"
+    STATS_UPDATE = "STATS_UPDATE"
+
+    # Server to Client - Ground Items
+    GROUND_ITEMS_UPDATE = "GROUND_ITEMS_UPDATE"
+
+    # Server to Client - Operation Results
+    OPERATION_RESULT = "OPERATION_RESULT"
 
 
 class Direction(str, Enum):
@@ -94,3 +122,59 @@ class MovementValidator:
 
         # Check if position has an obstacle
         return (x, y) not in self.obstacles
+
+
+# --- Inventory Payload Schemas ---
+
+
+class MoveInventoryItemPayload(BaseModel):
+    """Payload for MOVE_INVENTORY_ITEM messages."""
+    from_slot: int
+    to_slot: int
+
+
+class SortInventoryPayload(BaseModel):
+    """Payload for SORT_INVENTORY messages."""
+    sort_type: str  # InventorySortType value
+
+
+class DropItemPayload(BaseModel):
+    """Payload for DROP_ITEM messages."""
+    inventory_slot: int
+    quantity: Optional[int] = None  # None = drop entire stack
+
+
+# --- Equipment Payload Schemas ---
+
+
+class EquipItemPayload(BaseModel):
+    """Payload for EQUIP_ITEM messages."""
+    inventory_slot: int  # Inventory slot to equip from
+
+
+class UnequipItemPayload(BaseModel):
+    """Payload for UNEQUIP_ITEM messages."""
+    equipment_slot: str  # EquipmentSlot value
+
+
+# --- Ground Item Payload Schemas ---
+
+
+class PickupItemPayload(BaseModel):
+    """Payload for PICKUP_ITEM messages."""
+    ground_item_id: int
+
+
+# --- Operation Result Payload ---
+
+
+class OperationResultPayload(BaseModel):
+    """
+    Generic operation result payload.
+
+    Sent in response to client operations like equip, drop, pickup, etc.
+    """
+    operation: str  # e.g., "equip", "drop", "pickup", "sort"
+    success: bool
+    message: str
+    data: Optional[Dict[str, Any]] = None  # Additional operation-specific data

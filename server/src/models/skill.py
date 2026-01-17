@@ -10,6 +10,10 @@ from .base import Base
 class Skill(Base):
     """
     Static definition of a skill.
+
+    Skill metadata (category, description, xp_multiplier) is defined in
+    server/src/core/skills.py and config.yml. This table just stores
+    the skill names for foreign key relationships.
     """
 
     __tablename__ = "skills"
@@ -30,16 +34,20 @@ class Skill(Base):
 class PlayerSkill(Base):
     """
     Junction table linking a player to a skill and their progress.
+
+    The current_level is computed from experience using the XP formula
+    in server/src/core/skills.py with multipliers from config.yml.
+    It's stored here for query efficiency but should be recalculated
+    when experience changes.
     """
 
     __tablename__ = "player_skills"
 
     id = Column(Integer, primary_key=True)
-    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
-    skill_id = Column(Integer, ForeignKey("skills.id"), nullable=False)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False, index=True)
+    skill_id = Column(Integer, ForeignKey("skills.id"), nullable=False, index=True)
 
     current_level = Column(Integer, default=1, nullable=False)
-    max_level = Column(Integer, default=1, nullable=False)
     experience = Column(BigInteger, default=0, nullable=False)
 
     player = relationship("Player", back_populates="skills")
@@ -51,4 +59,4 @@ class PlayerSkill(Base):
     )
 
     def __repr__(self):
-        return f"<PlayerSkill(player_id={self.player_id}, skill_id={self.skill_id}, xp={self.experience})>"
+        return f"<PlayerSkill(player_id={self.player_id}, skill_id={self.skill_id}, level={self.current_level}, xp={self.experience})>"

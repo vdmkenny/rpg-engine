@@ -22,9 +22,26 @@ from server.src.core.metrics import (
     websocket_connections_active,
     players_online,
 )
+from server.src.core.items import InventorySortType, EquipmentSlot
 from server.src.models.player import Player
 from server.src.services.map_service import map_manager
-from common.src.protocol import GameMessage, MessageType, Direction, MoveIntentPayload, PlayerDisconnectPayload
+from server.src.services.inventory_service import InventoryService
+from server.src.services.equipment_service import EquipmentService
+from server.src.services.ground_item_service import GroundItemService
+from common.src.protocol import (
+    GameMessage,
+    MessageType,
+    Direction,
+    MoveIntentPayload,
+    PlayerDisconnectPayload,
+    MoveInventoryItemPayload,
+    SortInventoryPayload,
+    DropItemPayload,
+    EquipItemPayload,
+    UnequipItemPayload,
+    PickupItemPayload,
+    OperationResultPayload,
+)
 from server.src.game.game_loop import cleanup_disconnected_player
 
 router = APIRouter()
@@ -449,6 +466,351 @@ async def handle_chunk_request(
         )
 
 
+async def send_operation_result(
+    websocket: WebSocket,
+    operation: str,
+    success: bool,
+    message: str,
+    data: Optional[Dict] = None,
+):
+    """Send an operation result back to the client."""
+    result = GameMessage(
+        type=MessageType.OPERATION_RESULT,
+        payload=OperationResultPayload(
+            operation=operation,
+            success=success,
+            message=message,
+            data=data,
+        ).model_dump(),
+    )
+    await websocket.send_bytes(
+        msgpack.packb(result.model_dump(), use_bin_type=True)
+    )
+
+
+async def send_inventory_update(
+    websocket: WebSocket, db: AsyncSession, player_id: int
+):
+    """Send full inventory state to the client."""
+    inventory = await InventoryService.get_inventory_response(db, player_id)
+    update = GameMessage(
+        type=MessageType.INVENTORY_UPDATE,
+        payload=inventory.model_dump(),
+    )
+    await websocket.send_bytes(
+        msgpack.packb(update.model_dump(), use_bin_type=True)
+    )
+
+
+async def send_equipment_update(
+    websocket: WebSocket, db: AsyncSession, player_id: int
+):
+    """Send full equipment state to the client."""
+    equipment = await EquipmentService.get_equipment_response(db, player_id)
+    update = GameMessage(
+        type=MessageType.EQUIPMENT_UPDATE,
+        payload=equipment.model_dump(),
+    )
+    await websocket.send_bytes(
+        msgpack.packb(update.model_dump(), use_bin_type=True)
+    )
+
+
+async def send_stats_update(
+    websocket: WebSocket, db: AsyncSession, player_id: int
+):
+    """Send aggregated equipment stats to the client."""
+    stats = await EquipmentService.get_total_stats(db, player_id)
+    update = GameMessage(
+        type=MessageType.STATS_UPDATE,
+        payload=stats.model_dump(),
+    )
+    await websocket.send_bytes(
+        msgpack.packb(update.model_dump(), use_bin_type=True)
+    )
+
+
+async def handle_request_inventory(
+    player_id: int, db: AsyncSession, websocket: WebSocket
+):
+    """Handle REQUEST_INVENTORY message."""
+    try:
+        await send_inventory_update(websocket, db, player_id)
+    except Exception as e:
+        logger.error(
+            "Error handling inventory request",
+            extra={"player_id": player_id, "error": str(e)},
+        )
+        await send_operation_result(
+            websocket, "request_inventory", False, "Failed to get inventory"
+        )
+
+
+async def handle_move_inventory_item(
+    player_id: int, payload: dict, db: AsyncSession, websocket: WebSocket
+):
+    """Handle MOVE_INVENTORY_ITEM message."""
+    try:
+        move_payload = MoveInventoryItemPayload(**payload)
+        result = await InventoryService.move_item(
+            db, player_id, move_payload.from_slot, move_payload.to_slot
+        )
+
+        await send_operation_result(
+            websocket, "move_item", result.success, result.message
+        )
+
+        if result.success:
+            await send_inventory_update(websocket, db, player_id)
+
+    except Exception as e:
+        logger.error(
+            "Error handling move inventory item",
+            extra={"player_id": player_id, "error": str(e)},
+        )
+        await send_operation_result(
+            websocket, "move_item", False, "Failed to move item"
+        )
+
+
+async def handle_sort_inventory(
+    player_id: int, payload: dict, db: AsyncSession, websocket: WebSocket
+):
+    """Handle SORT_INVENTORY message."""
+    try:
+        sort_payload = SortInventoryPayload(**payload)
+
+        # Validate sort type
+        try:
+            sort_type = InventorySortType(sort_payload.sort_type)
+        except ValueError:
+            await send_operation_result(
+                websocket, "sort_inventory", False, f"Invalid sort type: {sort_payload.sort_type}"
+            )
+            return
+
+        result = await InventoryService.sort_inventory(db, player_id, sort_type)
+
+        await send_operation_result(
+            websocket,
+            "sort_inventory",
+            result.success,
+            result.message,
+            {"items_moved": result.items_moved, "stacks_merged": result.stacks_merged},
+        )
+
+        if result.success:
+            await send_inventory_update(websocket, db, player_id)
+
+    except Exception as e:
+        logger.error(
+            "Error handling sort inventory",
+            extra={"player_id": player_id, "error": str(e)},
+        )
+        await send_operation_result(
+            websocket, "sort_inventory", False, "Failed to sort inventory"
+        )
+
+
+async def handle_drop_item(
+    player_id: int,
+    payload: dict,
+    db: AsyncSession,
+    valkey: GlideClient,
+    username: str,
+    websocket: WebSocket,
+):
+    """Handle DROP_ITEM message."""
+    try:
+        drop_payload = DropItemPayload(**payload)
+
+        # Get player position from valkey
+        player_key = f"player:{username}"
+        player_data_raw = await valkey.hgetall(player_key)
+        player_data = {k.decode(): v.decode() for k, v in player_data_raw.items()}
+
+        map_id = player_data.get("map_id", settings.DEFAULT_MAP)
+        x = int(player_data.get("x", 0))
+        y = int(player_data.get("y", 0))
+
+        result = await GroundItemService.drop_from_inventory(
+            db=db,
+            player_id=player_id,
+            inventory_slot=drop_payload.inventory_slot,
+            map_id=map_id,
+            x=x,
+            y=y,
+            quantity=drop_payload.quantity,
+        )
+
+        await send_operation_result(
+            websocket,
+            "drop_item",
+            result.success,
+            result.message,
+            {"ground_item_id": result.ground_item_id} if result.ground_item_id else None,
+        )
+
+        if result.success:
+            await send_inventory_update(websocket, db, player_id)
+
+    except Exception as e:
+        logger.error(
+            "Error handling drop item",
+            extra={"player_id": player_id, "error": str(e)},
+        )
+        await send_operation_result(
+            websocket, "drop_item", False, "Failed to drop item"
+        )
+
+
+async def handle_request_equipment(
+    player_id: int, db: AsyncSession, websocket: WebSocket
+):
+    """Handle REQUEST_EQUIPMENT message."""
+    try:
+        await send_equipment_update(websocket, db, player_id)
+    except Exception as e:
+        logger.error(
+            "Error handling equipment request",
+            extra={"player_id": player_id, "error": str(e)},
+        )
+        await send_operation_result(
+            websocket, "request_equipment", False, "Failed to get equipment"
+        )
+
+
+async def handle_equip_item(
+    player_id: int, payload: dict, db: AsyncSession, websocket: WebSocket
+):
+    """Handle EQUIP_ITEM message."""
+    try:
+        equip_payload = EquipItemPayload(**payload)
+        result = await EquipmentService.equip_from_inventory(
+            db, player_id, equip_payload.inventory_slot
+        )
+
+        await send_operation_result(
+            websocket, "equip_item", result.success, result.message
+        )
+
+        if result.success:
+            await send_inventory_update(websocket, db, player_id)
+            await send_equipment_update(websocket, db, player_id)
+            await send_stats_update(websocket, db, player_id)
+
+    except Exception as e:
+        logger.error(
+            "Error handling equip item",
+            extra={"player_id": player_id, "error": str(e)},
+        )
+        await send_operation_result(
+            websocket, "equip_item", False, "Failed to equip item"
+        )
+
+
+async def handle_unequip_item(
+    player_id: int, payload: dict, db: AsyncSession, websocket: WebSocket
+):
+    """Handle UNEQUIP_ITEM message."""
+    try:
+        unequip_payload = UnequipItemPayload(**payload)
+
+        # Validate equipment slot
+        try:
+            slot = EquipmentSlot(unequip_payload.equipment_slot)
+        except ValueError:
+            await send_operation_result(
+                websocket, "unequip_item", False, f"Invalid equipment slot: {unequip_payload.equipment_slot}"
+            )
+            return
+
+        result = await EquipmentService.unequip_to_inventory(db, player_id, slot)
+
+        await send_operation_result(
+            websocket, "unequip_item", result.success, result.message
+        )
+
+        if result.success:
+            await send_inventory_update(websocket, db, player_id)
+            await send_equipment_update(websocket, db, player_id)
+            await send_stats_update(websocket, db, player_id)
+
+    except Exception as e:
+        logger.error(
+            "Error handling unequip item",
+            extra={"player_id": player_id, "error": str(e)},
+        )
+        await send_operation_result(
+            websocket, "unequip_item", False, "Failed to unequip item"
+        )
+
+
+async def handle_request_stats(
+    player_id: int, db: AsyncSession, websocket: WebSocket
+):
+    """Handle REQUEST_STATS message."""
+    try:
+        await send_stats_update(websocket, db, player_id)
+    except Exception as e:
+        logger.error(
+            "Error handling stats request",
+            extra={"player_id": player_id, "error": str(e)},
+        )
+        await send_operation_result(
+            websocket, "request_stats", False, "Failed to get stats"
+        )
+
+
+async def handle_pickup_item(
+    player_id: int,
+    payload: dict,
+    db: AsyncSession,
+    valkey: GlideClient,
+    username: str,
+    websocket: WebSocket,
+):
+    """Handle PICKUP_ITEM message."""
+    try:
+        pickup_payload = PickupItemPayload(**payload)
+
+        # Get player position from valkey
+        player_key = f"player:{username}"
+        player_data_raw = await valkey.hgetall(player_key)
+        player_data = {k.decode(): v.decode() for k, v in player_data_raw.items()}
+
+        x = int(player_data.get("x", 0))
+        y = int(player_data.get("y", 0))
+
+        result = await GroundItemService.pickup_item(
+            db=db,
+            player_id=player_id,
+            ground_item_id=pickup_payload.ground_item_id,
+            player_x=x,
+            player_y=y,
+        )
+
+        await send_operation_result(
+            websocket,
+            "pickup_item",
+            result.success,
+            result.message,
+            {"inventory_slot": result.inventory_slot} if result.inventory_slot is not None else None,
+        )
+
+        if result.success:
+            await send_inventory_update(websocket, db, player_id)
+
+    except Exception as e:
+        logger.error(
+            "Error handling pickup item",
+            extra={"player_id": player_id, "error": str(e)},
+        )
+        await send_operation_result(
+            websocket, "pickup_item", False, "Failed to pick up item"
+        )
+
+
 async def sync_player_to_db(username: str, valkey: GlideClient, db: AsyncSession):
     """
     Synchronizes a player's data from Valkey back to the PostgreSQL database.
@@ -747,6 +1109,39 @@ async def websocket_endpoint(
             elif message.type == MessageType.SEND_CHAT_MESSAGE:
                 await handle_chat_message(username, message.payload, valkey, websocket)
                 # Don't broadcast chat messages through the general system
+                continue
+
+            # Inventory operations
+            elif message.type == MessageType.REQUEST_INVENTORY:
+                await handle_request_inventory(player.id, db, websocket)
+                continue
+            elif message.type == MessageType.MOVE_INVENTORY_ITEM:
+                await handle_move_inventory_item(player.id, message.payload, db, websocket)
+                continue
+            elif message.type == MessageType.SORT_INVENTORY:
+                await handle_sort_inventory(player.id, message.payload, db, websocket)
+                continue
+            elif message.type == MessageType.DROP_ITEM:
+                await handle_drop_item(player.id, message.payload, db, valkey, username, websocket)
+                continue
+
+            # Equipment operations
+            elif message.type == MessageType.REQUEST_EQUIPMENT:
+                await handle_request_equipment(player.id, db, websocket)
+                continue
+            elif message.type == MessageType.EQUIP_ITEM:
+                await handle_equip_item(player.id, message.payload, db, websocket)
+                continue
+            elif message.type == MessageType.UNEQUIP_ITEM:
+                await handle_unequip_item(player.id, message.payload, db, websocket)
+                continue
+            elif message.type == MessageType.REQUEST_STATS:
+                await handle_request_stats(player.id, db, websocket)
+                continue
+
+            # Ground item operations
+            elif message.type == MessageType.PICKUP_ITEM:
+                await handle_pickup_item(player.id, message.payload, db, valkey, username, websocket)
                 continue
 
             # For now, broadcast every message to all clients on the same map

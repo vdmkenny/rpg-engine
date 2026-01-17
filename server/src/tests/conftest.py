@@ -10,11 +10,14 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.future import select
+from sqlalchemy import delete
 
 from server.src.main import app
 from server.src.core.database import get_db, get_valkey
 from server.src.models.base import Base
 from server.src.models.player import Player
+from server.src.models.item import GroundItem, PlayerInventory, PlayerEquipment
+from server.src.models.skill import PlayerSkill
 from server.src.core.security import get_password_hash, create_access_token
 
 # Use SQLite in memory for tests to avoid async connection issues
@@ -138,7 +141,7 @@ async def setup_test_db():
 async def session() -> AsyncGenerator[AsyncSession, None]:
     """
     Creates a fresh database session for each test.
-    Rolls back any changes after the test completes.
+    Cleans up test data after the test completes.
     """
     if TestingSessionLocal is None:
         raise RuntimeError("TestingSessionLocal not initialized")
@@ -150,8 +153,16 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
             await session_obj.rollback()
             raise
         finally:
-            # Clean up any data created during the test
-            await session_obj.rollback()
+            # Clean up data created during the test
+            # Order matters due to foreign key constraints
+            await session_obj.rollback()  # Rollback any uncommitted changes first
+            await session_obj.execute(delete(GroundItem))
+            await session_obj.execute(delete(PlayerInventory))
+            await session_obj.execute(delete(PlayerEquipment))
+            await session_obj.execute(delete(PlayerSkill))
+            await session_obj.execute(delete(Player))
+            # Don't delete Item table - it's static data synced on startup
+            await session_obj.commit()
             await session_obj.close()
 
 
