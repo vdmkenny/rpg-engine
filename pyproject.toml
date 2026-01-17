@@ -38,7 +38,6 @@ python-jose = { version = "3.5.0", extras = ["cryptography"] }
 python-multipart = "0.0.21"
 pyyaml = "^6.0"
 pytmx = "^3.32"
-pygame = "2.6.1"
 prometheus-client = "0.24.1"
 python-json-logger = "3.3.0"
 

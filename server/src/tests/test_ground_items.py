@@ -362,6 +362,7 @@ class TestPickupItem:
             ground_item_id=ground_item.id,
             player_x=10,
             player_y=10,
+            player_map_id="testmap",
         )
 
         assert result.success is True
@@ -403,6 +404,7 @@ class TestPickupItem:
             ground_item_id=ground_item.id,
             player_x=15,
             player_y=10,
+            player_map_id="testmap",
         )
 
         assert result.success is False
@@ -434,6 +436,7 @@ class TestPickupItem:
             ground_item_id=ground_item.id,
             player_x=10,
             player_y=10,
+            player_map_id="testmap",
         )
 
         assert result.success is False
@@ -469,6 +472,7 @@ class TestPickupItem:
             ground_item_id=ground_item.id,
             player_x=10,
             player_y=10,
+            player_map_id="testmap",
         )
 
         assert result.success is True
@@ -486,6 +490,7 @@ class TestPickupItem:
             ground_item_id=99999,
             player_x=10,
             player_y=10,
+            player_map_id="testmap",
         )
 
         assert result.success is False
@@ -520,6 +525,7 @@ class TestPickupItem:
             ground_item_id=ground_item.id,
             player_x=10,
             player_y=10,
+            player_map_id="testmap",
         )
 
         assert result.success is False
@@ -551,6 +557,7 @@ class TestPickupItem:
             ground_item_id=ground_item.id,
             player_x=10,
             player_y=10,
+            player_map_id="testmap",
         )
 
         # Check inventory has durability
@@ -558,6 +565,95 @@ class TestPickupItem:
             session, player.id, result.inventory_slot
         )
         assert inv.current_durability == 150
+
+    @pytest.mark.asyncio
+    async def test_pickup_wrong_map_fails(
+        self, session: AsyncSession, player_for_ground_items
+    ):
+        """Cannot pick up item from different map even with matching x,y coords.
+
+        This is a critical security test - players should not be able to pick up
+        items from other maps by knowing the ground_item_id and standing at
+        matching coordinates on their own map.
+        """
+        player = player_for_ground_items
+        item = await ItemService.get_item_by_name(session, "bronze_sword")
+
+        # Create ground item on "othermap"
+        ground_item = await GroundItemService.create_ground_item(
+            db=session,
+            item_id=item.id,
+            map_id="othermap",
+            x=10,
+            y=10,
+            dropped_by=player.id,
+        )
+
+        # Try to pick up while player is on "testmap" at same x,y
+        result = await GroundItemService.pickup_item(
+            db=session,
+            player_id=player.id,
+            ground_item_id=ground_item.id,
+            player_x=10,
+            player_y=10,
+            player_map_id="testmap",  # Player is on different map
+        )
+
+        assert result.success is False
+        # Error message should be generic to not leak info about other maps
+        assert "not found" in result.message.lower()
+
+        # Item should still exist on ground (not picked up)
+        ground = await GroundItemService.get_ground_item(session, ground_item.id)
+        assert ground is not None
+
+    @pytest.mark.asyncio
+    async def test_pickup_cross_map_generic_error(
+        self, session: AsyncSession, player_for_ground_items
+    ):
+        """Cross-map pickup error message should be generic.
+
+        Security requirement: The error message for cross-map pickup attempts
+        should be identical to "item not found" to prevent attackers from
+        determining if an item exists on another map.
+        """
+        player = player_for_ground_items
+        item = await ItemService.get_item_by_name(session, "bronze_sword")
+
+        # Create item on different map
+        ground_item = await GroundItemService.create_ground_item(
+            db=session,
+            item_id=item.id,
+            map_id="secretmap",
+            x=10,
+            y=10,
+            dropped_by=player.id,
+        )
+
+        # Attempt cross-map pickup
+        cross_map_result = await GroundItemService.pickup_item(
+            db=session,
+            player_id=player.id,
+            ground_item_id=ground_item.id,
+            player_x=10,
+            player_y=10,
+            player_map_id="testmap",
+        )
+
+        # Attempt pickup of nonexistent item
+        nonexistent_result = await GroundItemService.pickup_item(
+            db=session,
+            player_id=player.id,
+            ground_item_id=99999,
+            player_x=10,
+            player_y=10,
+            player_map_id="testmap",
+        )
+
+        # Both should fail with the same generic message
+        assert cross_map_result.success is False
+        assert nonexistent_result.success is False
+        assert cross_map_result.message == nonexistent_result.message
 
 
 # =============================================================================

@@ -36,7 +36,10 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your_super_secret_key_change_me")
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
-        os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
+        os.getenv(
+            "ACCESS_TOKEN_EXPIRE_MINUTES",
+            str(game_config.get("game", {}).get("auth", {}).get("access_token_expire_minutes", 30))
+        )
     )
 
     # Game settings from config.yml with fallbacks
@@ -74,9 +77,17 @@ class Settings(BaseSettings):
     DEFAULT_SPAWN_Y: int = int(game_config.get("game", {}).get("spawn", {}).get("y", 25))
     COLLISION_LAYER_NAMES: List[str] = ["tree", "building", "water", "farm", "obstacles", "collision"]
 
-    # Valkey settings
-    VALKEY_HOST: str = "valkey"
-    VALKEY_PORT: int = 6379
+    # Valkey settings from config.yml
+    VALKEY_HOST: str = os.getenv(
+        "VALKEY_HOST",
+        game_config.get("server", {}).get("valkey", {}).get("host", "valkey")
+    )
+    VALKEY_PORT: int = int(
+        os.getenv(
+            "VALKEY_PORT",
+            str(game_config.get("server", {}).get("valkey", {}).get("port", 6379))
+        )
+    )
     MAPS_DIRECTORY: str = os.getenv("MAPS_DIRECTORY", "/app/server/maps")
 
     # Logging settings
@@ -130,6 +141,26 @@ class Settings(BaseSettings):
     })
     GROUND_ITEMS_CLEANUP_INTERVAL: int = int(
         game_config.get("game", {}).get("ground_items", {}).get("cleanup_interval", 30)
+    )
+
+    # Security settings from config.yml
+    CHAT_MAX_MESSAGE_LENGTH: int = int(
+        os.getenv(
+            "CHAT_MAX_MESSAGE_LENGTH",
+            str(game_config.get("game", {}).get("security", {}).get("chat_max_message_length", 500))
+        )
+    )
+    INVENTORY_OPERATION_COOLDOWN: float = float(
+        os.getenv(
+            "INVENTORY_OPERATION_COOLDOWN",
+            str(game_config.get("game", {}).get("security", {}).get("inventory_operation_cooldown", 0.1))
+        )
+    )
+    EQUIPMENT_OPERATION_COOLDOWN: float = float(
+        os.getenv(
+            "EQUIPMENT_OPERATION_COOLDOWN",
+            str(game_config.get("game", {}).get("security", {}).get("equipment_operation_cooldown", 0.1))
+        )
     )
 
     # Database settings

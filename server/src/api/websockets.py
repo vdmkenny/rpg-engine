@@ -49,6 +49,53 @@ manager = ConnectionManager()
 logger = get_logger(__name__)
 
 
+class OperationRateLimiter:
+    """
+    Rate limiter for inventory and equipment operations.
+    Tracks last operation time per player per operation type.
+    """
+
+    def __init__(self):
+        # {username: {operation_type: last_operation_time}}
+        self._last_operation_times: Dict[str, Dict[str, float]] = {}
+
+    def check_rate_limit(
+        self, username: str, operation_type: str, cooldown: float
+    ) -> bool:
+        """
+        Check if an operation is allowed based on rate limiting.
+
+        Args:
+            username: The player's username
+            operation_type: Type of operation (e.g., "inventory", "equipment")
+            cooldown: Minimum time between operations in seconds
+
+        Returns:
+            True if the operation is allowed, False if rate limited
+        """
+        current_time = time.time()
+
+        if username not in self._last_operation_times:
+            self._last_operation_times[username] = {}
+
+        last_time = self._last_operation_times[username].get(operation_type, 0)
+
+        if current_time - last_time < cooldown:
+            return False
+
+        self._last_operation_times[username][operation_type] = current_time
+        return True
+
+    def cleanup_player(self, username: str):
+        """Remove rate limit tracking for a disconnected player."""
+        if username in self._last_operation_times:
+            del self._last_operation_times[username]
+
+
+# Global rate limiter instance
+operation_rate_limiter = OperationRateLimiter()
+
+
 async def get_token_from_ws(websocket: WebSocket) -> str:
     """
     Receives and decodes the authentication message from the client.
@@ -78,6 +125,18 @@ async def handle_chat_message(
         
         if not message:
             return
+        
+        # Security: Limit message length to prevent abuse
+        if len(message) > settings.CHAT_MAX_MESSAGE_LENGTH:
+            message = message[:settings.CHAT_MAX_MESSAGE_LENGTH]
+            logger.debug(
+                "Chat message truncated",
+                extra={
+                    "username": username,
+                    "original_length": len(payload.get("message", "")),
+                    "max_length": settings.CHAT_MAX_MESSAGE_LENGTH,
+                }
+            )
             
         logger.info(
             "Processing chat message",
@@ -781,6 +840,7 @@ async def handle_pickup_item(
 
         x = int(player_data.get("x", 0))
         y = int(player_data.get("y", 0))
+        map_id = player_data.get("map_id", settings.DEFAULT_MAP)
 
         result = await GroundItemService.pickup_item(
             db=db,
@@ -788,6 +848,7 @@ async def handle_pickup_item(
             ground_item_id=pickup_payload.ground_item_id,
             player_x=x,
             player_y=y,
+            player_map_id=map_id,
         )
 
         await send_operation_result(
@@ -1111,36 +1172,78 @@ async def websocket_endpoint(
                 # Don't broadcast chat messages through the general system
                 continue
 
-            # Inventory operations
+            # Inventory operations (with rate limiting)
             elif message.type == MessageType.REQUEST_INVENTORY:
                 await handle_request_inventory(player.id, db, websocket)
                 continue
             elif message.type == MessageType.MOVE_INVENTORY_ITEM:
+                if not operation_rate_limiter.check_rate_limit(
+                    username, "inventory", settings.INVENTORY_OPERATION_COOLDOWN
+                ):
+                    await send_operation_result(
+                        websocket, "move_item", False, "Operation too fast, please wait"
+                    )
+                    continue
                 await handle_move_inventory_item(player.id, message.payload, db, websocket)
                 continue
             elif message.type == MessageType.SORT_INVENTORY:
+                if not operation_rate_limiter.check_rate_limit(
+                    username, "inventory", settings.INVENTORY_OPERATION_COOLDOWN
+                ):
+                    await send_operation_result(
+                        websocket, "sort_inventory", False, "Operation too fast, please wait"
+                    )
+                    continue
                 await handle_sort_inventory(player.id, message.payload, db, websocket)
                 continue
             elif message.type == MessageType.DROP_ITEM:
+                if not operation_rate_limiter.check_rate_limit(
+                    username, "inventory", settings.INVENTORY_OPERATION_COOLDOWN
+                ):
+                    await send_operation_result(
+                        websocket, "drop_item", False, "Operation too fast, please wait"
+                    )
+                    continue
                 await handle_drop_item(player.id, message.payload, db, valkey, username, websocket)
                 continue
 
-            # Equipment operations
+            # Equipment operations (with rate limiting)
             elif message.type == MessageType.REQUEST_EQUIPMENT:
                 await handle_request_equipment(player.id, db, websocket)
                 continue
             elif message.type == MessageType.EQUIP_ITEM:
+                if not operation_rate_limiter.check_rate_limit(
+                    username, "equipment", settings.EQUIPMENT_OPERATION_COOLDOWN
+                ):
+                    await send_operation_result(
+                        websocket, "equip_item", False, "Operation too fast, please wait"
+                    )
+                    continue
                 await handle_equip_item(player.id, message.payload, db, websocket)
                 continue
             elif message.type == MessageType.UNEQUIP_ITEM:
+                if not operation_rate_limiter.check_rate_limit(
+                    username, "equipment", settings.EQUIPMENT_OPERATION_COOLDOWN
+                ):
+                    await send_operation_result(
+                        websocket, "unequip_item", False, "Operation too fast, please wait"
+                    )
+                    continue
                 await handle_unequip_item(player.id, message.payload, db, websocket)
                 continue
             elif message.type == MessageType.REQUEST_STATS:
                 await handle_request_stats(player.id, db, websocket)
                 continue
 
-            # Ground item operations
+            # Ground item operations (with rate limiting - uses inventory cooldown)
             elif message.type == MessageType.PICKUP_ITEM:
+                if not operation_rate_limiter.check_rate_limit(
+                    username, "inventory", settings.INVENTORY_OPERATION_COOLDOWN
+                ):
+                    await send_operation_result(
+                        websocket, "pickup_item", False, "Operation too fast, please wait"
+                    )
+                    continue
                 await handle_pickup_item(player.id, message.payload, db, valkey, username, websocket)
                 continue
 
@@ -1221,6 +1324,7 @@ async def websocket_endpoint(
 
             manager.disconnect(username)
             cleanup_disconnected_player(username)
+            operation_rate_limiter.cleanup_player(username)
             logger.info("Client disconnected and removed", extra={"username": username})
 
             # Update metrics for active connections after disconnect

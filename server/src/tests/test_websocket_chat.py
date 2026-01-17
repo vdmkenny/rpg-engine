@@ -217,3 +217,62 @@ class TestChatEdgeCases:
             )
 
             assert response["payload"]["message"] == "Valid after whitespace"
+
+
+@SKIP_WS_INTEGRATION
+class TestChatSecurity:
+    """Tests for chat security features."""
+
+    def test_long_message_truncated(self, integration_client):
+        """Chat messages exceeding max length should be truncated."""
+        client = integration_client
+        username = unique_username("chat_long")
+        token = register_and_login(client, username)
+
+        with client.websocket_connect("/ws") as websocket:
+            welcome = authenticate_websocket(websocket, token)
+            assert welcome["type"] == MessageType.WELCOME.value
+
+            # Send a very long message (over 500 chars default limit)
+            long_message = "A" * 600
+            send_ws_message(
+                websocket,
+                MessageType.SEND_CHAT_MESSAGE,
+                {"channel": "local", "message": long_message},
+            )
+
+            response = receive_message_of_type(
+                websocket, [MessageType.NEW_CHAT_MESSAGE.value]
+            )
+
+            # Message should be truncated to max length (default 500)
+            assert response["type"] == MessageType.NEW_CHAT_MESSAGE.value
+            assert len(response["payload"]["message"]) <= 500
+            assert response["payload"]["message"] == "A" * 500
+
+    def test_message_at_max_length_not_truncated(self, integration_client):
+        """Chat message exactly at max length should not be truncated."""
+        client = integration_client
+        username = unique_username("chat_maxlen")
+        token = register_and_login(client, username)
+
+        with client.websocket_connect("/ws") as websocket:
+            welcome = authenticate_websocket(websocket, token)
+            assert welcome["type"] == MessageType.WELCOME.value
+
+            # Send a message exactly at max length (500 chars)
+            max_message = "B" * 500
+            send_ws_message(
+                websocket,
+                MessageType.SEND_CHAT_MESSAGE,
+                {"channel": "local", "message": max_message},
+            )
+
+            response = receive_message_of_type(
+                websocket, [MessageType.NEW_CHAT_MESSAGE.value]
+            )
+
+            # Message should not be truncated
+            assert response["type"] == MessageType.NEW_CHAT_MESSAGE.value
+            assert response["payload"]["message"] == max_message
+            assert len(response["payload"]["message"]) == 500

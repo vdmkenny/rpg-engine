@@ -233,11 +233,12 @@ class GroundItemService:
         ground_item_id: int,
         player_x: int,
         player_y: int,
+        player_map_id: str,
     ) -> PickupItemResult:
         """
         Pick up a ground item.
 
-        Player must be on the same tile as the item.
+        Player must be on the same map and tile as the item.
         Item must be visible (either owned by player or past protection time).
         Player must have inventory space.
 
@@ -250,6 +251,7 @@ class GroundItemService:
             ground_item_id: Ground item ID
             player_x: Player's current tile X
             player_y: Player's current tile Y
+            player_map_id: Player's current map ID
 
         Returns:
             PickupItemResult with success status
@@ -266,6 +268,14 @@ class GroundItemService:
         ground_item = result.scalar_one_or_none()
 
         if not ground_item:
+            return PickupItemResult(
+                success=False,
+                message="Item not found or already picked up",
+            )
+
+        # Check if player is on the same map
+        # Use identical message to "not found" to avoid leaking info about items on other maps
+        if ground_item.map_id != player_map_id:
             return PickupItemResult(
                 success=False,
                 message="Item not found or already picked up",

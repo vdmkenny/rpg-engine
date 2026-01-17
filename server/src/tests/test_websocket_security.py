@@ -197,3 +197,259 @@ class TestChunkRequestSecurity:
                 MessageType.CHUNK_DATA.value,
                 MessageType.ERROR.value,
             ]
+
+
+@SKIP_WS_INTEGRATION
+class TestInventoryRateLimiting:
+    """Tests for inventory operation rate limiting."""
+
+    def test_inventory_move_rate_limited(self, integration_client):
+        """Rapid inventory move operations should be rate limited."""
+        client = integration_client
+        username = unique_username("inv_ratelimit")
+        token = register_and_login(client, username)
+
+        with client.websocket_connect("/ws") as websocket:
+            welcome = authenticate_websocket(websocket, token)
+            assert welcome["type"] == MessageType.WELCOME.value
+
+            # Send two move operations in rapid succession
+            send_ws_message(
+                websocket,
+                MessageType.MOVE_INVENTORY_ITEM,
+                {"from_slot": 0, "to_slot": 1},
+            )
+
+            # Immediately send another (should be rate limited)
+            send_ws_message(
+                websocket,
+                MessageType.MOVE_INVENTORY_ITEM,
+                {"from_slot": 1, "to_slot": 2},
+            )
+
+            # First response (may succeed or fail due to empty slot)
+            response1 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response1["type"] == MessageType.OPERATION_RESULT.value
+
+            # Second response should be rate limited
+            response2 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response2["type"] == MessageType.OPERATION_RESULT.value
+            assert response2["payload"]["success"] is False
+            assert "too fast" in response2["payload"]["message"].lower()
+
+    def test_inventory_drop_rate_limited(self, integration_client):
+        """Rapid drop operations should be rate limited."""
+        client = integration_client
+        username = unique_username("drop_ratelimit")
+        token = register_and_login(client, username)
+
+        with client.websocket_connect("/ws") as websocket:
+            welcome = authenticate_websocket(websocket, token)
+            assert welcome["type"] == MessageType.WELCOME.value
+
+            # Send two drop operations in rapid succession
+            send_ws_message(
+                websocket,
+                MessageType.DROP_ITEM,
+                {"inventory_slot": 0},
+            )
+
+            # Immediately send another (should be rate limited)
+            send_ws_message(
+                websocket,
+                MessageType.DROP_ITEM,
+                {"inventory_slot": 1},
+            )
+
+            # First response
+            response1 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response1["type"] == MessageType.OPERATION_RESULT.value
+
+            # Second response should be rate limited
+            response2 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response2["type"] == MessageType.OPERATION_RESULT.value
+            assert response2["payload"]["success"] is False
+            assert "too fast" in response2["payload"]["message"].lower()
+
+
+@SKIP_WS_INTEGRATION
+class TestEquipmentRateLimiting:
+    """Tests for equipment operation rate limiting."""
+
+    def test_equip_rate_limited(self, integration_client):
+        """Rapid equip operations should be rate limited."""
+        client = integration_client
+        username = unique_username("equip_ratelimit")
+        token = register_and_login(client, username)
+
+        with client.websocket_connect("/ws") as websocket:
+            welcome = authenticate_websocket(websocket, token)
+            assert welcome["type"] == MessageType.WELCOME.value
+
+            # Send two equip operations in rapid succession
+            send_ws_message(
+                websocket,
+                MessageType.EQUIP_ITEM,
+                {"inventory_slot": 0},
+            )
+
+            # Immediately send another (should be rate limited)
+            send_ws_message(
+                websocket,
+                MessageType.EQUIP_ITEM,
+                {"inventory_slot": 1},
+            )
+
+            # First response
+            response1 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response1["type"] == MessageType.OPERATION_RESULT.value
+
+            # Second response should be rate limited
+            response2 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response2["type"] == MessageType.OPERATION_RESULT.value
+            assert response2["payload"]["success"] is False
+            assert "too fast" in response2["payload"]["message"].lower()
+
+    def test_unequip_rate_limited(self, integration_client):
+        """Rapid unequip operations should be rate limited."""
+        client = integration_client
+        username = unique_username("unequip_ratelimit")
+        token = register_and_login(client, username)
+
+        with client.websocket_connect("/ws") as websocket:
+            welcome = authenticate_websocket(websocket, token)
+            assert welcome["type"] == MessageType.WELCOME.value
+
+            # Send two unequip operations in rapid succession
+            send_ws_message(
+                websocket,
+                MessageType.UNEQUIP_ITEM,
+                {"equipment_slot": "head"},
+            )
+
+            # Immediately send another (should be rate limited)
+            send_ws_message(
+                websocket,
+                MessageType.UNEQUIP_ITEM,
+                {"equipment_slot": "chest"},
+            )
+
+            # First response
+            response1 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response1["type"] == MessageType.OPERATION_RESULT.value
+
+            # Second response should be rate limited
+            response2 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response2["type"] == MessageType.OPERATION_RESULT.value
+            assert response2["payload"]["success"] is False
+            assert "too fast" in response2["payload"]["message"].lower()
+
+    def test_pickup_rate_limited(self, integration_client):
+        """Rapid pickup operations should be rate limited."""
+        client = integration_client
+        username = unique_username("pickup_ratelimit")
+        token = register_and_login(client, username)
+
+        with client.websocket_connect("/ws") as websocket:
+            welcome = authenticate_websocket(websocket, token)
+            assert welcome["type"] == MessageType.WELCOME.value
+
+            # Send two pickup operations in rapid succession
+            send_ws_message(
+                websocket,
+                MessageType.PICKUP_ITEM,
+                {"ground_item_id": 99999},
+            )
+
+            # Immediately send another (should be rate limited)
+            send_ws_message(
+                websocket,
+                MessageType.PICKUP_ITEM,
+                {"ground_item_id": 99998},
+            )
+
+            # First response
+            response1 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response1["type"] == MessageType.OPERATION_RESULT.value
+
+            # Second response should be rate limited
+            response2 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response2["type"] == MessageType.OPERATION_RESULT.value
+            assert response2["payload"]["success"] is False
+            assert "too fast" in response2["payload"]["message"].lower()
+
+    def test_operation_allowed_after_cooldown(self, integration_client):
+        """Operations should be allowed after cooldown period."""
+        import time
+        
+        client = integration_client
+        username = unique_username("cooldown_test")
+        token = register_and_login(client, username)
+
+        with client.websocket_connect("/ws") as websocket:
+            welcome = authenticate_websocket(websocket, token)
+            assert welcome["type"] == MessageType.WELCOME.value
+
+            # Send first operation
+            send_ws_message(
+                websocket,
+                MessageType.MOVE_INVENTORY_ITEM,
+                {"from_slot": 0, "to_slot": 1},
+            )
+
+            # First response
+            response1 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response1["type"] == MessageType.OPERATION_RESULT.value
+
+            # Wait for cooldown (default is 0.1 seconds, wait a bit longer)
+            time.sleep(0.15)
+
+            # Send another operation (should be allowed now)
+            send_ws_message(
+                websocket,
+                MessageType.MOVE_INVENTORY_ITEM,
+                {"from_slot": 2, "to_slot": 3},
+            )
+
+            # Second response should NOT be rate limited
+            response2 = receive_message_of_type(
+                websocket,
+                [MessageType.OPERATION_RESULT.value],
+            )
+            assert response2["type"] == MessageType.OPERATION_RESULT.value
+            # It may fail due to empty slot, but NOT due to rate limiting
+            if not response2["payload"]["success"]:
+                assert "too fast" not in response2["payload"]["message"].lower()

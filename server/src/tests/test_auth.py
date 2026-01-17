@@ -81,6 +81,40 @@ class TestRegistration:
         assert response.status_code in (400, 422)
 
     @pytest.mark.asyncio
+    async def test_register_password_too_short(self, client: AsyncClient):
+        """Password shorter than 8 characters should be rejected."""
+        response = await client.post(
+            "/auth/register",
+            json={"username": "validuser", "password": "short"},
+        )
+        
+        assert response.status_code == 422
+        # Pydantic validation error for min_length
+
+    @pytest.mark.asyncio
+    async def test_register_password_minimum_length(self, client: AsyncClient):
+        """Password with exactly 8 characters should be accepted."""
+        response = await client.post(
+            "/auth/register",
+            json={"username": "minpassuser", "password": "exactly8"},
+        )
+        
+        assert response.status_code == 201
+        data = response.json()
+        assert data["username"] == "minpassuser"
+
+    @pytest.mark.asyncio
+    async def test_register_password_too_long(self, client: AsyncClient):
+        """Password longer than 128 characters should be rejected."""
+        long_password = "a" * 129
+        response = await client.post(
+            "/auth/register",
+            json={"username": "longpassuser", "password": long_password},
+        )
+        
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
     async def test_register_missing_fields(self, client: AsyncClient):
         """Missing required fields should be rejected."""
         # Missing password

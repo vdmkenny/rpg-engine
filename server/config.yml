@@ -18,6 +18,20 @@ game:
     x: 25
     y: 25
 
+  # Security and rate limiting configuration
+  security:
+    # Maximum length of chat messages (longer messages are truncated)
+    chat_max_message_length: 500
+    # Minimum time between inventory operations (move, sort, drop, pickup) in seconds
+    inventory_operation_cooldown: 0.1
+    # Minimum time between equipment operations (equip, unequip) in seconds
+    equipment_operation_cooldown: 0.1
+
+  # Authentication/session configuration
+  auth:
+    # How long access tokens are valid (in minutes)
+    access_token_expire_minutes: 30
+
   # Skills configuration
   skills:
     # Maximum level a skill can reach
@@ -83,3 +97,10 @@ game:
     
     # How often the cleanup task runs to remove expired items (seconds)
     cleanup_interval: 30
+
+# Server infrastructure settings
+server:
+  # Valkey (Redis-compatible) connection settings
+  valkey:
+    host: "valkey"
+    port: 6379
