@@ -32,6 +32,11 @@ from server.src.services.equipment_service import EquipmentService
 from server.src.services.skill_service import SkillService
 from server.src.services.ground_item_service import GroundItemService
 from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.authentication_service import AuthenticationService
+from server.src.services.connection_service import ConnectionService
+from server.src.services.movement_service import MovementService
+from server.src.services.chat_service import ChatService
+from server.src.services.player_service import PlayerService
 from sqlalchemy.orm import selectinload
 from common.src.protocol import (
     GameMessage,
@@ -186,119 +191,60 @@ async def get_token_from_ws(websocket: WebSocket) -> str:
 
 
 async def handle_chat_message(
-    username: str, payload: dict, valkey: GlideClient, websocket: WebSocket
+    username: str, payload: dict, valkey: GlideClient, websocket: WebSocket, db: AsyncSession = None
 ):
     """
-    Processes a SEND_CHAT_MESSAGE from a client and routes it appropriately.
+    Processes a SEND_CHAT_MESSAGE from a client using ChatService.
     """
     try:
-        channel = payload.get("channel", "local").lower()
-        message = payload.get("message", "").strip()
+        # Get player ID for service calls
+        from server.src.models.player import Player
+        from sqlalchemy.future import select
         
-        if not message:
+        query = select(Player.id).where(Player.username == username)
+        result = await db.execute(query)
+        player_id = result.scalar_one_or_none()
+        
+        if not player_id:
+            logger.error(
+                "Player not found for chat message",
+                extra={"username": username}
+            )
             return
+            
+        # Use ChatService to handle the message
+        chat_result = await ChatService.handle_chat_message(
+            db, player_id, username, payload, manager
+        )
         
-        # Security: Limit message length to prevent abuse
-        if len(message) > settings.CHAT_MAX_MESSAGE_LENGTH:
-            message = message[:settings.CHAT_MAX_MESSAGE_LENGTH]
-            logger.debug(
-                "Chat message truncated",
+        if chat_result["success"]:
+            logger.info(
+                "Chat message processed via service",
                 extra={
                     "username": username,
-                    "original_length": len(payload.get("message", "")),
-                    "max_length": settings.CHAT_MAX_MESSAGE_LENGTH,
+                    "channel": chat_result["channel"],
+                    "recipient_count": len(chat_result.get("recipients", [])),
+                    "message_id": chat_result.get("message_id")
                 }
             )
-            
-        logger.info(
-            "Processing chat message",
-            extra={
-                "username": username,
-                "channel": channel,
-                "chat_content": message
-            }
-        )
-        
-        # Get sender's position for local chat range checking
-        player_key = f"player:{username}"
-        sender_pos_raw = await valkey.hgetall(player_key)
-        sender_pos = {k.decode(): v.decode() for k, v in sender_pos_raw.items()}
-        sender_x = int(sender_pos.get("x", 0))
-        sender_y = int(sender_pos.get("y", 0))
-        sender_map = sender_pos.get("map_id", settings.DEFAULT_MAP)
-        
-        # Create the chat message to broadcast
-        chat_response = GameMessage(
-            type=MessageType.NEW_CHAT_MESSAGE,
-            payload={
-                "username": username,
-                "message": message,
-                "channel": channel,
-                "timestamp": time.time()
-            }
-        )
-        
-        if channel == "global":
-            # Broadcast to all connected players
-            packed_message = msgpack.packb(chat_response.model_dump(), use_bin_type=True)
-            await manager.broadcast_to_all(packed_message)
-            
-        elif channel == "local":
-            # Broadcast to players within 5 chunks on same map
-            local_range = 5 * 16  # 5 chunks = 5 * 16 tiles
-            
-            # Get all players and filter by distance and map
-            connections = manager.get_all_connections()
-            local_recipients = []
-            
-            for connection in connections:
-                recipient_username = connection.get("username")
-                if not recipient_username:
-                    continue
-                    
-                # Get recipient position
-                recipient_key = f"player:{recipient_username}"
-                recipient_pos_raw = await valkey.hgetall(recipient_key)
-                recipient_pos = {k.decode(): v.decode() for k, v in recipient_pos_raw.items()}
-                recipient_x = int(recipient_pos.get("x", 0))
-                recipient_y = int(recipient_pos.get("y", 0))
-                recipient_map = recipient_pos.get("map_id", settings.DEFAULT_MAP)
-                
-                # Check if on same map and within range (include sender too)
-                if recipient_map == sender_map:
-                    if recipient_username == username:
-                        # Always include sender
-                        local_recipients.append(recipient_username)
-                    else:
-                        # Check distance for other players
-                        distance = max(abs(recipient_x - sender_x), abs(recipient_y - sender_y))
-                        if distance <= local_range:
-                            local_recipients.append(recipient_username)
-            
-            # Broadcast to local recipients (now includes sender)
-            packed_message = msgpack.packb(chat_response.model_dump(), use_bin_type=True)
-            await manager.broadcast_to_users(local_recipients, packed_message)
-            
-        elif channel == "dm":
-            # For DM, we'd need target username in the payload
-            # For now, just echo back that DMs aren't implemented yet
-            dm_response = GameMessage(
-                type=MessageType.NEW_CHAT_MESSAGE,
-                payload={
-                    "username": "System",
-                    "message": "Direct messages not yet implemented",
-                    "channel": "dm",
-                    "timestamp": time.time()
+        else:
+            logger.warning(
+                "Chat message rejected by service",
+                extra={
+                    "username": username,
+                    "reason": chat_result.get("reason"),
+                    "payload": payload
                 }
             )
-            packed_message = msgpack.packb(dm_response.model_dump(), use_bin_type=True)
-            await manager.send_personal_message(username, packed_message)
-            
+        
     except Exception as e:
         logger.error(
-            "Error handling chat message",
-            extra={"username": username, "error": str(e)},
-            exc_info=True
+            "Error handling chat message via service",
+            extra={
+                "username": username,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            },
         )
 
 
@@ -306,22 +252,112 @@ async def handle_move_intent(
     username: str, payload: dict, valkey: GlideClient, websocket: WebSocket
 ):
     """
-    Processes a MOVE_INTENT message from a client.
+    Processes a MOVE_INTENT message from a client using MovementService.
     """
-    import time
-
     try:
         move_payload = MoveIntentPayload(**payload)
-        player_key = f"player:{username}"
+        
+        # Get player ID for service calls
+        from server.src.models.player import Player
+        from sqlalchemy.future import select
+        from server.src.core.database import get_db
+        
+        async with get_db() as db:
+            query = select(Player.id).where(Player.username == username)
+            result = await db.execute(query)
+            player_id = result.scalar_one_or_none()
+            
+            if not player_id:
+                logger.error(
+                    "Player not found for movement",
+                    extra={"username": username}
+                )
+                return
+                
+            # Use MovementService to handle the movement
+            movement_result = await MovementService.execute_movement(
+                db, player_id, move_payload.direction
+            )
+            
+            if movement_result["success"]:
+                # Movement succeeded - send confirmation to player
+                new_x = movement_result["new_position"]["x"]
+                new_y = movement_result["new_position"]["y"]
+                map_id = movement_result["new_position"]["map_id"]
+                
+                logger.debug(
+                    "Player moved via service",
+                    extra={
+                        "username": username,
+                        "direction": move_payload.direction,
+                        "from_position": movement_result["old_position"],
+                        "to_position": movement_result["new_position"],
+                        "map_id": map_id,
+                    },
+                )
 
-        # Get current position and movement state
-        current_pos_raw = await valkey.hgetall(player_key)
-        current_pos = {k.decode(): v.decode() for k, v in current_pos_raw.items()}
+                # Track movement metrics
+                metrics.track_player_movement(move_payload.direction.value)
 
-        current_x = int(current_pos.get("x", 0))
-        current_y = int(current_pos.get("y", 0))
-        map_id = current_pos.get(
-            "map_id", settings.DEFAULT_MAP
+                # Send position confirmation to the moving player only
+                position_update = {
+                    "type": "GAME_STATE_UPDATE",
+                    "payload": {
+                        "entities": [
+                            {
+                                "type": "player",
+                                "username": username,
+                                "x": new_x,
+                                "y": new_y,
+                                "map_id": map_id,
+                            }
+                        ]
+                    },
+                }
+                packed_update = msgpack.packb(position_update, use_bin_type=True)
+                if packed_update:
+                    await websocket.send_bytes(packed_update)
+            else:
+                # Movement blocked or rate limited
+                reason = movement_result.get("reason", "unknown")
+                logger.debug(
+                    f"Movement {reason}",
+                    extra={
+                        "username": username,
+                        "direction": move_payload.direction,
+                        "reason": reason,
+                        "current_position": movement_result.get("current_position"),
+                    },
+                )
+
+                # Send position correction to client if blocked by collision
+                if reason == "blocked":
+                    current_pos = movement_result["current_position"]
+                    position_correction = {
+                        "type": "GAME_STATE_UPDATE",
+                        "payload": {
+                            "entities": [
+                                {
+                                    "type": "player",
+                                    "username": username,
+                                    "x": current_pos["x"],
+                                    "y": current_pos["y"],
+                                    "map_id": current_pos["map_id"],
+                                }
+                            ]
+                        },
+                    }
+                    packed_correction = msgpack.packb(position_correction, use_bin_type=True)
+                    await websocket.send_bytes(packed_correction)
+
+    except Exception as e:
+        logger.error(
+            "Error processing move intent via service",
+            extra={
+                "username": username,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            },
         )
         last_move_time = float(current_pos.get("last_move_time", 0))
 
@@ -445,26 +481,148 @@ async def handle_move_intent(
 
 
 async def handle_chunk_request(
-    username: str, payload: Dict, valkey: GlideClient, websocket: WebSocket
+    username: str, payload: Dict, valkey: GlideClient, websocket: WebSocket, db: AsyncSession = None
 ):
     """
-    Handle chunk data requests from clients.
+    Handle chunk data requests from clients using MapService for validation.
 
     Args:
         username: The player's username
         payload: Request payload containing map_id, center_x, center_y, radius
-        valkey: Valkey client for player data
+        valkey: Valkey client (legacy param, not used)
         websocket: WebSocket connection to send chunk data
+        db: Database session for player data
     """
     try:
-        # Get player's current position from cache if not provided
-        player_key = f"player:{username}"
-        player_data_raw = await valkey.hgetall(player_key)
-
-        if not player_data_raw:
+        # Get player ID for service calls
+        from server.src.models.player import Player
+        from sqlalchemy.future import select
+        
+        query = select(Player.id).where(Player.username == username)
+        result = await db.execute(query)
+        player_id = result.scalar_one_or_none()
+        
+        if not player_id:
             logger.warning(
-                "No player data for chunk request", extra={"username": username}
+                "Player not found for chunk request", extra={"username": username}
             )
+            return
+
+        # Use MapService to validate chunk request
+        validation_result = await MapService.validate_chunk_request_security(
+            player_id, 
+            payload.get("map_id"),
+            payload.get("center_x"),
+            payload.get("center_y"), 
+            payload.get("radius", 1)
+        )
+        
+        if not validation_result["valid"]:
+            logger.warning(
+                "Chunk request failed validation",
+                extra={
+                    "username": username,
+                    "reason": validation_result["reason"],
+                    "payload": payload
+                }
+            )
+            return
+            
+        # Extract validated parameters
+        map_id = validation_result["validated_map_id"]
+        center_x = validation_result["validated_center_x"] 
+        center_y = validation_result["validated_center_y"]
+        radius = validation_result["validated_radius"]
+
+        # Get chunk data from map manager
+        chunks = map_manager.get_chunks_for_player(map_id, center_x, center_y, radius)
+
+        if chunks is None:
+            # Send error response
+            error_message = GameMessage(
+                type=MessageType.ERROR,
+                payload=ErrorPayload(message=f"Map '{map_id}' not found").model_dump(),
+            )
+            await websocket.send_bytes(
+                msgpack.packb(error_message.model_dump(), use_bin_type=True)
+            )
+            return
+
+        # Convert chunks to protocol format
+        from common.src.protocol import ChunkData, ChunkDataPayload, TileData
+
+        chunk_data_list = []
+        for chunk in chunks:
+            # Convert tile data to protocol format
+            protocol_tiles = []
+            for row in chunk["tiles"]:
+                protocol_row = []
+                for tile in row:
+                    protocol_row.append(
+                        TileData(
+                            gid=tile["gid"], 
+                            properties=tile["properties"],
+                            layers=tile.get("layers", [])  # Include multi-layer data
+                        )
+                    )
+                protocol_tiles.append(protocol_row)
+
+            chunk_data_list.append(
+                ChunkData(
+                    chunk_x=chunk["chunk_x"],
+                    chunk_y=chunk["chunk_y"],
+                    tiles=protocol_tiles,
+                    width=chunk["width"],
+                    height=chunk["height"],
+                )
+            )
+
+        # Send chunk data response
+        chunk_response = GameMessage(
+            type=MessageType.CHUNK_DATA,
+            payload=ChunkDataPayload(
+                map_id=map_id,
+                chunks=[chunk.model_dump() for chunk in chunk_data_list],
+                player_x=center_x,
+                player_y=center_y,
+                radius=radius,
+            ).model_dump(),
+        )
+
+        await websocket.send_bytes(
+            msgpack.packb(chunk_response.model_dump(), use_bin_type=True)
+        )
+        metrics.track_websocket_message("CHUNK_DATA", "outbound")
+
+        logger.debug(
+            "Chunk data sent via service",
+            extra={
+                "username": username,
+                "map_id": map_id,
+                "center": (center_x, center_y),
+                "radius": radius,
+                "chunk_count": len(chunk_data_list),
+            },
+        )
+
+    except Exception as e:
+        logger.error(
+            "Error handling chunk request via service",
+            extra={
+                "username": username,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            },
+        )
+
+        # Send error response to client
+        error_message = GameMessage(
+            type=MessageType.ERROR,
+            payload=ErrorPayload(message="Failed to process chunk request").model_dump(),
+        )
+        await websocket.send_bytes(
+            msgpack.packb(error_message.model_dump(), use_bin_type=True)
+        )
             return
 
         player_data = {k.decode(): v.decode() for k, v in player_data_raw.items()}
@@ -1119,25 +1277,10 @@ async def websocket_endpoint(
             player.current_hp = current_hp
             await db.commit()
 
-        player_key = f"player:{username}"
-        await valkey.hset(
-            player_key,
-            {
-                "x": str(validated_x),
-                "y": str(validated_y),
-                "map_id": validated_map,
-                "facing_direction": "DOWN",  # Default facing direction
-                "is_moving": "false",
-                "last_move_time": "0",
-                "current_hp": str(current_hp),
-                "max_hp": str(max_hp),
-                "player_id": str(player.id),
-            },
+        # Initialize player connection state using service layer
+        await ConnectionService.initialize_player_connection(
+            db, player.id, username, validated_x, validated_y, validated_map, current_hp, max_hp
         )
-
-        # Load all player state (inventory, equipment, skills) to Valkey via GSM
-        gsm = get_game_state_manager()
-        await gsm.load_player_state(player.id)
 
         logger.info(
             "Player connected to WebSocket",
@@ -1206,31 +1349,16 @@ async def websocket_endpoint(
             msgpack.packb(welcome_chat.model_dump(), use_bin_type=True)
         )
 
-        # Send existing players on this map to the new player
-        existing_players = []
-        for other_username in manager.connections_by_map.get(validated_map, {}):
-            if other_username != username:  # Don't include self
-                other_player_key = f"player:{other_username}"
-                other_pos_raw = await valkey.hgetall(other_player_key)
-                if other_pos_raw:
-                    other_pos = {
-                        k.decode(): v.decode() for k, v in other_pos_raw.items()
-                    }
-                    existing_players.append(
-                        {
-                            "type": "player",
-                            "username": other_username,
-                            "x": int(other_pos.get("x", 0)),
-                            "y": int(other_pos.get("y", 0)),
-                            "map_id": other_pos.get("map_id", validated_map),
-                        }
-                    )
-
-        if existing_players:
+        # Send existing players on this map to the new player using service layer
+        existing_players_data = await ConnectionService.get_existing_players_on_map(
+            db, validated_map, username
+        )
+        
+        if existing_players_data:
             # Send existing players to new player
             existing_players_message = {
                 "type": "GAME_STATE_UPDATE",
-                "payload": {"entities": existing_players},
+                "payload": {"entities": existing_players_data},
             }
             packed_existing = msgpack.packb(existing_players_message, use_bin_type=True)
             if packed_existing:
@@ -1276,11 +1404,11 @@ async def websocket_endpoint(
             if message.type == MessageType.MOVE_INTENT:
                 await handle_move_intent(username, message.payload, valkey, websocket)
             elif message.type == MessageType.REQUEST_CHUNKS:
-                await handle_chunk_request(username, message.payload, valkey, websocket)
+                await handle_chunk_request(username, message.payload, valkey, websocket, db)
                 # Don't broadcast chunk requests to other players
                 continue
             elif message.type == MessageType.SEND_CHAT_MESSAGE:
-                await handle_chat_message(username, message.payload, valkey, websocket)
+                await handle_chat_message(username, message.payload, valkey, websocket, db)
                 # Don't broadcast chat messages through the general system
                 continue
 
@@ -1412,52 +1540,10 @@ async def websocket_endpoint(
             # Get the player's map before disconnection
             player_map = manager.client_to_map.get(username)
 
-            # Get player_id from Valkey for sync
-            player_key = f"player:{username}"
-            player_data_raw = await valkey.hgetall(player_key)
-            player_id = None
-            if player_data_raw:
-                player_id_bytes = player_data_raw.get(b"player_id") or player_data_raw.get("player_id")
-                if player_id_bytes:
-                    player_id = int(
-                        player_id_bytes.decode()
-                        if isinstance(player_id_bytes, bytes)
-                        else player_id_bytes
-                    )
-
-            # Sync all player data to DB (position, inventory, equipment, skills)
-            if player_id:
-                gsm = get_game_state_manager()
-                await gsm.sync_player_to_db(player_id, username)
-            else:
-                # Fallback to legacy sync if player_id not found
-                await sync_player_to_db(username, valkey, db)
-
-            # Delete player position key (player state keys are deleted by sync_single_player)
-            await valkey.delete(player_key)
-            logger.debug("Player cache purged", extra={"username": username})
-
-            # Notify other players on the same map about player leaving
-            if player_map:
-                disconnect_message = GameMessage(
-                    type=MessageType.PLAYER_DISCONNECT,
-                    payload=PlayerDisconnectPayload(username=username).model_dump(),
-                )
-                packed_disconnect = msgpack.packb(disconnect_message.model_dump(), use_bin_type=True)
-                if packed_disconnect:
-                    for other_websocket in manager.connections_by_map.get(
-                        player_map, {}
-                    ).values():
-                        try:
-                            await other_websocket.send_bytes(packed_disconnect)
-                        except Exception:
-                            # Ignore errors sending to other disconnecting clients
-                            pass
-
-            manager.disconnect(username)
-            cleanup_disconnected_player(username)
-            operation_rate_limiter.cleanup_player(username)
-            logger.info("Client disconnected and removed", extra={"username": username})
+            # Handle player disconnection using service layer
+            await ConnectionService.handle_player_disconnect(
+                db, username, player_map, manager, operation_rate_limiter
+            )
 
             # Update metrics for active connections after disconnect
             total_connections = sum(

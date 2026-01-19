@@ -269,10 +269,10 @@ class ConnectionService:
             state_manager = get_game_state_manager()
             
             # Check if player is registered as online
-            is_online = state_manager.is_player_online(player_id)
+            is_online = state_manager.is_online(player_id)
             
             # Verify username matches
-            stored_username = state_manager.get_username_by_id(player_id)
+            stored_username = state_manager.get_username_by_player_id(player_id)
             username_matches = stored_username == username
 
             # Get position data to verify state integrity
@@ -304,16 +304,93 @@ class ConnectionService:
                 extra={
                     "player_id": player_id,
                     "username": username,
-                    "error": str(e)
+                    "error": str(e),
+                    "error_type": type(e).__name__,
                 }
             )
             return {
                 "valid": False,
-                "is_online": False,
-                "username_matches": False,
-                "has_position_data": False,
                 "error": str(e)
             }
+
+    @staticmethod
+    async def get_existing_players_on_map(
+        db: AsyncSession, map_id: str, exclude_username: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get data for existing players on a specific map, excluding one player.
+        
+        Args:
+            db: Database session
+            map_id: Map to get players for
+            exclude_username: Username to exclude from results
+            
+        Returns:
+            List of player entity data for broadcasting
+        """
+        try:
+            from server.src.api.connection_manager import ConnectionManager
+            
+            # Get connection manager instance (should be singleton)
+            manager = ConnectionManager()
+            existing_players = []
+            
+            # Get all connected usernames on the map
+            for other_username in manager.connections_by_map.get(map_id, {}):
+                if other_username != exclude_username:
+                    # Get position using PlayerService instead of direct Valkey
+                    try:
+                        # First get player ID for this username
+                        from server.src.models.player import Player
+                        from sqlalchemy.future import select
+                        
+                        query = select(Player.id).where(Player.username == other_username)
+                        result = await db.execute(query)
+                        player_id = result.scalar_one_or_none()
+                        
+                        if player_id:
+                            position_data = await PlayerService.get_player_position(player_id)
+                            if position_data:
+                                existing_players.append({
+                                    "type": "player",
+                                    "username": other_username,
+                                    "x": position_data["x"],
+                                    "y": position_data["y"], 
+                                    "map_id": position_data["map_id"],
+                                })
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to get position for existing player",
+                            extra={
+                                "username": other_username,
+                                "map_id": map_id,
+                                "error": str(e)
+                            }
+                        )
+                        continue
+            
+            logger.debug(
+                "Retrieved existing players on map",
+                extra={
+                    "map_id": map_id,
+                    "exclude_username": exclude_username,
+                    "player_count": len(existing_players)
+                }
+            )
+            
+            return existing_players
+
+        except Exception as e:
+            logger.error(
+                "Error getting existing players on map",
+                extra={
+                    "map_id": map_id,
+                    "exclude_username": exclude_username,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                }
+            )
+            return []
 
     @staticmethod
     def create_welcome_message(
