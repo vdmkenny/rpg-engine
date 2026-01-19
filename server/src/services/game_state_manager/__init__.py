@@ -1017,6 +1017,116 @@ class GameStateManager:
         """Sync ground items to database."""
         await self.batch_ops._sync_ground_items()
 
+    async def get_visible_ground_items(
+        self, 
+        map_id: str, 
+        player_x: int, 
+        player_y: int, 
+        player_id: Optional[int], 
+        tile_radius: int = 32
+    ) -> List[Dict[str, Any]]:
+        """
+        Get ground items visible to a player.
+
+        An item is visible if:
+        - It's within tile_radius of the player
+        - Either the player dropped it, or loot protection has expired
+
+        Args:
+            map_id: Current map
+            player_x: Player's tile X position
+            player_y: Player's tile Y position
+            player_id: Player's database ID (for loot protection check)
+            tile_radius: Visibility radius in tiles
+
+        Returns:
+            List of visible ground item data dicts with visibility metadata
+        """
+        all_items = await self.get_ground_items_on_map(map_id)
+        if not all_items:
+            return []
+        
+        import time
+        now = time.time()
+        visible = []
+
+        for item in all_items:
+            # Check distance
+            if abs(item["x"] - player_x) > tile_radius:
+                continue
+            if abs(item["y"] - player_y) > tile_radius:
+                continue
+
+            # Check visibility (player dropped it or protection expired)
+            is_owner = item.get("dropped_by_player_id") == player_id
+            loot_protection_expires_at = item.get("loot_protection_expires_at", 0)
+            is_public = loot_protection_expires_at <= now
+
+            if not is_owner and not is_public:
+                continue
+
+            # Add visibility metadata
+            item_copy = item.copy()
+            item_copy["is_protected"] = not is_public and not is_owner
+            item_copy["is_yours"] = is_owner
+            visible.append(item_copy)
+
+        return visible
+
+    async def cleanup_expired_ground_items(self, map_id: str) -> int:
+        """
+        Remove expired ground items from a map.
+
+        Args:
+            map_id: Map ID
+
+        Returns:
+            Number of items cleaned up
+        """
+        if not self._valkey:
+            return 0
+        
+        map_key = GROUND_ITEMS_MAP_KEY.format(map_id=map_id)
+        ground_item_ids_raw = await self._valkey.smembers(map_key)
+        
+        if not ground_item_ids_raw:
+            return 0
+
+        import time
+        now = time.time()
+        cleaned = 0
+
+        for ground_item_id_raw in ground_item_ids_raw:
+            ground_item_id = int(_decode_bytes(ground_item_id_raw))
+            item_key = GROUND_ITEM_KEY.format(ground_item_id=ground_item_id)
+            
+            data = await self._valkey.hgetall(item_key)
+            if not data:
+                # Item missing, clean from index
+                await self._valkey.srem(map_key, [str(ground_item_id)])
+                cleaned += 1
+                continue
+                
+            despawn_at_str = _decode_bytes(data.get(b"despawn_at", b"0"))
+            try:
+                despawn_at = float(despawn_at_str)
+            except ValueError:
+                despawn_at = 0
+                
+            if despawn_at <= now:
+                # Item expired, remove completely
+                await self._valkey.delete([item_key])
+                await self._valkey.srem(map_key, [str(ground_item_id)])
+                cleaned += 1
+
+        if cleaned > 0:
+            logger.info(
+                "Cleaned up expired ground items",
+                extra={"map_id": map_id, "count": cleaned},
+            )
+
+        return cleaned
+
     # =============================================================================
     # OFFLINE PLAYER METHODS (Direct Database Access)
     # =============================================================================

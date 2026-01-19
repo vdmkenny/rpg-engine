@@ -93,18 +93,13 @@ class GroundItemService:
             return None
 
         ground_item_id = await gsm.add_ground_item(
-            item_id=item_id,
-            item_name=item.name,
-            display_name=item.display_name,
-            rarity=item.rarity,
             map_id=map_id,
             x=x,
             y=y,
+            item_id=item_id,
             quantity=quantity,
+            durability=float(current_durability) if current_durability is not None else 1.0,
             dropped_by_player_id=dropped_by,
-            category=item.category,
-            rarity_color=GroundItemService._get_rarity_color(item.rarity),
-            max_stack_size=item.max_stack_size,
         )
 
         logger.info(

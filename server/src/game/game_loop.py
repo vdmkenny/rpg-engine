@@ -20,7 +20,6 @@ from server.src.core.metrics import (
     game_state_broadcasts_total,
 )
 from server.src.services.map_service import get_map_manager
-from server.src.services.ground_item_valkey_service import GroundItemValkeyService
 from server.src.services.game_state_manager import get_game_state_manager
 from server.src.core.database import AsyncSessionLocal
 from common.src.protocol import (
@@ -455,8 +454,9 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     player_data = await valkey.hgetall(player_key)
                     player_id = int(player_data.get(b"player_id", b"0")) if player_data else None
                     
-                    visible_ground_items = await GroundItemValkeyService.get_visible_ground_items(
-                        valkey=valkey,
+                    # Use GameStateManager for ground item visibility
+                    gsm = get_game_state_manager()
+                    visible_ground_items = await gsm.get_visible_ground_items(
                         map_id=map_id,
                         player_x=player_x,
                         player_y=player_y,

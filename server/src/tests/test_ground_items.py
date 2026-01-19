@@ -148,7 +148,7 @@ class TestCreateGroundItem:
         assert ground_item["x"] == 10
         assert ground_item["y"] == 10
         assert ground_item["quantity"] == 1
-        assert ground_item["dropped_by"] == player.id
+        assert ground_item["dropped_by_player_id"] == player.id
 
     @pytest.mark.asyncio
     async def test_create_ground_item_rarity_timers(
