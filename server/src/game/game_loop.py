@@ -21,7 +21,7 @@ from server.src.core.metrics import (
 )
 from server.src.services.map_service import get_map_manager
 from server.src.services.ground_item_valkey_service import GroundItemValkeyService
-from server.src.services.batch_sync_service import BatchSyncService
+from server.src.services.game_state_manager import get_game_state_manager
 from server.src.core.database import AsyncSessionLocal
 from common.src.protocol import (
     GameMessage,
@@ -365,8 +365,8 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
             # Periodic batch sync of dirty data to database
             if _global_tick_counter % db_sync_interval == 0:
                 try:
-                    async with AsyncSessionLocal() as db:
-                        await BatchSyncService.sync_all(valkey, db)
+                    gsm = get_game_state_manager()
+                    await gsm.batch_ops.sync_all()
                 except Exception as sync_error:
                     logger.error(
                         "Batch sync failed",
@@ -385,21 +385,23 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     
                 player_usernames = list(map_connections.keys())
                 
-                # Fetch all player data for this map from Valkey
+                gsm = get_game_state_manager()
+                
+                # Fetch all player states for this map in a single batch operation
+                all_players_data = await gsm.state_access.get_multiple_players_by_usernames(player_usernames)
+                
+                # Process player data and handle HP regeneration
                 all_player_data: List[Dict[str, Any]] = []
                 player_positions: Dict[str, Tuple[int, int]] = {}
                 
-                for username in player_usernames:
-                    player_key = f"player:{username}"
-                    data = await valkey.hgetall(player_key)
+                for username, data in all_players_data.items():
                     if data:
-                        x = int(data.get(b"x", b"0"))
-                        y = int(data.get(b"y", b"0"))
-                        current_hp = int(data.get(b"current_hp", b"10"))
-                        max_hp = int(data.get(b"max_hp", b"10"))
+                        x = int(data.get("x", 0))
+                        y = int(data.get("y", 0))
+                        current_hp = int(data.get("current_hp", 10))
+                        max_hp = int(data.get("max_hp", 10))
                         
-                        # Per-player HP regeneration logic
-                        # Each player regens every hp_regen_interval ticks since their login
+                        # Calculate HP regeneration based on player login time
                         login_tick = player_login_ticks.get(username, _global_tick_counter)
                         ticks_since_login = _global_tick_counter - login_tick
                         should_regen = (
@@ -410,8 +412,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         
                         if should_regen:
                             current_hp = min(current_hp + 1, max_hp)
-                            # Update Valkey with new HP
-                            await valkey.hset(player_key, {"current_hp": str(current_hp)})
+                            await gsm.state_access.set_player_hp_by_username(username, current_hp)
                             logger.debug(
                                 "HP regenerated",
                                 extra={

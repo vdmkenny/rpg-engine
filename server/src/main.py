@@ -13,8 +13,10 @@ from server.src.core.metrics import init_metrics, get_metrics, get_metrics_conte
 from server.src.services.map_service import get_map_manager
 from server.src.core.database import get_valkey, AsyncSessionLocal
 from server.src.game.game_loop import game_loop, cleanup_disconnected_player
-from server.src.services.ground_item_service import GroundItemService
-from server.src.services.batch_sync_service import BatchSyncService
+from server.src.services.game_state_manager import (
+    init_game_state_manager,
+    get_game_state_manager,
+)
 from common.src.protocol import MessageType, GameMessage, ServerShutdownPayload
 
 # Initialize logging and metrics as early as possible
@@ -39,17 +41,20 @@ async def lifespan(app: FastAPI):
     await map_manager.load_maps()
     logger.info(f"Loaded {len(map_manager.maps)} maps")
     
-    # Initialize Valkey connection and start game loop
+    # Initialize Valkey connection
     valkey = await get_valkey()
     
-    # Load ground items from database to Valkey
+    # Initialize GameStateManager as the single source of truth
+    gsm = init_game_state_manager(valkey, AsyncSessionLocal)
+    
+    # Load ground items from database to Valkey via GSM
     try:
-        async with AsyncSessionLocal() as db:
-            ground_items_loaded = await GroundItemService.load_ground_items_to_valkey(db, valkey)
-            logger.info(f"Loaded {ground_items_loaded} ground items from database to Valkey")
+        ground_items_loaded = await gsm.load_ground_items_from_db()
+        logger.info(f"Loaded {ground_items_loaded} ground items from database to Valkey")
     except Exception as e:
         logger.warning(f"Could not load ground items from database: {e}")
     
+    # Start game loop
     _game_loop_task = asyncio.create_task(
         game_loop(websockets.manager, valkey),
         name="game_loop"
@@ -81,40 +86,27 @@ async def lifespan(app: FastAPI):
     
     logger.info("Sent SERVER_SHUTDOWN to all clients")
     
-    # Sync all active player state to database before shutdown
+    # Sync all active player state to database before shutdown using GSM
     try:
-        async with AsyncSessionLocal() as db:
-            # Build map of active players from the connection manager
-            active_players = {}
-            for map_id, map_connections in websockets.manager.connections_by_map.items():
-                for username in map_connections.keys():
-                    # Get player_id from Valkey
-                    player_key = f"player:{username}"
-                    player_data_raw = await valkey.hgetall(player_key)
-                    if player_data_raw:
-                        player_id_bytes = player_data_raw.get(b"player_id") or player_data_raw.get("player_id")
-                        if player_id_bytes:
-                            player_id = int(
-                                player_id_bytes.decode()
-                                if isinstance(player_id_bytes, bytes)
-                                else player_id_bytes
-                            )
-                            active_players[username] = player_id
-            
-            # Sync all active players
-            if active_players:
-                synced_count = await BatchSyncService.sync_all_players_on_shutdown(
-                    valkey, db, active_players
-                )
-                logger.info(f"Synced {synced_count} active players to database on shutdown")
+        # Build map of active players from the connection manager
+        active_players = {}
+        for map_id, map_connections in websockets.manager.connections_by_map.items():
+            for username in map_connections.keys():
+                player_id = gsm.get_player_id_by_username(username)
+                if player_id:
+                    active_players[username] = player_id
+        
+        # Sync all active players via GSM
+        if active_players:
+            synced_count = await gsm.sync_all_on_shutdown(active_players)
+            logger.info(f"Synced {synced_count} active players to database on shutdown")
     except Exception as e:
         logger.error(f"Error syncing players on shutdown: {e}", exc_info=True)
     
-    # Sync ground items from Valkey to database before shutdown
+    # Sync ground items from Valkey to database before shutdown via GSM
     try:
-        async with AsyncSessionLocal() as db:
-            synced = await GroundItemService.sync_valkey_to_database(db, valkey)
-            logger.info(f"Synced {synced} ground items to database")
+        synced = await gsm.sync_ground_items_to_db()
+        logger.info(f"Synced {synced} ground items to database")
     except Exception as e:
         logger.warning(f"Could not sync ground items to database: {e}")
     

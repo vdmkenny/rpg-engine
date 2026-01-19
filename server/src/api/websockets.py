@@ -31,8 +31,7 @@ from server.src.services.inventory_service import InventoryService
 from server.src.services.equipment_service import EquipmentService
 from server.src.services.skill_service import SkillService
 from server.src.services.ground_item_service import GroundItemService
-from server.src.services.player_state_valkey_service import PlayerStateValkeyService
-from server.src.services.batch_sync_service import BatchSyncService
+from server.src.services.game_state_manager import get_game_state_manager
 from sqlalchemy.orm import selectinload
 from common.src.protocol import (
     GameMessage,
@@ -625,7 +624,8 @@ async def send_inventory_update(
     websocket: WebSocket, db: AsyncSession, player_id: int
 ):
     """Send full inventory state to the client."""
-    inventory = await InventoryService.get_inventory_response(db, player_id)
+    gsm = get_game_state_manager()
+    inventory = await InventoryService.get_inventory_response(db, player_id, state_manager=gsm)
     update = GameMessage(
         type=MessageType.INVENTORY_UPDATE,
         payload=inventory.model_dump(),
@@ -639,7 +639,8 @@ async def send_equipment_update(
     websocket: WebSocket, db: AsyncSession, player_id: int
 ):
     """Send full equipment state to the client."""
-    equipment = await EquipmentService.get_equipment_response(db, player_id)
+    gsm = get_game_state_manager()
+    equipment = await EquipmentService.get_equipment_response(db, player_id, state_manager=gsm)
     update = GameMessage(
         type=MessageType.EQUIPMENT_UPDATE,
         payload=equipment.model_dump(),
@@ -653,7 +654,8 @@ async def send_stats_update(
     websocket: WebSocket, db: AsyncSession, player_id: int
 ):
     """Send aggregated equipment stats to the client."""
-    stats = await EquipmentService.get_total_stats(db, player_id)
+    gsm = get_game_state_manager()
+    stats = await EquipmentService.get_total_stats(db, player_id, state_manager=gsm)
     update = GameMessage(
         type=MessageType.STATS_UPDATE,
         payload=stats.model_dump(),
@@ -685,8 +687,9 @@ async def handle_move_inventory_item(
     """Handle MOVE_INVENTORY_ITEM message."""
     try:
         move_payload = MoveInventoryItemPayload(**payload)
+        gsm = get_game_state_manager()
         result = await InventoryService.move_item(
-            db, player_id, move_payload.from_slot, move_payload.to_slot
+            db, player_id, move_payload.from_slot, move_payload.to_slot, state_manager=gsm
         )
 
         await send_operation_result(
@@ -767,14 +770,12 @@ async def handle_drop_item(
         y = int(player_data.get("y", 0))
 
         result = await GroundItemService.drop_from_inventory(
-            db=db,
             player_id=player_id,
             inventory_slot=drop_payload.inventory_slot,
             map_id=map_id,
             x=x,
             y=y,
             quantity=drop_payload.quantity,
-            valkey=valkey,
         )
 
         await send_operation_result(
@@ -820,8 +821,9 @@ async def handle_equip_item(
     """Handle EQUIP_ITEM message."""
     try:
         equip_payload = EquipItemPayload(**payload)
+        gsm = get_game_state_manager()
         result = await EquipmentService.equip_from_inventory(
-            db, player_id, equip_payload.inventory_slot
+            db, player_id, equip_payload.inventory_slot, state_manager=gsm
         )
 
         await send_operation_result(
@@ -859,7 +861,8 @@ async def handle_unequip_item(
             )
             return
 
-        result = await EquipmentService.unequip_to_inventory(db, player_id, slot)
+        gsm = get_game_state_manager()
+        result = await EquipmentService.unequip_to_inventory(db, player_id, slot, state_manager=gsm)
 
         await send_operation_result(
             websocket, "unequip_item", result.success, result.message
@@ -918,13 +921,11 @@ async def handle_pickup_item(
         map_id = player_data.get("map_id", settings.DEFAULT_MAP)
 
         result = await GroundItemService.pickup_item(
-            db=db,
             player_id=player_id,
             ground_item_id=pickup_payload.ground_item_id,
             player_x=x,
             player_y=y,
             player_map_id=map_id,
-            valkey=valkey,
         )
 
         await send_operation_result(
@@ -1109,7 +1110,7 @@ async def websocket_endpoint(
             await db.commit()
 
         # Calculate max HP for this player
-        max_hp = await EquipmentService.get_max_hp(db, player.id)
+        max_hp = await EquipmentService.get_max_hp(player.id)
         current_hp = player.current_hp
 
         # Ensure current HP doesn't exceed max HP (equipment might have changed)
@@ -1134,60 +1135,9 @@ async def websocket_endpoint(
             },
         )
 
-        # Load inventory to Valkey for hot access during gameplay
-        inventory_result = await db.execute(
-            select(PlayerInventory)
-            .where(PlayerInventory.player_id == player.id)
-            .options(selectinload(PlayerInventory.item))
-        )
-        inventory_items = [
-            {
-                "slot": inv.slot,
-                "item_id": inv.item_id,
-                "quantity": inv.quantity,
-                "current_durability": inv.current_durability,
-            }
-            for inv in inventory_result.scalars().all()
-        ]
-        await PlayerStateValkeyService.load_inventory_to_valkey(
-            valkey, player.id, inventory_items
-        )
-
-        # Load equipment to Valkey
-        equipment_result = await db.execute(
-            select(PlayerEquipment)
-            .where(PlayerEquipment.player_id == player.id)
-            .options(selectinload(PlayerEquipment.item))
-        )
-        equipment_items = [
-            {
-                "equipment_slot": eq.equipment_slot,
-                "item_id": eq.item_id,
-                "quantity": eq.quantity,
-                "current_durability": eq.current_durability,
-            }
-            for eq in equipment_result.scalars().all()
-        ]
-        await PlayerStateValkeyService.load_equipment_to_valkey(
-            valkey, player.id, equipment_items
-        )
-
-        # Load skills to Valkey
-        skills_result = await db.execute(
-            select(PlayerSkill, Skill)
-            .join(Skill)
-            .where(PlayerSkill.player_id == player.id)
-        )
-        skills = [
-            {
-                "skill_name": skill.name,
-                "skill_id": player_skill.skill_id,
-                "level": player_skill.current_level,
-                "experience": player_skill.experience,
-            }
-            for player_skill, skill in skills_result.all()
-        ]
-        await PlayerStateValkeyService.load_skills_to_valkey(valkey, player.id, skills)
+        # Load all player state (inventory, equipment, skills) to Valkey via GSM
+        gsm = get_game_state_manager()
+        await gsm.load_player_state(player.id)
 
         logger.info(
             "Player connected to WebSocket",
@@ -1197,9 +1147,7 @@ async def websocket_endpoint(
                 "map_id": validated_map,
                 "current_hp": current_hp,
                 "max_hp": max_hp,
-                "inventory_slots": len(inventory_items),
-                "equipment_slots": len(equipment_items),
-                "skills_loaded": len(skills),
+                "player_id": player.id,
             },
         )
 
@@ -1479,7 +1427,8 @@ async def websocket_endpoint(
 
             # Sync all player data to DB (position, inventory, equipment, skills)
             if player_id:
-                await BatchSyncService.sync_single_player(valkey, db, player_id, username)
+                gsm = get_game_state_manager()
+                await gsm.sync_player_to_db(player_id, username)
             else:
                 # Fallback to legacy sync if player_id not found
                 await sync_player_to_db(username, valkey, db)

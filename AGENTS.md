@@ -184,6 +184,60 @@ from server.src.models.player import Player
 - Use **relative imports** within a package: `from .base import Base`
 - Group multi-line imports with parentheses
 
+### Comments and Documentation
+
+**Business-Focused Comments Only**:
+- Document **WHAT** the code does for business purposes, not **HOW** it's implemented
+- Avoid technical implementation details in comments
+- Never comment on code changes, refactoring decisions, or fallback strategies
+
+**Examples of BAD comments**:
+```python
+# Always use GSM - no database fallbacks
+# Fixed to avoid direct DB access
+# Changed from old approach to new approach
+# TODO: Refactor this later
+```
+
+**Examples of GOOD comments**:
+```python
+# Calculate player's maximum health including equipment bonuses
+# Validate player meets skill requirements for equipment
+# Handle ammunition stacking for ranged weapons
+```
+
+**Service Layer Comments**:
+- Focus on business logic and user-facing functionality
+- Avoid mentioning technical details like "GSM", "Valkey", "database operations"
+- Describe the business purpose, not the implementation mechanism
+
+### Data Access Patterns
+
+**Single Source of Truth**: 
+- Services should NEVER access database directly
+- Always use GameStateManager (GSM) for all game state operations
+- Tests should use services/GSM, not direct database manipulation
+- No "fallback to database" patterns - use GSM exclusively
+
+**GSM Singleton Pattern**:
+- GSM should be accessed as a singleton using `get_game_state_manager()`
+- Do NOT pass GSM as parameters between functions/services
+- Services should import and call the singleton directly when needed
+- This reduces coupling and makes the architecture cleaner
+
+```python
+# Good - Use singleton
+from .game_state_manager import get_game_state_manager
+
+def some_service_method():
+    gsm = get_game_state_manager()
+    return gsm.get_player_data(player_id)
+
+# Bad - Parameter passing
+def some_service_method(state_manager: GameStateManager):
+    return state_manager.get_player_data(player_id)
+```
+
 ### Type Hints
 
 Always use type hints for function parameters and return values:
