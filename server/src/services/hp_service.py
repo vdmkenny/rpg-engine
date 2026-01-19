@@ -5,20 +5,18 @@ Handles:
 - Damage dealing
 - Healing
 - Death handling (drop items, broadcast, respawn)
+
+All state operations go through GameStateManager.
 """
 
 import asyncio
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from glide import GlideClient
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
 from server.src.core.skills import HITPOINTS_START_LEVEL
-from server.src.models.player import Player
+from server.src.services.game_state_manager import get_game_state_manager
 from server.src.services.equipment_service import EquipmentService
 from server.src.services.ground_item_service import GroundItemService
 from server.src.services.map_service import get_map_manager
@@ -65,60 +63,47 @@ class HpService:
     """Service for managing player HP."""
 
     @staticmethod
-    async def get_hp_from_valkey(
-        valkey: GlideClient, username: str
-    ) -> Tuple[int, int]:
+    async def get_hp(player_id: int) -> Tuple[int, int]:
         """
-        Get current and max HP from Valkey cache.
+        Get current and max HP from GSM.
 
         Args:
-            valkey: Valkey client
-            username: Player's username
+            player_id: Player's database ID
 
         Returns:
             Tuple of (current_hp, max_hp)
         """
-        player_key = f"player:{username}"
-        data = await valkey.hgetall(player_key)
-        if data:
-            current_hp = int(data.get(b"current_hp", b"10"))
-            max_hp = int(data.get(b"max_hp", b"10"))
-            return current_hp, max_hp
+        gsm = get_game_state_manager()
+        hp_data = await gsm.get_player_hp(player_id)
+        if hp_data:
+            return hp_data["current_hp"], hp_data["max_hp"]
         return HITPOINTS_START_LEVEL, HITPOINTS_START_LEVEL
 
     @staticmethod
-    async def set_hp_in_valkey(
-        valkey: GlideClient, username: str, current_hp: int, max_hp: Optional[int] = None
+    async def set_hp(
+        player_id: int, current_hp: int, max_hp: Optional[int] = None
     ) -> None:
         """
-        Update HP in Valkey cache.
+        Update HP via GSM.
 
         Args:
-            valkey: Valkey client
-            username: Player's username
+            player_id: Player's database ID
             current_hp: New current HP value
             max_hp: Optional new max HP value
         """
-        player_key = f"player:{username}"
-        update_data = {"current_hp": str(current_hp)}
-        if max_hp is not None:
-            update_data["max_hp"] = str(max_hp)
-        await valkey.hset(player_key, update_data)
+        gsm = get_game_state_manager()
+        await gsm.set_player_hp(player_id, current_hp, max_hp)
 
     @staticmethod
     async def deal_damage(
-        db: AsyncSession,
-        valkey: GlideClient,
-        username: str,
+        player_id: int,
         damage: int,
     ) -> DamageResult:
         """
         Deal damage to a player.
 
         Args:
-            db: Database session
-            valkey: Valkey client
-            username: Player's username
+            player_id: Player's database ID
             damage: Amount of damage to deal
 
         Returns:
@@ -134,20 +119,24 @@ class HpService:
                 message="Damage must be non-negative",
             )
 
-        # Get current HP from Valkey
-        current_hp, max_hp = await HpService.get_hp_from_valkey(valkey, username)
+        # Get current HP from GSM
+        current_hp, max_hp = await HpService.get_hp(player_id)
 
         # Calculate new HP
         actual_damage = min(damage, current_hp)  # Can't deal more damage than HP
         new_hp = max(0, current_hp - damage)
         player_died = new_hp == 0
 
-        # Update Valkey
-        await HpService.set_hp_in_valkey(valkey, username, new_hp)
+        # Update via GSM
+        await HpService.set_hp(player_id, new_hp)
+
+        gsm = get_game_state_manager()
+        username = gsm.get_username_by_player_id(player_id) or "unknown"
 
         logger.info(
             "Dealt damage to player",
             extra={
+                "player_id": player_id,
                 "username": username,
                 "damage": damage,
                 "actual_damage": actual_damage,
@@ -168,18 +157,14 @@ class HpService:
 
     @staticmethod
     async def heal(
-        db: AsyncSession,
-        valkey: GlideClient,
-        username: str,
+        player_id: int,
         amount: int,
     ) -> HealResult:
         """
         Heal a player.
 
         Args:
-            db: Database session
-            valkey: Valkey client
-            username: Player's username
+            player_id: Player's database ID
             amount: Amount to heal
 
         Returns:
@@ -194,8 +179,8 @@ class HpService:
                 message="Heal amount must be non-negative",
             )
 
-        # Get current HP from Valkey
-        current_hp, max_hp = await HpService.get_hp_from_valkey(valkey, username)
+        # Get current HP from GSM
+        current_hp, max_hp = await HpService.get_hp(player_id)
 
         # Calculate healing (cap at max HP)
         new_hp = min(current_hp + amount, max_hp)
@@ -210,12 +195,16 @@ class HpService:
                 message="Already at full HP",
             )
 
-        # Update Valkey
-        await HpService.set_hp_in_valkey(valkey, username, new_hp)
+        # Update via GSM
+        await HpService.set_hp(player_id, new_hp)
+
+        gsm = get_game_state_manager()
+        username = gsm.get_username_by_player_id(player_id) or "unknown"
 
         logger.info(
             "Healed player",
             extra={
+                "player_id": player_id,
                 "username": username,
                 "amount": amount,
                 "amount_healed": amount_healed,
@@ -233,81 +222,57 @@ class HpService:
         )
 
     @staticmethod
-    async def set_hp(
-        db: AsyncSession,
-        valkey: GlideClient,
-        username: str,
+    async def set_hp_value(
+        player_id: int,
         new_hp: int,
     ) -> Tuple[int, int]:
         """
         Set player HP to a specific value.
 
         Args:
-            db: Database session
-            valkey: Valkey client
-            username: Player's username
+            player_id: Player's database ID
             new_hp: New HP value
 
         Returns:
             Tuple of (new_hp, max_hp)
         """
-        _, max_hp = await HpService.get_hp_from_valkey(valkey, username)
+        _, max_hp = await HpService.get_hp(player_id)
         new_hp = max(0, min(new_hp, max_hp))
-        await HpService.set_hp_in_valkey(valkey, username, new_hp)
+        await HpService.set_hp(player_id, new_hp)
         return new_hp, max_hp
 
     @staticmethod
     async def handle_death(
-        db: AsyncSession,
-        valkey: GlideClient,
-        username: str,
+        player_id: int,
     ) -> Tuple[str, int, int, int]:
         """
         Handle player death: drop all items at death location.
 
         Args:
-            db: Database session
-            valkey: Valkey client
-            username: Player's username
+            player_id: Player's database ID
 
         Returns:
             Tuple of (map_id, x, y, items_dropped) - death location and item count
         """
-        # Get player position from Valkey
-        player_key = f"player:{username}"
-        data = await valkey.hgetall(player_key)
+        gsm = get_game_state_manager()
+        
+        # Get player position from GSM
+        player_state = await gsm.get_player_full_state(player_id)
 
-        if not data:
+        if not player_state:
             logger.error(
-                "No player data in Valkey for death handling",
-                extra={"username": username},
+                "No player data in GSM for death handling",
+                extra={"player_id": player_id},
             )
             return settings.DEFAULT_MAP, 0, 0, 0
 
-        death_map_id = data.get(b"map_id", settings.DEFAULT_MAP.encode()).decode()
-        death_x = int(data.get(b"x", b"0"))
-        death_y = int(data.get(b"y", b"0"))
-        player_id_str = data.get(b"player_id", b"0")
-        player_id = int(player_id_str)
-
-        if player_id == 0:
-            # Need to look up player ID from database
-            result = await db.execute(
-                select(Player).where(Player.username == username)
-            )
-            player = result.scalar_one_or_none()
-            if player:
-                player_id = player.id
-            else:
-                logger.error(
-                    "Could not find player for death handling",
-                    extra={"username": username},
-                )
-                return death_map_id, death_x, death_y, 0
+        death_map_id = player_state.get("map_id", settings.DEFAULT_MAP)
+        death_x = player_state.get("x", 0)
+        death_y = player_state.get("y", 0)
+        username = player_state.get("username", "unknown")
 
         # Drop all items at death location
         items_dropped = await GroundItemService.drop_player_items_on_death(
-            db=db,
             player_id=player_id,
             map_id=death_map_id,
             x=death_x,
@@ -317,8 +282,8 @@ class HpService:
         logger.info(
             "Player died",
             extra={
-                "username": username,
                 "player_id": player_id,
+                "username": username,
                 "death_location": {"map_id": death_map_id, "x": death_x, "y": death_y},
                 "items_dropped": items_dropped,
             },
@@ -328,67 +293,52 @@ class HpService:
 
     @staticmethod
     async def respawn_player(
-        db: AsyncSession,
-        valkey: GlideClient,
-        username: str,
+        player_id: int,
     ) -> RespawnResult:
         """
         Respawn a player at the default spawn location with full HP.
 
         Args:
-            db: Database session
-            valkey: Valkey client
-            username: Player's username
+            player_id: Player's database ID
 
         Returns:
             RespawnResult with new location and HP
         """
-        # Get spawn position
-        map_manager = get_map_manager()
-        spawn_map_id, spawn_x, spawn_y = map_manager.get_default_spawn_position()
-
-        # Get player from database to calculate max HP
-        result = await db.execute(
-            select(Player).where(Player.username == username)
-        )
-        player = result.scalar_one_or_none()
-
-        if not player:
+        gsm = get_game_state_manager()
+        username = gsm.get_username_by_player_id(player_id)
+        
+        if not username:
             return RespawnResult(
                 success=False,
-                map_id=spawn_map_id,
-                x=spawn_x,
-                y=spawn_y,
+                map_id=settings.DEFAULT_MAP,
+                x=0,
+                y=0,
                 new_hp=HITPOINTS_START_LEVEL,
                 message="Player not found",
             )
 
+        # Get spawn position
+        map_manager = get_map_manager()
+        spawn_map_id, spawn_x, spawn_y = map_manager.get_default_spawn_position()
+
         # Calculate max HP (equipment was dropped, so just base HP now)
-        max_hp = await EquipmentService.get_max_hp(db, player.id)
+        max_hp = await EquipmentService.get_max_hp(player_id)
 
-        # Update player position and HP in database
-        player.map_id = spawn_map_id
-        player.x_coord = spawn_x
-        player.y_coord = spawn_y
-        player.current_hp = max_hp  # Full HP on respawn
-        await db.commit()
-
-        # Update Valkey
-        player_key = f"player:{username}"
-        await valkey.hset(
-            player_key,
-            {
-                "x": str(spawn_x),
-                "y": str(spawn_y),
-                "map_id": spawn_map_id,
-                "current_hp": str(max_hp),
-                "max_hp": str(max_hp),
-            },
+        # Update player position and HP via GSM
+        await gsm.set_player_full_state(
+            player_id=player_id,
+            username=username,
+            x=spawn_x,
+            y=spawn_y,
+            map_id=spawn_map_id,
+            current_hp=max_hp,
+            max_hp=max_hp,
         )
 
         logger.info(
             "Player respawned",
             extra={
+                "player_id": player_id,
                 "username": username,
                 "spawn_location": {"map_id": spawn_map_id, "x": spawn_x, "y": spawn_y},
                 "new_hp": max_hp,
@@ -406,9 +356,7 @@ class HpService:
 
     @staticmethod
     async def full_death_sequence(
-        db: AsyncSession,
-        valkey: GlideClient,
-        username: str,
+        player_id: int,
         broadcast_callback=None,
     ) -> RespawnResult:
         """
@@ -420,18 +368,19 @@ class HpService:
         5. Broadcast PLAYER_RESPAWN
 
         Args:
-            db: Database session
-            valkey: Valkey client
-            username: Player's username
+            player_id: Player's database ID
             broadcast_callback: Optional async callback(message_type, payload, username)
                 for broadcasting messages to nearby players
 
         Returns:
             RespawnResult with respawn info
         """
+        gsm = get_game_state_manager()
+        username = gsm.get_username_by_player_id(player_id) or "unknown"
+
         # Step 1: Handle death (drop items)
         death_map_id, death_x, death_y, items_dropped = await HpService.handle_death(
-            db, valkey, username
+            player_id
         )
 
         # Step 2: Broadcast PLAYER_DIED
@@ -452,7 +401,7 @@ class HpService:
         await asyncio.sleep(settings.DEATH_RESPAWN_DELAY)
 
         # Step 4: Respawn player
-        respawn_result = await HpService.respawn_player(db, valkey, username)
+        respawn_result = await HpService.respawn_player(player_id)
 
         # Step 5: Broadcast PLAYER_RESPAWN
         if broadcast_callback and respawn_result.success:

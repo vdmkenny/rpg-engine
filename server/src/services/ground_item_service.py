@@ -7,42 +7,27 @@ Ground items have:
 - Visibility based on chunk range
 - Death drop mechanics
 
-Ground items are stored in both:
-- PostgreSQL (persistence across restarts)
-- Valkey (hot data for game loop performance)
+Ground items are stored in Valkey (via GSM) and synced to PostgreSQL periodically.
 """
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any, List
 
-from glide import GlideClient
-from sqlalchemy import select, delete, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from ..core.config import settings
 from ..core.items import ItemRarity
 from ..core.logging_config import get_logger
-from ..models.item import Item, GroundItem, PlayerInventory, PlayerEquipment
+from ..models.item import Item
 from ..schemas.item import (
     DropItemResult,
     PickupItemResult,
     GroundItemInfo,
     GroundItemsResponse,
+    ItemInfo,
 )
-from .item_service import ItemService
-from .inventory_service import InventoryService
-from .ground_item_valkey_service import GroundItemValkeyService
-
-
-def _utc_now_naive() -> datetime:
-    """
-    Get current UTC time as a naive datetime.
-    
-    SQLite doesn't preserve timezone info, so we use naive datetimes
-    for consistency across both SQLite (tests) and PostgreSQL (production).
-    """
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from .game_state_manager import get_game_state_manager
 
 logger = get_logger(__name__)
 
@@ -61,8 +46,15 @@ class GroundItemService:
         return settings.GROUND_ITEMS_LOOT_PROTECTION_TIMES.get(rarity, 45)
 
     @staticmethod
+    def _get_rarity_color(rarity: str) -> str:
+        """Get hex color for item rarity."""
+        try:
+            return ItemRarity.from_value(rarity).color
+        except ValueError:
+            return "#ffffff"  # Default to white
+
+    @staticmethod
     async def create_ground_item(
-        db: AsyncSession,
         item_id: int,
         map_id: str,
         x: int,
@@ -70,13 +62,11 @@ class GroundItemService:
         quantity: int = 1,
         dropped_by: Optional[int] = None,
         current_durability: Optional[int] = None,
-        valkey: Optional[GlideClient] = None,
-    ) -> Optional[GroundItem]:
+    ) -> Optional[int]:
         """
         Create a ground item (drop item on the ground).
 
         Args:
-            db: Database session
             item_id: Item database ID
             map_id: Map where item is dropped
             x: Tile X position
@@ -84,13 +74,17 @@ class GroundItemService:
             quantity: Number of items in stack
             dropped_by: Player ID who dropped the item (None for world spawns)
             current_durability: Current durability if applicable
-            valkey: Optional Valkey client (if provided, also adds to Valkey cache)
 
         Returns:
-            The created GroundItem or None if item not found
+            The ground item ID or None if item not found
         """
+        gsm = get_game_state_manager()
+
         # Get item info for rarity-based timers
-        item = await ItemService.get_item_by_id(db, item_id)
+        async with gsm._db_session() as db:
+            result = await db.execute(select(Item).where(Item.id == item_id))
+            item = result.scalar_one_or_none()
+
         if not item:
             logger.warning(
                 "Cannot create ground item - item not found",
@@ -98,178 +92,154 @@ class GroundItemService:
             )
             return None
 
-        now = _utc_now_naive()
-        rarity = item.rarity
-
-        # Calculate protection and despawn times based on rarity
-        protection_seconds = GroundItemService._get_protection_seconds(rarity)
-        despawn_seconds = GroundItemService._get_despawn_seconds(rarity)
-
-        public_at = now + timedelta(seconds=protection_seconds)
-        despawn_at = now + timedelta(seconds=despawn_seconds)
-
-        ground_item = GroundItem(
+        ground_item_id = await gsm.add_ground_item(
             item_id=item_id,
+            item_name=item.name,
+            display_name=item.display_name,
+            rarity=item.rarity,
             map_id=map_id,
             x=x,
             y=y,
             quantity=quantity,
-            current_durability=current_durability,
-            dropped_by=dropped_by,
-            public_at=public_at,
-            despawn_at=despawn_at,
+            dropped_by_player_id=dropped_by,
+            category=item.category,
+            rarity_color=GroundItemService._get_rarity_color(item.rarity),
+            max_stack_size=item.max_stack_size,
         )
-
-        db.add(ground_item)
-        await db.commit()
-        await db.refresh(ground_item)
-
-        # Also add to Valkey cache if client provided
-        if valkey:
-            await GroundItemValkeyService.add_ground_item(
-                valkey=valkey,
-                ground_item_id=ground_item.id,
-                item_id=item_id,
-                item_name=item.name,
-                display_name=item.display_name,
-                rarity=rarity,
-                map_id=map_id,
-                x=x,
-                y=y,
-                quantity=quantity,
-                dropped_by_player_id=dropped_by,
-                public_at=public_at.timestamp(),
-                despawn_at=despawn_at.timestamp(),
-            )
 
         logger.info(
             "Created ground item",
             extra={
-                "ground_item_id": ground_item.id,
+                "ground_item_id": ground_item_id,
                 "item_id": item_id,
                 "map_id": map_id,
                 "x": x,
                 "y": y,
                 "quantity": quantity,
                 "dropped_by": dropped_by,
-                "despawn_at": despawn_at.isoformat(),
-                "valkey_cached": valkey is not None,
             },
         )
 
-        return ground_item
+        return ground_item_id
 
     @staticmethod
     async def drop_from_inventory(
-        db: AsyncSession,
         player_id: int,
         inventory_slot: int,
         map_id: str,
         x: int,
         y: int,
         quantity: Optional[int] = None,
-        valkey: Optional[GlideClient] = None,
     ) -> DropItemResult:
         """
         Drop an item from player's inventory onto the ground.
 
         Args:
-            db: Database session
             player_id: Player dropping the item
             inventory_slot: Inventory slot to drop from
             map_id: Current map
             x: Player's tile X position
             y: Player's tile Y position
             quantity: Number to drop (None = entire stack)
-            valkey: Optional Valkey client (if provided, also adds to Valkey cache)
 
         Returns:
             DropItemResult with success status
         """
-        # Get the inventory item
-        inv_item = await InventoryService.get_item_at_slot(db, player_id, inventory_slot)
-        if not inv_item:
+        gsm = get_game_state_manager()
+
+        # Get the inventory item from GSM
+        slot_data = await gsm.get_inventory_slot(player_id, inventory_slot)
+        if not slot_data:
             return DropItemResult(
                 success=False,
                 message="Inventory slot is empty",
             )
 
+        item_id = slot_data["item_id"]
+        current_quantity = slot_data["quantity"]
+        durability = slot_data.get("durability")
+
         # Determine quantity to drop
-        drop_quantity = quantity if quantity is not None else inv_item.quantity
+        drop_quantity = quantity if quantity is not None else current_quantity
         if drop_quantity <= 0:
             return DropItemResult(
                 success=False,
                 message="Quantity must be positive",
             )
-        if drop_quantity > inv_item.quantity:
+        if drop_quantity > current_quantity:
             return DropItemResult(
                 success=False,
-                message=f"Not enough items (have {inv_item.quantity}, want to drop {drop_quantity})",
+                message=f"Not enough items (have {current_quantity}, want to drop {drop_quantity})",
+            )
+
+        # Get item info for ground item creation
+        async with gsm._db_session() as db:
+            result = await db.execute(select(Item).where(Item.id == item_id))
+            item = result.scalar_one_or_none()
+
+        if not item:
+            return DropItemResult(
+                success=False,
+                message="Item not found",
             )
 
         # Create ground item
-        ground_item = await GroundItemService.create_ground_item(
-            db=db,
-            item_id=inv_item.item_id,
+        ground_item_id = await gsm.add_ground_item(
+            item_id=item_id,
+            item_name=item.name,
+            display_name=item.display_name,
+            rarity=item.rarity,
             map_id=map_id,
             x=x,
             y=y,
             quantity=drop_quantity,
-            dropped_by=player_id,
-            current_durability=inv_item.current_durability,
-            valkey=valkey,
+            dropped_by_player_id=player_id,
+            category=item.category,
+            rarity_color=GroundItemService._get_rarity_color(item.rarity),
+            max_stack_size=item.max_stack_size,
         )
 
-        if not ground_item:
+        if not ground_item_id:
             return DropItemResult(
                 success=False,
                 message="Failed to create ground item",
             )
 
-        # Remove from inventory
-        remove_result = await InventoryService.remove_item(
-            db, player_id, inventory_slot, drop_quantity
-        )
-
-        if not remove_result.success:
-            # Rollback ground item creation
-            await db.delete(ground_item)
-            await db.commit()
-            # Also remove from Valkey if it was added
-            if valkey:
-                await GroundItemValkeyService.remove_ground_item(
-                    valkey, ground_item.id, map_id
-                )
-            return DropItemResult(
-                success=False,
-                message=f"Failed to remove from inventory: {remove_result.message}",
+        # Update or remove from inventory
+        if drop_quantity >= current_quantity:
+            await gsm.delete_inventory_slot(player_id, inventory_slot)
+        else:
+            await gsm.set_inventory_slot(
+                player_id,
+                inventory_slot,
+                item_id,
+                current_quantity - drop_quantity,
+                durability,
             )
 
         logger.info(
             "Player dropped item",
             extra={
                 "player_id": player_id,
-                "item_id": inv_item.item_id,
+                "item_id": item_id,
                 "quantity": drop_quantity,
-                "ground_item_id": ground_item.id,
+                "ground_item_id": ground_item_id,
             },
         )
 
         return DropItemResult(
             success=True,
             message="Item dropped",
-            ground_item_id=ground_item.id,
+            ground_item_id=ground_item_id,
         )
 
     @staticmethod
     async def pickup_item(
-        db: AsyncSession,
         player_id: int,
         ground_item_id: int,
         player_x: int,
         player_y: int,
         player_map_id: str,
-        valkey: Optional[GlideClient] = None,
     ) -> PickupItemResult:
         """
         Pick up a ground item.
@@ -278,31 +248,21 @@ class GroundItemService:
         Item must be visible (either owned by player or past protection time).
         Player must have inventory space.
 
-        Uses SELECT FOR UPDATE to prevent race conditions when multiple
-        players try to pick up the same item simultaneously.
-
         Args:
-            db: Database session
             player_id: Player picking up the item
             ground_item_id: Ground item ID
             player_x: Player's current tile X
             player_y: Player's current tile Y
             player_map_id: Player's current map ID
-            valkey: Optional Valkey client (if provided, also removes from Valkey cache)
 
         Returns:
             PickupItemResult with success status
         """
-        # Get the ground item with a row lock to prevent race conditions
-        # If another transaction has already locked this row, we wait for it
-        # If the item was deleted, we get None
-        result = await db.execute(
-            select(GroundItem)
-            .where(GroundItem.id == ground_item_id)
-            .options(selectinload(GroundItem.item))
-            .with_for_update(skip_locked=False)
-        )
-        ground_item = result.scalar_one_or_none()
+        gsm = get_game_state_manager()
+        now = datetime.now(timezone.utc).timestamp()
+
+        # Get the ground item from GSM
+        ground_item = await gsm.get_ground_item(ground_item_id)
 
         if not ground_item:
             return PickupItemResult(
@@ -311,37 +271,30 @@ class GroundItemService:
             )
 
         # Check if player is on the same map
-        # Use identical message to "not found" to avoid leaking info about items on other maps
-        if ground_item.map_id != player_map_id:
+        if ground_item["map_id"] != player_map_id:
             return PickupItemResult(
                 success=False,
                 message="Item not found or already picked up",
             )
 
         # Check if item has despawned
-        now = _utc_now_naive()
-        if ground_item.despawn_at <= now:
-            map_id = ground_item.map_id
-            await db.delete(ground_item)
-            await db.commit()
-            # Also remove from Valkey if provided
-            if valkey:
-                await GroundItemValkeyService.remove_ground_item(valkey, ground_item_id, map_id)
+        if ground_item["despawn_at"] <= now:
+            await gsm.remove_ground_item(ground_item_id, ground_item["map_id"])
             return PickupItemResult(
                 success=False,
                 message="Item has despawned",
             )
 
         # Check if player is on the same tile
-        if ground_item.x != player_x or ground_item.y != player_y:
+        if ground_item["x"] != player_x or ground_item["y"] != player_y:
             return PickupItemResult(
                 success=False,
                 message="You must be on the same tile to pick up this item",
             )
 
         # Check loot protection
-        is_owner = ground_item.dropped_by == player_id
-        is_public = ground_item.public_at <= now
+        is_owner = ground_item["dropped_by"] == player_id
+        is_public = ground_item["public_at"] <= now
 
         if not is_owner and not is_public:
             return PickupItemResult(
@@ -349,89 +302,51 @@ class GroundItemService:
                 message="This item is protected",
             )
 
-        # Try to add to inventory
-        add_result = await InventoryService.add_item(
-            db=db,
-            player_id=player_id,
-            item_id=ground_item.item_id,
-            quantity=ground_item.quantity,
-            durability=ground_item.current_durability,
-        )
-
-        if not add_result.success:
+        # Find free inventory slot
+        free_slot = await gsm.get_free_inventory_slot(player_id)
+        if free_slot is None:
             return PickupItemResult(
                 success=False,
-                message=add_result.message,
+                message="Inventory is full",
             )
 
-        # Handle partial pickup (inventory was partially full)
-        if add_result.overflow_quantity and add_result.overflow_quantity > 0:
-            # Update ground item with remaining quantity
-            ground_item.quantity = add_result.overflow_quantity
-            await db.commit()
-            
-            # Update quantity in Valkey if provided
-            if valkey:
-                item_key = f"ground_item:{ground_item_id}"
-                await valkey.hset(item_key, {"quantity": str(add_result.overflow_quantity)})
-            
-            logger.info(
-                "Partial item pickup",
-                extra={
-                    "player_id": player_id,
-                    "ground_item_id": ground_item_id,
-                    "picked_up": ground_item.quantity - add_result.overflow_quantity,
-                    "remaining": add_result.overflow_quantity,
-                },
-            )
-            
-            return PickupItemResult(
-                success=True,
-                message="Picked up partial stack (inventory full)",
-                inventory_slot=add_result.slot,
-            )
+        # Add to inventory
+        await gsm.set_inventory_slot(
+            player_id,
+            free_slot,
+            ground_item["item_id"],
+            ground_item["quantity"],
+            ground_item.get("durability"),
+        )
 
-        # Remove ground item completely
-        map_id = ground_item.map_id
-        await db.delete(ground_item)
-        await db.commit()
-        
-        # Also remove from Valkey if provided
-        if valkey:
-            await GroundItemValkeyService.remove_ground_item(valkey, ground_item_id, map_id)
+        # Remove ground item
+        await gsm.remove_ground_item(ground_item_id, ground_item["map_id"])
 
         logger.info(
             "Player picked up item",
             extra={
                 "player_id": player_id,
                 "ground_item_id": ground_item_id,
-                "item_id": ground_item.item_id,
-                "quantity": ground_item.quantity,
-                "inventory_slot": add_result.slot,
+                "item_id": ground_item["item_id"],
+                "quantity": ground_item["quantity"],
+                "inventory_slot": free_slot,
             },
         )
 
         return PickupItemResult(
             success=True,
             message="Item picked up",
-            inventory_slot=add_result.slot,
+            inventory_slot=free_slot,
         )
 
     @staticmethod
-    async def get_ground_item(
-        db: AsyncSession, ground_item_id: int
-    ) -> Optional[GroundItem]:
+    async def get_ground_item(ground_item_id: int) -> Optional[Dict[str, Any]]:
         """Get a ground item by ID."""
-        result = await db.execute(
-            select(GroundItem)
-            .where(GroundItem.id == ground_item_id)
-            .options(selectinload(GroundItem.item))
-        )
-        return result.scalar_one_or_none()
+        gsm = get_game_state_manager()
+        return await gsm.get_ground_item(ground_item_id)
 
     @staticmethod
     async def get_visible_ground_items(
-        db: AsyncSession,
         player_id: int,
         map_id: str,
         center_x: int,
@@ -446,7 +361,6 @@ class GroundItemService:
         - Items past their protection time (public)
 
         Args:
-            db: Database session
             player_id: Player ID
             map_id: Current map
             center_x: Player's tile X position
@@ -456,49 +370,42 @@ class GroundItemService:
         Returns:
             GroundItemsResponse with visible items
         """
-        now = _utc_now_naive()
-
-        # Query for visible items in range
-        # Items are visible if: dropped by player OR public_at <= now
-        # AND not yet despawned
-        min_x = center_x - tile_radius
-        max_x = center_x + tile_radius
-        min_y = center_y - tile_radius
-        max_y = center_y + tile_radius
-
-        result = await db.execute(
-            select(GroundItem)
-            .where(
-                and_(
-                    GroundItem.map_id == map_id,
-                    GroundItem.x >= min_x,
-                    GroundItem.x <= max_x,
-                    GroundItem.y >= min_y,
-                    GroundItem.y <= max_y,
-                    GroundItem.despawn_at > now,
-                    # Visible if owned by player OR public
-                    (GroundItem.dropped_by == player_id) | (GroundItem.public_at <= now),
-                )
-            )
-            .options(selectinload(GroundItem.item))
-        )
-        ground_items = list(result.scalars().all())
+        gsm = get_game_state_manager()
+        all_items = await gsm.get_ground_items_on_map(map_id)
+        now = datetime.now(timezone.utc).timestamp()
 
         items = []
-        for gi in ground_items:
-            item_info = ItemService.item_to_info(gi.item)
-            is_yours = gi.dropped_by == player_id
-            is_protected = gi.public_at > now
+        for gi in all_items:
+            # Check distance
+            if abs(gi["x"] - center_x) > tile_radius:
+                continue
+            if abs(gi["y"] - center_y) > tile_radius:
+                continue
+
+            # Check visibility (player dropped it or protection expired)
+            is_yours = gi["dropped_by"] == player_id
+            is_public = gi["public_at"] <= now
+
+            if not is_yours and not is_public:
+                continue
 
             items.append(
                 GroundItemInfo(
-                    id=gi.id,
-                    item=item_info,
-                    x=gi.x,
-                    y=gi.y,
-                    quantity=gi.quantity,
+                    id=gi["id"],
+                    item=ItemInfo(
+                        id=gi["item_id"],
+                        name=gi["item_name"],
+                        display_name=gi["display_name"],
+                        category=gi["category"],
+                        rarity=gi["rarity"],
+                        rarity_color=gi["rarity_color"],
+                        max_stack_size=gi["max_stack_size"],
+                    ),
+                    x=gi["x"],
+                    y=gi["y"],
+                    quantity=gi["quantity"],
                     is_yours=is_yours,
-                    is_protected=is_protected and not is_yours,
+                    is_protected=not is_public and not is_yours,
                 )
             )
 
@@ -508,37 +415,33 @@ class GroundItemService:
         )
 
     @staticmethod
-    async def cleanup_expired_items(db: AsyncSession) -> int:
+    async def cleanup_expired_items(map_id: Optional[str] = None) -> int:
         """
-        Delete all ground items past their despawn time.
-
-        Should be called periodically by a background task.
+        Clean up expired ground items.
 
         Args:
-            db: Database session
+            map_id: Optional map to clean up. If None, cleans all maps.
 
         Returns:
             Number of items cleaned up
         """
-        now = _utc_now_naive()
+        gsm = get_game_state_manager()
 
-        result = await db.execute(
-            delete(GroundItem).where(GroundItem.despawn_at <= now)
-        )
-        await db.commit()
+        if map_id:
+            return await gsm.cleanup_expired_ground_items(map_id)
 
-        count = result.rowcount or 0
-        if count > 0:
-            logger.info(
-                "Cleaned up expired ground items",
-                extra={"count": count},
-            )
+        # Clean up all maps by getting all items and their maps
+        all_items = await gsm.get_all_ground_items()
+        maps = set(item["map_id"] for item in all_items)
 
-        return count
+        total_cleaned = 0
+        for m in maps:
+            total_cleaned += await gsm.cleanup_expired_ground_items(m)
+
+        return total_cleaned
 
     @staticmethod
     async def drop_player_items_on_death(
-        db: AsyncSession,
         player_id: int,
         map_id: str,
         x: int,
@@ -547,10 +450,7 @@ class GroundItemService:
         """
         Drop all player inventory and equipment on death.
 
-        Hardcore mode: everything drops.
-
         Args:
-            db: Database session
             player_id: Player who died
             map_id: Map where player died
             x: Death tile X position
@@ -559,65 +459,84 @@ class GroundItemService:
         Returns:
             Number of items dropped
         """
+        gsm = get_game_state_manager()
         items_dropped = 0
 
-        # Get all inventory items
-        result = await db.execute(
-            select(PlayerInventory)
-            .where(PlayerInventory.player_id == player_id)
-            .options(selectinload(PlayerInventory.item))
-        )
-        inventory_items = list(result.scalars().all())
+        inventory = await gsm.get_inventory(player_id)
+        equipment = await gsm.get_equipment(player_id)
 
-        # Drop each inventory item
-        for inv in inventory_items:
-            ground_item = await GroundItemService.create_ground_item(
-                db=db,
-                item_id=inv.item_id,
+        # Collect all item_ids we need to look up
+        all_item_ids = set()
+        for slot_data in inventory.values():
+            all_item_ids.add(slot_data["item_id"])
+        for slot_data in equipment.values():
+            all_item_ids.add(slot_data["item_id"])
+
+        if not all_item_ids:
+            logger.info(
+                "Player died with no items to drop",
+                extra={"player_id": player_id, "map_id": map_id, "x": x, "y": y},
+            )
+            return 0
+
+        # Look up item definitions
+        items_by_id = {}
+        async with gsm._db_session() as db:
+            result = await db.execute(
+                select(Item).where(Item.id.in_(all_item_ids))
+            )
+            items_by_id = {item.id: item for item in result.scalars().all()}
+
+        # Drop inventory items
+        for slot, slot_data in inventory.items():
+            item_id = slot_data["item_id"]
+            item = items_by_id.get(item_id)
+            if not item:
+                continue
+
+            ground_item_id = await gsm.add_ground_item(
+                item_id=item_id,
+                item_name=item.name,
+                display_name=item.display_name,
+                rarity=item.rarity,
                 map_id=map_id,
                 x=x,
                 y=y,
-                quantity=inv.quantity,
-                dropped_by=player_id,
-                current_durability=inv.current_durability,
+                quantity=slot_data["quantity"],
+                dropped_by_player_id=player_id,
+                category=item.category,
+                rarity_color=GroundItemService._get_rarity_color(item.rarity),
+                max_stack_size=item.max_stack_size,
             )
-            if ground_item:
+            if ground_item_id:
                 items_dropped += 1
 
-        # Clear inventory
-        await db.execute(
-            delete(PlayerInventory).where(PlayerInventory.player_id == player_id)
-        )
+        # Drop equipped items
+        for slot_name, slot_data in equipment.items():
+            item_id = slot_data["item_id"]
+            item = items_by_id.get(item_id)
+            if not item:
+                continue
 
-        # Get all equipment items
-        result = await db.execute(
-            select(PlayerEquipment)
-            .where(PlayerEquipment.player_id == player_id)
-            .options(selectinload(PlayerEquipment.item))
-        )
-        equipment_items = list(result.scalars().all())
-
-        # Drop each equipped item
-        for equip in equipment_items:
-            ground_item = await GroundItemService.create_ground_item(
-                db=db,
-                item_id=equip.item_id,
+            ground_item_id = await gsm.add_ground_item(
+                item_id=item_id,
+                item_name=item.name,
+                display_name=item.display_name,
+                rarity=item.rarity,
                 map_id=map_id,
                 x=x,
                 y=y,
-                quantity=equip.quantity,  # Preserve quantity for stackable items (ammo)
-                dropped_by=player_id,
-                current_durability=equip.current_durability,
+                quantity=slot_data["quantity"],
+                dropped_by_player_id=player_id,
+                category=item.category,
+                rarity_color=GroundItemService._get_rarity_color(item.rarity),
+                max_stack_size=item.max_stack_size,
             )
-            if ground_item:
+            if ground_item_id:
                 items_dropped += 1
 
-        # Clear equipment
-        await db.execute(
-            delete(PlayerEquipment).where(PlayerEquipment.player_id == player_id)
-        )
-
-        await db.commit()
+        await gsm.clear_inventory(player_id)
+        await gsm.clear_equipment(player_id)
 
         logger.info(
             "Dropped player items on death",
@@ -634,16 +553,14 @@ class GroundItemService:
 
     @staticmethod
     async def get_items_at_position(
-        db: AsyncSession,
         map_id: str,
         x: int,
         y: int,
-    ) -> list[GroundItem]:
+    ) -> List[Dict[str, Any]]:
         """
         Get all ground items at a specific tile position.
 
         Args:
-            db: Database session
             map_id: Map ID
             x: Tile X position
             y: Tile Y position
@@ -651,135 +568,6 @@ class GroundItemService:
         Returns:
             List of ground items at this position
         """
-        now = _utc_now_naive()
-
-        result = await db.execute(
-            select(GroundItem)
-            .where(
-                and_(
-                    GroundItem.map_id == map_id,
-                    GroundItem.x == x,
-                    GroundItem.y == y,
-                    GroundItem.despawn_at > now,
-                )
-            )
-            .options(selectinload(GroundItem.item))
-        )
-        return list(result.scalars().all())
-
-    @staticmethod
-    async def load_ground_items_to_valkey(
-        db: AsyncSession,
-        valkey: GlideClient,
-    ) -> int:
-        """
-        Load all ground items from database to Valkey on server startup.
-
-        Args:
-            db: Database session
-            valkey: Valkey client
-
-        Returns:
-            Number of items loaded
-        """
-        now = _utc_now_naive()
-
-        # Get all non-expired ground items with their item info
-        result = await db.execute(
-            select(GroundItem)
-            .where(GroundItem.despawn_at > now)
-            .options(selectinload(GroundItem.item))
-        )
-        ground_items = list(result.scalars().all())
-
-        if not ground_items:
-            logger.info("No ground items to load from database")
-            return 0
-
-        # Find max ID to set counter
-        max_id = max(gi.id for gi in ground_items)
-        await GroundItemValkeyService.set_next_id(valkey, max_id + 1)
-
-        # Load each item into Valkey
-        for gi in ground_items:
-            await GroundItemValkeyService.add_ground_item(
-                valkey=valkey,
-                ground_item_id=gi.id,
-                item_id=gi.item_id,
-                item_name=gi.item.name,
-                display_name=gi.item.display_name,
-                rarity=gi.item.rarity,
-                map_id=gi.map_id,
-                x=gi.x,
-                y=gi.y,
-                quantity=gi.quantity,
-                dropped_by_player_id=gi.dropped_by,
-                public_at=gi.public_at.timestamp() if gi.public_at else None,
-                despawn_at=gi.despawn_at.timestamp() if gi.despawn_at else None,
-            )
-
-        logger.info(
-            "Loaded ground items from database to Valkey",
-            extra={"count": len(ground_items)},
-        )
-        return len(ground_items)
-
-    @staticmethod
-    async def sync_valkey_to_database(
-        db: AsyncSession,
-        valkey: GlideClient,
-    ) -> int:
-        """
-        Sync ground items from Valkey back to database.
-
-        This updates quantities and removes items that have been picked up.
-        Called on server shutdown and periodically.
-
-        Note: This is a one-way sync from Valkey to DB. New items created
-        during normal operation are written to both DB and Valkey.
-
-        Args:
-            db: Database session
-            valkey: Valkey client
-
-        Returns:
-            Number of items synced
-        """
-        # Get all ground items from Valkey
-        valkey_items = await GroundItemValkeyService.get_all_ground_items(valkey)
-        valkey_ids = {item["id"] for item in valkey_items}
-
-        # Get all ground items from database
-        result = await db.execute(select(GroundItem))
-        db_items = list(result.scalars().all())
-
-        synced = 0
-
-        # Remove items from DB that are no longer in Valkey (picked up)
-        for db_item in db_items:
-            if db_item.id not in valkey_ids:
-                await db.delete(db_item)
-                synced += 1
-                logger.debug(
-                    "Removed ground item from DB (picked up)",
-                    extra={"ground_item_id": db_item.id},
-                )
-
-        # Update quantities for items still in Valkey
-        valkey_by_id = {item["id"]: item for item in valkey_items}
-        for db_item in db_items:
-            if db_item.id in valkey_by_id:
-                valkey_item = valkey_by_id[db_item.id]
-                if db_item.quantity != valkey_item["quantity"]:
-                    db_item.quantity = valkey_item["quantity"]
-                    synced += 1
-
-        await db.commit()
-
-        if synced > 0:
-            logger.info(
-                "Synced ground items from Valkey to database",
-                extra={"synced": synced},
-            )
-
-        return synced
+        gsm = get_game_state_manager()
+        all_items = await gsm.get_ground_items_on_map(map_id)
+        return [item for item in all_items if item["x"] == x and item["y"] == y]
