@@ -94,263 +94,213 @@ class TestGroundItemsInGameStateUpdate:
         assert hasattr(MessageType, "GAME_STATE_UPDATE")
         assert MessageType.GAME_STATE_UPDATE.value == "GAME_STATE_UPDATE"
 
-    def test_drop_item_creates_ground_item(self):
+    @pytest.mark.asyncio
+    async def test_drop_item_creates_ground_item(self, session, gsm):
         """
         Verify drop_from_inventory creates a ground item entry.
         
         Ground items are included in GAME_STATE_UPDATE broadcasts as entities
         with type="ground_item" for visibility-based updates.
         """
-        import pytest
-        import asyncio
-        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-        from sqlalchemy.orm import sessionmaker
-        from server.src.models.base import Base
         from server.src.models.player import Player
-        from server.src.models.item import Item, PlayerInventory, GroundItem
         from server.src.core.security import get_password_hash
-        from server.src.services.inventory_service import InventoryService
         from server.src.services.ground_item_service import GroundItemService
         from server.src.services.item_service import ItemService
+        import uuid
         
-        async def run_test():
-            # Set up in-memory database
-            engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-            
-            AsyncSessionLocal = sessionmaker(
-                engine, class_=AsyncSession, expire_on_commit=False
-            )
-            
-            async with AsyncSessionLocal() as session:
-                # Sync items to database first
-                await ItemService.sync_items_to_db(session)
-                
-                # Get a droppable item
-                bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
-                if not bronze_sword:
-                    await engine.dispose()
-                    pytest.skip("bronze_sword not found in items")
-                    return
-                
-                # Create test player
-                player = Player(
-                    username="ground_drop_user",
-                    hashed_password=get_password_hash("test123"),
-                    x_coord=10,
-                    y_coord=10,
-                    map_id="samplemap",
-                )
-                session.add(player)
-                await session.commit()
-                await session.refresh(player)
-                
-                # Add item to inventory
-                await InventoryService.add_item(session, player.id, bronze_sword.id)
-                
-                # Drop the item
-                result = await GroundItemService.drop_from_inventory(
-                    db=session,
-                    player_id=player.id,
-                    inventory_slot=0,
-                    map_id="samplemap",
-                    x=10,
-                    y=10,
-                )
-                
-                assert result.success is True
-                assert result.ground_item_id is not None
-                
-                # Verify ground item was created
-                from sqlalchemy.future import select
-                ground_items = await session.execute(
-                    select(GroundItem).where(GroundItem.map_id == "samplemap")
-                )
-                items_list = ground_items.scalars().all()
-                assert len(items_list) >= 1
-            
-            await engine.dispose()
+        # Get a droppable item
+        bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
+        if not bronze_sword:
+            pytest.skip("bronze_sword not found in items")
+            return
         
-        asyncio.get_event_loop().run_until_complete(run_test())
+        # Create test player
+        username = f"ground_drop_{uuid.uuid4().hex[:8]}"
+        player = Player(
+            
+            hashed_password=get_password_hash("test123"),
+            x_coord=10,
+            y_coord=10,
+            map_id="samplemap",
+        )
+        session.add(player)
+        await session.commit()
+        await session.refresh(player)
+        
+        # Register player in GSM
+        gsm.register_online_player(player_id=player.id, username=username)
+        await gsm.set_player_full_state(
+            player_id=player.id,
+            x=10,
+            y=10,
+            map_id="samplemap",
+            current_hp=10,
+            max_hp=10,
+        )
+        
+        # Add item to inventory via GSM
+        await gsm.set_inventory_slot(player.id, 0, bronze_sword.id, 1, None)
+        
+        # Drop the item
+        result = await GroundItemService.drop_from_inventory(
+            player_id=player.id,
+            inventory_slot=0,
+            map_id="samplemap",
+            x=10,
+            y=10,
+        )
+        
+        assert result.success is True
+        assert result.ground_item_id is not None
+        
+        # Verify ground item was created in GSM
+        ground_items = await gsm.get_ground_items_on_map("samplemap")
+        assert len(ground_items) >= 1
+        
+        # Find our item
+        our_item = next((gi for gi in ground_items if gi["id"] == result.ground_item_id), None)
+        assert our_item is not None
+        assert our_item["item_id"] == bronze_sword.id
 
 
 class TestPickupItemWithRealItems:
     """
     Tests for PICKUP_ITEM with real item data.
     
-    Uses in-memory SQLite to test the GroundItemService.pickup_item directly
-    without requiring integration test infrastructure.
+    Uses GSM fixtures to test the GroundItemService.pickup_item directly.
     """
 
     @pytest.mark.asyncio
-    async def test_pickup_item_success(self):
+    async def test_pickup_item_success(self, session, gsm):
         """Picking up a ground item should add it to inventory."""
-        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-        from sqlalchemy.orm import sessionmaker
-        from server.src.models.base import Base
         from server.src.models.player import Player
-        from server.src.models.item import GroundItem
         from server.src.core.security import get_password_hash
-        from server.src.services.inventory_service import InventoryService
         from server.src.services.ground_item_service import GroundItemService
         from server.src.services.item_service import ItemService
-        from datetime import datetime, timedelta
+        import uuid
         
-        # Set up in-memory database
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        # Get a droppable item
+        bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
+        if not bronze_sword:
+            pytest.skip("bronze_sword not found in items")
+            return
         
-        AsyncSessionLocal = sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
+        # Create test player
+        username = f"pickup_success_{uuid.uuid4().hex[:8]}"
+        player = Player(
+            
+            hashed_password=get_password_hash("test123"),
+            x_coord=10,
+            y_coord=10,
+            map_id="samplemap",
+        )
+        session.add(player)
+        await session.commit()
+        await session.refresh(player)
+        
+        # Register player in GSM
+        gsm.register_online_player(player_id=player.id, username=username)
+        await gsm.set_player_full_state(
+            player_id=player.id,
+            x=10,
+            y=10,
+            map_id="samplemap",
+            current_hp=10,
+            max_hp=10,
         )
         
-        async with AsyncSessionLocal() as session:
-            # Sync items to database
-            await ItemService.sync_items_to_db(session)
-            
-            # Get a droppable item
-            bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
-            if not bronze_sword:
-                await engine.dispose()
-                pytest.skip("bronze_sword not found in items")
-                return
-            
-            # Create test player
-            player = Player(
-                username="pickup_success_user",
-                hashed_password=get_password_hash("test123"),
-                x_coord=10,
-                y_coord=10,
-                map_id="samplemap",
-            )
-            session.add(player)
-            await session.commit()
-            await session.refresh(player)
-            
-            # Create a ground item at player's position (owned by player, so no loot protection)
-            now = datetime.now()
-            ground_item = GroundItem(
-                item_id=bronze_sword.id,
-                map_id="samplemap",
-                x=10,
-                y=10,
-                quantity=1,
-                dropped_by=player.id,  # Owned by player
-                dropped_at=now,
-                public_at=now,  # Already public
-                despawn_at=now + timedelta(minutes=5),  # Won't expire
-                current_durability=bronze_sword.max_durability,
-            )
-            session.add(ground_item)
-            await session.commit()
-            await session.refresh(ground_item)
-            
-            ground_item_id = ground_item.id
-            
-            # Pick up the item
-            result = await GroundItemService.pickup_item(
-                db=session,
-                player_id=player.id,
-                ground_item_id=ground_item_id,
-                player_x=10,
-                player_y=10,
-                player_map_id="samplemap",
-            )
-            
-            assert result.success is True, f"Pickup failed: {result.message}"
-            assert "picked up" in result.message.lower() or result.success
-            
-            # Verify item is in inventory
-            inventory = await InventoryService.get_inventory(session, player.id)
-            assert len(inventory) == 1
-            assert inventory[0].item.name == "bronze_sword"
-            
-            # Verify ground item was removed
-            from sqlalchemy.future import select
-            remaining = await session.execute(
-                select(GroundItem).where(GroundItem.id == ground_item_id)
-            )
-            assert remaining.scalar_one_or_none() is None
+        # Create a ground item via GSM at player's position
+        ground_item_id = await GroundItemService.create_ground_item(
+            item_id=bronze_sword.id,
+            map_id="samplemap",
+            x=10,
+            y=10,
+            quantity=1,
+            dropped_by=player.id,
+        )
+        assert ground_item_id is not None
         
-        await engine.dispose()
+        # Pick up the item
+        result = await GroundItemService.pickup_item(
+            player_id=player.id,
+            ground_item_id=ground_item_id,
+            player_x=10,
+            player_y=10,
+            player_map_id="samplemap",
+        )
+        
+        assert result.success is True, f"Pickup failed: {result.message}"
+        
+        # Verify item is in inventory via GSM
+        inventory = await gsm.get_inventory(player.id)
+        assert len(inventory) == 1
+        slot_data = list(inventory.values())[0]
+        assert slot_data["item_id"] == bronze_sword.id
+        
+        # Verify ground item was removed from GSM
+        remaining = await gsm.get_ground_item(ground_item_id)
+        assert remaining is None
 
     @pytest.mark.asyncio
-    async def test_pickup_item_wrong_tile_fails(self):
+    async def test_pickup_item_wrong_tile_fails(self, session, gsm):
         """Picking up an item from wrong tile should fail."""
-        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-        from sqlalchemy.orm import sessionmaker
-        from server.src.models.base import Base
         from server.src.models.player import Player
-        from server.src.models.item import GroundItem
         from server.src.core.security import get_password_hash
         from server.src.services.ground_item_service import GroundItemService
         from server.src.services.item_service import ItemService
-        from datetime import datetime, timedelta
+        import uuid
         
-        # Set up in-memory database
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
+        if not bronze_sword:
+            pytest.skip("bronze_sword not found in items")
+            return
         
-        AsyncSessionLocal = sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
+        # Create test player at (10, 10)
+        username = f"pickup_wrongtile_{uuid.uuid4().hex[:8]}"
+        player = Player(
+            
+            hashed_password=get_password_hash("test123"),
+            x_coord=10,
+            y_coord=10,
+            map_id="samplemap",
+        )
+        session.add(player)
+        await session.commit()
+        await session.refresh(player)
+        
+        # Register player in GSM
+        gsm.register_online_player(player_id=player.id, username=username)
+        await gsm.set_player_full_state(
+            player_id=player.id,
+            x=10,
+            y=10,
+            map_id="samplemap",
+            current_hp=10,
+            max_hp=10,
         )
         
-        async with AsyncSessionLocal() as session:
-            # Sync items to database
-            await ItemService.sync_items_to_db(session)
-            
-            bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
-            if not bronze_sword:
-                await engine.dispose()
-                pytest.skip("bronze_sword not found in items")
-                return
-            
-            # Create test player at (10, 10)
-            player = Player(
-                username="pickup_wrongtile_user",
-                hashed_password=get_password_hash("test123"),
-                x_coord=10,
-                y_coord=10,
-                map_id="samplemap",
-            )
-            session.add(player)
-            await session.commit()
-            await session.refresh(player)
-            
-            # Create ground item at different position (15, 15)
-            now = datetime.now()
-            ground_item = GroundItem(
-                item_id=bronze_sword.id,
-                map_id="samplemap",
-                x=15,
-                y=15,
-                quantity=1,
-                dropped_by=player.id,
-                dropped_at=now,
-                public_at=now,
-                despawn_at=now + timedelta(minutes=5),
-            )
-            session.add(ground_item)
-            await session.commit()
-            await session.refresh(ground_item)
-            
-            # Try to pick up from wrong tile
-            result = await GroundItemService.pickup_item(
-                db=session,
-                player_id=player.id,
-                ground_item_id=ground_item.id,
-                player_x=10,  # Player at (10, 10)
-                player_y=10,
-                player_map_id="samplemap",
-            )
-            
-            assert result.success is False
-            assert "same tile" in result.message.lower()
+        # Create ground item at different position (15, 15)
+        ground_item_id = await GroundItemService.create_ground_item(
+            item_id=bronze_sword.id,
+            map_id="samplemap",
+            x=15,
+            y=15,
+            quantity=1,
+            dropped_by=player.id,
+        )
+        assert ground_item_id is not None
         
-        await engine.dispose()
+        # Try to pick up from wrong tile
+        result = await GroundItemService.pickup_item(
+            player_id=player.id,
+            ground_item_id=ground_item_id,
+            player_x=10,  # Player at (10, 10)
+            player_y=10,
+            player_map_id="samplemap",
+        )
+        
+        assert result.success is False
+        assert "same tile" in result.message.lower()
 
 
 @SKIP_WS_INTEGRATION
@@ -377,6 +327,7 @@ class TestPickupStackableItem:
         from server.src.services.inventory_service import InventoryService
         from server.src.services.ground_item_service import GroundItemService
         from server.src.services.item_service import ItemService
+        from server.src.services.game_state_manager import get_game_state_manager
         
         # Set up in-memory database
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -411,6 +362,7 @@ class TestPickupStackableItem:
             await session.refresh(player)
             
             # Add 5 arrows to player's inventory first
+            gsm = get_game_state_manager()
             await InventoryService.add_item(session, player.id, bronze_arrows.id, quantity=5)
             
             # Create a ground item with 10 arrows at player's position
@@ -434,7 +386,6 @@ class TestPickupStackableItem:
             
             # Pick up the ground item - should merge with existing stack
             result = await GroundItemService.pickup_item(
-                db=session,
                 player_id=player.id,
                 ground_item_id=ground_item_id,
                 player_x=10,

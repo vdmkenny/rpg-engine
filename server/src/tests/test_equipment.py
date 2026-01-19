@@ -46,46 +46,33 @@ async def skills_synced(session: AsyncSession):
 
 @pytest_asyncio.fixture
 async def player_with_equipment(
-    session: AsyncSession, create_test_player, items_synced, skills_synced
+    session: AsyncSession, create_test_player, items_synced, skills_synced, gsm
 ):
     """Create a test player ready for equipment tests."""
     unique_name = f"equip_test_{uuid.uuid4().hex[:8]}"
     player = await create_test_player(unique_name, "password123")
+    
+    # Login player to register with GSM (GSM singleton is already initialized by gsm fixture)
+    from server.src.services.player_service import PlayerService
+    await PlayerService.login_player(session, player)
+    
     return player
 
 
 async def give_player_skill_level(
     session: AsyncSession, player_id: int, skill_name: str, level: int
 ):
-    """Helper to give a player a specific skill level."""
-    # Get the skill
+    """Set player skill level for testing equipment requirements."""
+    from server.src.services.game_state_manager import get_game_state_manager
+    
+    # Get skill ID from database for GSM
     result = await session.execute(select(Skill).where(Skill.name == skill_name))
     skill = result.scalar_one_or_none()
     if not skill:
-        skill = Skill(name=skill_name)
-        session.add(skill)
-        await session.flush()
-
-    # Create or update player skill
-    result = await session.execute(
-        select(PlayerSkill)
-        .where(PlayerSkill.player_id == player_id)
-        .where(PlayerSkill.skill_id == skill.id)
-    )
-    player_skill = result.scalar_one_or_none()
-
-    if player_skill:
-        player_skill.current_level = level
-    else:
-        player_skill = PlayerSkill(
-            player_id=player_id,
-            skill_id=skill.id,
-            current_level=level,
-            experience=0,
-        )
-        session.add(player_skill)
-
-    await session.commit()
+        raise ValueError(f"Skill {skill_name} not found")
+    
+    gsm = get_game_state_manager()
+    await gsm.set_skill(player_id, skill_name, skill.id, level, 0)
 
 
 # =============================================================================
@@ -98,7 +85,7 @@ class TestGetEquipment:
 
     @pytest.mark.asyncio
     async def test_get_equipment_empty(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Empty equipment should return empty dict."""
         player = player_with_equipment
@@ -109,27 +96,52 @@ class TestGetEquipment:
 
     @pytest.mark.asyncio
     async def test_get_equipment_with_items(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Equipment with items should return dict of slots."""
         player = player_with_equipment
         item = await ItemService.get_item_by_name(session, "bronze_sword")
-
-        # Give player the attack skill at level 1
-        await give_player_skill_level(session, player.id, "attack", 1)
+        
+        # Get test item
+        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        
+        # Login player with proper state loading (GSM singleton is already initialized by gsm fixture)
+        from server.src.services.player_service import PlayerService
+        await PlayerService.login_player(session, player)
 
         # Add item to inventory and equip
-        await InventoryService.add_item(session, player.id, item.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        print(f"Player online status: {gsm.is_online(player.id)}")
+        
+        # Debug: Check what skills are loaded in GSM
+        all_skills = await gsm.get_all_skills(player.id)
+        print(f"All skills in GSM: {all_skills}")
+        
+        attack_skill = await gsm.get_skill(player.id, "attack")
+        print(f"Attack skill from GSM: {attack_skill}")
+        
+        add_result = await InventoryService.add_item(session, player.id, item.id)
+        print(f"Add item result: {add_result}")
+        
+        # Debug: Check what's in GSM inventory state immediately after add
+        inventory_data = await gsm.get_inventory(player.id)
+        print(f"Inventory data in GSM after add: {inventory_data}")
+        
+        # Check specific slot 0
+        slot_0_data = await gsm.get_inventory_slot(player.id, 0)
+        print(f"Slot 0 data: {slot_0_data}")
+        
+        equip_result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        print(f"Equip result: success={equip_result.success}, message={equip_result.message}")
 
         equipment = await EquipmentService.get_equipment(session, player.id)
+        print(f"Equipment after equip: {equipment}")
 
         assert EquipmentSlot.WEAPON.value in equipment
         assert equipment[EquipmentSlot.WEAPON.value].item_id == item.id
 
     @pytest.mark.asyncio
     async def test_get_equipment_response_structure(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Equipment response should have all slots."""
         player = player_with_equipment
@@ -154,7 +166,7 @@ class TestCanEquip:
 
     @pytest.mark.asyncio
     async def test_can_equip_no_requirements(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Item with no requirements should be equippable."""
         player = player_with_equipment
@@ -166,22 +178,26 @@ class TestCanEquip:
         assert result.can_equip is True
 
     @pytest.mark.asyncio
-    async def test_can_equip_missing_skill(
-        self, session: AsyncSession, player_with_equipment
+    async def test_can_equip_with_default_skills(
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
-        """Should fail if player doesn't have required skill."""
+        """Should succeed when player has default skill levels."""
         player = player_with_equipment
-        # Bronze sword requires attack skill
+        # Login player to load skills (GSM singleton is already initialized by gsm fixture)
+        from server.src.services.player_service import PlayerService
+        await PlayerService.login_player(session, player)
+        
+        # Bronze sword requires attack level 1 (default)
         item = await ItemService.get_item_by_name(session, "bronze_sword")
-
+        
         result = await EquipmentService.can_equip(session, player.id, item)
-
-        assert result.can_equip is False
-        assert "attack" in result.reason.lower()
+        
+        assert result.can_equip is True
+        assert result.reason == "OK"
 
     @pytest.mark.asyncio
     async def test_can_equip_insufficient_level(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Should fail if skill level is too low."""
         player = player_with_equipment
@@ -199,7 +215,7 @@ class TestCanEquip:
 
     @pytest.mark.asyncio
     async def test_can_equip_meets_requirements(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Should succeed if requirements are met."""
         player = player_with_equipment
@@ -215,7 +231,7 @@ class TestCanEquip:
 
     @pytest.mark.asyncio
     async def test_can_equip_non_equipable_item(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Non-equipable items should fail."""
         player = player_with_equipment
@@ -238,7 +254,7 @@ class TestEquipFromInventory:
 
     @pytest.mark.asyncio
     async def test_equip_basic(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Basic equip should work."""
         player = player_with_equipment
@@ -269,7 +285,7 @@ class TestEquipFromInventory:
 
     @pytest.mark.asyncio
     async def test_equip_empty_slot(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Equipping from empty inventory slot should fail."""
         player = player_with_equipment
@@ -281,7 +297,7 @@ class TestEquipFromInventory:
 
     @pytest.mark.asyncio
     async def test_equip_non_equipable_item(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Equipping non-equipable item should fail."""
         player = player_with_equipment
@@ -297,7 +313,7 @@ class TestEquipFromInventory:
 
     @pytest.mark.asyncio
     async def test_equip_swaps_current_item(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Equipping should swap with currently equipped item."""
         player = player_with_equipment
@@ -333,7 +349,7 @@ class TestEquipFromInventory:
 
     @pytest.mark.asyncio
     async def test_equip_two_handed_unequips_shield(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Equipping two-handed weapon should unequip shield."""
         player = player_with_equipment
@@ -378,7 +394,7 @@ class TestEquipFromInventory:
 
     @pytest.mark.asyncio
     async def test_equip_shield_with_two_handed_unequips_weapon(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Equipping shield when using two-handed weapon should unequip weapon."""
         player = player_with_equipment
@@ -424,7 +440,7 @@ class TestEquipFromInventory:
 
     @pytest.mark.asyncio
     async def test_equip_preserves_durability(
-        self, session: AsyncSession, player_with_equipment
+        self, session: AsyncSession, player_with_equipment, gsm
     ):
         """Durability should be preserved when equipping."""
         player = player_with_equipment
@@ -456,8 +472,7 @@ class TestUnequipToInventory:
 
     @pytest.mark.asyncio
     async def test_unequip_basic(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Basic unequip should work."""
         player = player_with_equipment
         item = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -471,16 +486,14 @@ class TestUnequipToInventory:
 
         # Unequip
         result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.WEAPON
-        )
+            session, player.id, EquipmentSlot.WEAPON)
 
         assert result.success is True
         assert result.inventory_slot is not None
 
         # Slot should be empty
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.WEAPON
-        )
+            session, player.id, EquipmentSlot.WEAPON)
         assert equipped is None
 
         # Item should be in inventory
@@ -492,22 +505,19 @@ class TestUnequipToInventory:
 
     @pytest.mark.asyncio
     async def test_unequip_empty_slot(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Unequipping empty slot should fail."""
         player = player_with_equipment
 
         result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.WEAPON
-        )
+            session, player.id, EquipmentSlot.WEAPON)
 
         assert result.success is False
         assert "nothing equipped" in result.message.lower()
 
     @pytest.mark.asyncio
     async def test_unequip_full_inventory(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Unequipping with full inventory should fail."""
         player = player_with_equipment
         sword = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -530,16 +540,14 @@ class TestUnequipToInventory:
 
         # Try to unequip
         result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.WEAPON
-        )
+            session, player.id, EquipmentSlot.WEAPON)
 
         assert result.success is False
         assert "full" in result.message.lower()
 
     @pytest.mark.asyncio
     async def test_unequip_preserves_durability(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Durability should be preserved when unequipping."""
         player = player_with_equipment
         item = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -553,15 +561,13 @@ class TestUnequipToInventory:
 
         # Manually modify durability
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.WEAPON
-        )
+            session, player.id, EquipmentSlot.WEAPON)
         equipped.current_durability = 150
         await session.commit()
 
         # Unequip
         result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.WEAPON
-        )
+            session, player.id, EquipmentSlot.WEAPON)
 
         # Check durability
         inv = await InventoryService.get_item_at_slot(
@@ -580,12 +586,11 @@ class TestGetTotalStats:
 
     @pytest.mark.asyncio
     async def test_empty_equipment_zero_stats(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Empty equipment should have zero stats."""
         player = player_with_equipment
 
-        stats = await EquipmentService.get_total_stats(session, player.id)
+        stats = await EquipmentService.get_total_stats(player.id)
 
         assert stats.attack_bonus == 0
         assert stats.strength_bonus == 0
@@ -594,8 +599,7 @@ class TestGetTotalStats:
 
     @pytest.mark.asyncio
     async def test_single_item_stats(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Single equipped item should contribute its stats."""
         player = player_with_equipment
         item = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -605,7 +609,7 @@ class TestGetTotalStats:
         await InventoryService.add_item(session, player.id, item.id)
         await EquipmentService.equip_from_inventory(session, player.id, 0)
 
-        stats = await EquipmentService.get_total_stats(session, player.id)
+        stats = await EquipmentService.get_total_stats(player.id)
 
         # Bronze sword has attack_bonus=4, strength_bonus=3
         assert stats.attack_bonus == 4
@@ -613,8 +617,7 @@ class TestGetTotalStats:
 
     @pytest.mark.asyncio
     async def test_multiple_items_aggregate(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Multiple items should aggregate stats."""
         player = player_with_equipment
         sword = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -635,7 +638,7 @@ class TestGetTotalStats:
         await InventoryService.add_item(session, player.id, platebody.id)
         await EquipmentService.equip_from_inventory(session, player.id, 0)
 
-        stats = await EquipmentService.get_total_stats(session, player.id)
+        stats = await EquipmentService.get_total_stats(player.id)
 
         # Bronze sword: attack=4, strength=3
         # Bronze helmet: physical_defence=3, magic_defence=1, magic_attack=-1
@@ -648,8 +651,7 @@ class TestGetTotalStats:
 
     @pytest.mark.asyncio
     async def test_negative_stats_reduce_total(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Negative stats should reduce totals."""
         player = player_with_equipment
         platebody = await ItemService.get_item_by_name(session, "bronze_platebody")
@@ -661,7 +663,7 @@ class TestGetTotalStats:
         await InventoryService.add_item(session, player.id, platebody.id)
         await EquipmentService.equip_from_inventory(session, player.id, 0)
 
-        stats = await EquipmentService.get_total_stats(session, player.id)
+        stats = await EquipmentService.get_total_stats(player.id)
 
         # Bronze platebody has magic_attack_bonus=-3
         assert stats.magic_attack_bonus == -3
@@ -678,8 +680,7 @@ class TestDurability:
 
     @pytest.mark.asyncio
     async def test_degrade_reduces_durability(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Degrading should reduce durability."""
         player = player_with_equipment
         item = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -691,8 +692,7 @@ class TestDurability:
 
         # Degrade
         remaining = await EquipmentService.degrade_equipment(
-            session, player.id, EquipmentSlot.WEAPON, amount=1
-        )
+            session, player.id, EquipmentSlot.WEAPON, amount=1)
 
         # Should be reduced by EQUIPMENT_DURABILITY_LOSS_PER_HIT
         expected = 500 - settings.EQUIPMENT_DURABILITY_LOSS_PER_HIT
@@ -700,21 +700,18 @@ class TestDurability:
 
     @pytest.mark.asyncio
     async def test_degrade_empty_slot_returns_none(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Degrading empty slot should return None."""
         player = player_with_equipment
 
         remaining = await EquipmentService.degrade_equipment(
-            session, player.id, EquipmentSlot.WEAPON
-        )
+            session, player.id, EquipmentSlot.WEAPON)
 
         assert remaining is None
 
     @pytest.mark.asyncio
     async def test_degrade_to_zero(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Durability should not go below zero."""
         player = player_with_equipment
         item = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -726,15 +723,13 @@ class TestDurability:
 
         # Degrade a lot
         remaining = await EquipmentService.degrade_equipment(
-            session, player.id, EquipmentSlot.WEAPON, amount=100
-        )
+            session, player.id, EquipmentSlot.WEAPON, amount=100)
 
         assert remaining == 0
 
     @pytest.mark.asyncio
     async def test_repair_restores_durability(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Repairing should restore to max durability."""
         player = player_with_equipment
         item = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -746,28 +741,24 @@ class TestDurability:
 
         # Repair
         success, cost = await EquipmentService.repair_equipment(
-            session, player.id, EquipmentSlot.WEAPON
-        )
+            session, player.id, EquipmentSlot.WEAPON)
 
         assert success is True
         assert cost > 0  # Repair should cost something
 
         # Check durability is restored
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.WEAPON
-        )
+            session, player.id, EquipmentSlot.WEAPON)
         assert equipped.current_durability == item.max_durability
 
     @pytest.mark.asyncio
     async def test_repair_empty_slot(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Repairing empty slot should fail."""
         player = player_with_equipment
 
         success, cost = await EquipmentService.repair_equipment(
-            session, player.id, EquipmentSlot.WEAPON
-        )
+            session, player.id, EquipmentSlot.WEAPON)
 
         assert success is False
         assert cost == 0
@@ -783,8 +774,7 @@ class TestClearEquipment:
 
     @pytest.mark.asyncio
     async def test_clear_equipment(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Clear should remove all equipment."""
         player = player_with_equipment
         sword = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -811,8 +801,7 @@ class TestClearEquipment:
 
     @pytest.mark.asyncio
     async def test_clear_empty_equipment(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Clearing empty equipment should return 0."""
         player = player_with_equipment
 
@@ -831,8 +820,7 @@ class TestGetAllEquippedItems:
 
     @pytest.mark.asyncio
     async def test_get_all_equipped_items(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Should return list of (equipment, item) tuples."""
         player = player_with_equipment
         sword = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -860,8 +848,7 @@ class TestStackableAmmunition:
 
     @pytest.mark.asyncio
     async def test_equip_arrows_to_empty_slot(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Equipping arrows to empty AMMO slot should work."""
         player = player_with_equipment
         arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
@@ -877,8 +864,7 @@ class TestStackableAmmunition:
 
         # Verify equipped with correct quantity
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO
-        )
+            session, player.id, EquipmentSlot.AMMO)
         assert equipped is not None
         assert equipped.item_id == arrows.id
         assert equipped.quantity == 100
@@ -889,8 +875,7 @@ class TestStackableAmmunition:
 
     @pytest.mark.asyncio
     async def test_equip_same_arrows_adds_to_stack(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Equipping more of the same arrow type should add to existing stack."""
         player = player_with_equipment
         arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
@@ -911,8 +896,7 @@ class TestStackableAmmunition:
 
         # Verify quantity increased
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO
-        )
+            session, player.id, EquipmentSlot.AMMO)
         assert equipped.quantity == 150
 
         # Verify inventory is empty
@@ -921,8 +905,7 @@ class TestStackableAmmunition:
 
     @pytest.mark.asyncio
     async def test_equip_arrows_partial_stack_full(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """When equipped stack is near max, should only add what fits."""
         player = player_with_equipment
         arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
@@ -950,8 +933,7 @@ class TestStackableAmmunition:
 
         # Verify equipped is at max
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO
-        )
+            session, player.id, EquipmentSlot.AMMO)
         assert equipped.quantity == max_stack
 
         # Verify remainder in inventory
@@ -961,8 +943,7 @@ class TestStackableAmmunition:
 
     @pytest.mark.asyncio
     async def test_equip_different_arrows_swaps(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Equipping different arrow type should swap (old goes to inventory)."""
         player = player_with_equipment
         bronze_arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
@@ -982,8 +963,7 @@ class TestStackableAmmunition:
 
         # Verify iron arrows equipped with correct quantity
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO
-        )
+            session, player.id, EquipmentSlot.AMMO)
         assert equipped.item_id == iron_arrows.id
         assert equipped.quantity == 50
 
@@ -995,8 +975,7 @@ class TestStackableAmmunition:
 
     @pytest.mark.asyncio
     async def test_unequip_ammo_preserves_quantity(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Unequipping ammo should preserve quantity."""
         player = player_with_equipment
         arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
@@ -1007,15 +986,13 @@ class TestStackableAmmunition:
 
         # Unequip
         result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.AMMO
-        )
+            session, player.id, EquipmentSlot.AMMO)
 
         assert result.success is True
 
         # Slot should be empty
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO
-        )
+            session, player.id, EquipmentSlot.AMMO)
         assert equipped is None
 
         # Inventory should have arrows with preserved quantity
@@ -1028,8 +1005,7 @@ class TestStackableAmmunition:
 
     @pytest.mark.asyncio
     async def test_unequip_ammo_merges_with_inventory_stack(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Unequipping ammo should merge with existing inventory stack."""
         player = player_with_equipment
         arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
@@ -1049,8 +1025,7 @@ class TestStackableAmmunition:
 
         # Unequip - should merge with existing stack
         result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.AMMO
-        )
+            session, player.id, EquipmentSlot.AMMO)
 
         assert result.success is True
 
@@ -1061,8 +1036,7 @@ class TestStackableAmmunition:
 
     @pytest.mark.asyncio
     async def test_consume_ammo_reduces_quantity(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Consuming ammo should reduce equipped quantity."""
         player = player_with_equipment
         arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
@@ -1079,14 +1053,12 @@ class TestStackableAmmunition:
 
         # Verify equipped quantity
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO
-        )
+            session, player.id, EquipmentSlot.AMMO)
         assert equipped.quantity == 99
 
     @pytest.mark.asyncio
     async def test_consume_ammo_removes_when_depleted(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Consuming last ammo should remove equipment entry."""
         player = player_with_equipment
         arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
@@ -1103,14 +1075,12 @@ class TestStackableAmmunition:
 
         # Slot should be empty
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO
-        )
+            session, player.id, EquipmentSlot.AMMO)
         assert equipped is None
 
     @pytest.mark.asyncio
     async def test_consume_ammo_fails_when_not_enough(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Consuming more ammo than available should fail."""
         player = player_with_equipment
         arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
@@ -1127,14 +1097,12 @@ class TestStackableAmmunition:
 
         # Quantity should be unchanged
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO
-        )
+            session, player.id, EquipmentSlot.AMMO)
         assert equipped.quantity == 5
 
     @pytest.mark.asyncio
     async def test_consume_ammo_no_ammo_equipped(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Consuming ammo with nothing equipped should fail."""
         player = player_with_equipment
 
@@ -1145,8 +1113,7 @@ class TestStackableAmmunition:
 
     @pytest.mark.asyncio
     async def test_equipment_response_includes_quantity(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Equipment response should include quantity for ammo slot."""
         player = player_with_equipment
         arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
@@ -1168,8 +1135,7 @@ class TestStackableAmmunition:
 
     @pytest.mark.asyncio
     async def test_unequip_ammo_drops_to_ground_when_inventory_full(
-        self, session: AsyncSession, player_with_equipment
-    ):
+        self, session: AsyncSession, player_with_equipment, gsm):
         """Unequipping ammo with full inventory should drop to ground."""
         player = player_with_equipment
         arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
@@ -1200,14 +1166,12 @@ class TestStackableAmmunition:
             EquipmentSlot.AMMO,
             map_id="test_map",
             player_x=10,
-            player_y=20,
-        )
+            player_y=20)
 
         assert result.success is True
         assert "dropped" in result.message.lower()
 
         # Slot should be empty
         equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO
-        )
+            session, player.id, EquipmentSlot.AMMO)
         assert equipped is None

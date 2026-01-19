@@ -255,7 +255,7 @@ class TestSkillServiceSync:
     """Test skill synchronization to database."""
 
     @pytest.mark.asyncio
-    async def test_sync_skills_creates_all_skills(self, session: AsyncSession):
+    async def test_sync_skills_creates_all_skills(self, session: AsyncSession, gsm):
         """sync_skills_to_db should create all skills in the database."""
         # Sync skills
         skills = await SkillService.sync_skills_to_db(session)
@@ -268,7 +268,7 @@ class TestSkillServiceSync:
             assert skill_type.name.lower() in skill_names
 
     @pytest.mark.asyncio
-    async def test_sync_skills_is_idempotent(self, session: AsyncSession):
+    async def test_sync_skills_is_idempotent(self, session: AsyncSession, gsm):
         """Calling sync_skills_to_db multiple times should not create duplicates."""
         # Sync twice
         await SkillService.sync_skills_to_db(session)
@@ -283,7 +283,7 @@ class TestSkillServiceGrant:
 
     @pytest.mark.asyncio
     async def test_grant_all_skills_to_player(
-        self, session: AsyncSession, create_test_player
+        self, session: AsyncSession, create_test_player, gsm
     ):
         """grant_all_skills_to_player should create PlayerSkill records for all skills."""
         # Create player and sync skills first
@@ -314,7 +314,7 @@ class TestSkillServiceGrant:
 
     @pytest.mark.asyncio
     async def test_grant_skills_is_idempotent(
-        self, session: AsyncSession, create_test_player
+        self, session: AsyncSession, create_test_player, gsm
     ):
         """Granting skills multiple times should not create duplicates."""
         player = await create_test_player("test_idempotent", "password123")
@@ -337,7 +337,7 @@ class TestSkillServiceAddExperience:
 
     @pytest.mark.asyncio
     async def test_add_experience_basic(
-        self, session: AsyncSession, create_test_player
+        self, session: AsyncSession, create_test_player, gsm
     ):
         """Adding XP should update the PlayerSkill record."""
         player = await create_test_player("test_xp", "password123")
@@ -346,7 +346,7 @@ class TestSkillServiceAddExperience:
         
         # Add some XP to attack
         result = await SkillService.add_experience(
-            session, player.id, SkillType.ATTACK, 100
+            session, player.id, SkillType.ATTACK, 100, state_manager=gsm
         )
         
         assert result is not None
@@ -356,7 +356,7 @@ class TestSkillServiceAddExperience:
 
     @pytest.mark.asyncio
     async def test_add_experience_causes_level_up(
-        self, session: AsyncSession, create_test_player
+        self, session: AsyncSession, create_test_player, gsm
     ):
         """Adding enough XP should trigger a level up."""
         player = await create_test_player("test_levelup", "password123")
@@ -365,7 +365,7 @@ class TestSkillServiceAddExperience:
         
         # Add enough XP to reach level 2 (around 83 XP)
         result = await SkillService.add_experience(
-            session, player.id, SkillType.ATTACK, 100
+            session, player.id, SkillType.ATTACK, 100, state_manager=gsm
         )
         
         assert result is not None
@@ -375,7 +375,7 @@ class TestSkillServiceAddExperience:
 
     @pytest.mark.asyncio
     async def test_add_experience_multiple_level_ups(
-        self, session: AsyncSession, create_test_player
+        self, session: AsyncSession, create_test_player, gsm
     ):
         """Adding a large amount of XP should trigger multiple level ups."""
         player = await create_test_player("test_multi_levelup", "password123")
@@ -384,7 +384,7 @@ class TestSkillServiceAddExperience:
         
         # Add enough XP for level 10+ (around 1,154 XP for level 10)
         result = await SkillService.add_experience(
-            session, player.id, SkillType.ATTACK, 5000
+            session, player.id, SkillType.ATTACK, 5000, state_manager=gsm
         )
         
         assert result is not None
@@ -394,7 +394,7 @@ class TestSkillServiceAddExperience:
 
     @pytest.mark.asyncio
     async def test_add_zero_experience_returns_none(
-        self, session: AsyncSession, create_test_player
+        self, session: AsyncSession, create_test_player, gsm
     ):
         """Adding 0 or negative XP should return None."""
         player = await create_test_player("test_zero_xp", "password123")
@@ -402,12 +402,12 @@ class TestSkillServiceAddExperience:
         await SkillService.grant_all_skills_to_player(session, player.id)
         
         result = await SkillService.add_experience(
-            session, player.id, SkillType.ATTACK, 0
+            session, player.id, SkillType.ATTACK, 0, state_manager=gsm
         )
         assert result is None
         
         result = await SkillService.add_experience(
-            session, player.id, SkillType.ATTACK, -100
+            session, player.id, SkillType.ATTACK, -100, state_manager=gsm
         )
         assert result is None
 
@@ -417,7 +417,7 @@ class TestSkillServiceGetPlayerSkills:
 
     @pytest.mark.asyncio
     async def test_get_player_skills(
-        self, session: AsyncSession, create_test_player
+        self, session: AsyncSession, create_test_player, gsm
     ):
         """get_player_skills should return all skills with metadata."""
         player = await create_test_player("test_get_skills", "password123")
@@ -443,7 +443,7 @@ class TestSkillServiceGetPlayerSkills:
 
     @pytest.mark.asyncio
     async def test_get_total_level(
-        self, session: AsyncSession, create_test_player
+        self, session: AsyncSession, create_test_player, gsm
     ):
         """get_total_level should return sum of all skill levels."""
         player = await create_test_player("test_total_level", "password123")
@@ -458,7 +458,7 @@ class TestSkillServiceGetPlayerSkills:
         
         # Add some XP to level up one skill
         await SkillService.add_experience(
-            session, player.id, SkillType.ATTACK, 5000
+            session, player.id, SkillType.ATTACK, 5000, state_manager=gsm
         )
         
         # Total should increase

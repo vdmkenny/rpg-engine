@@ -204,17 +204,13 @@ class TestDeathSequenceCallback:
     """
 
     @pytest.mark.asyncio
-    async def test_death_sequence_calls_died_callback(self):
+    async def test_death_sequence_calls_died_callback(self, session, gsm):
         """Death sequence should call broadcast callback with PLAYER_DIED."""
-        import pytest_asyncio
         from server.src.services.hp_service import HpService
-        from server.src.tests.conftest import FakeValkey
-        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-        from sqlalchemy.orm import sessionmaker
-        from server.src.models.base import Base
         from server.src.models.player import Player
         from server.src.core.security import get_password_hash
         from server.src.core.skills import HITPOINTS_START_LEVEL
+        import uuid
         
         # Track broadcast calls
         broadcast_calls = []
@@ -226,148 +222,121 @@ class TestDeathSequenceCallback:
                 "username": username,
             })
         
-        # Set up in-memory database
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        # Create test player
+        username = f"death_test_{uuid.uuid4().hex[:8]}"
+        player = Player(
+            
+            hashed_password=get_password_hash("test123"),
+            x_coord=10,
+            y_coord=10,
+            map_id="samplemap",
+            current_hp=HITPOINTS_START_LEVEL,
+        )
+        session.add(player)
+        await session.commit()
+        await session.refresh(player)
         
-        AsyncSessionLocal = sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
+        # Register player in GSM (simulates player connection)
+        gsm.register_online_player(player_id=player.id, username=username)
+        await gsm.set_player_full_state(
+            player_id=player.id,
+            
+            x=10,
+            y=10,
+            map_id="samplemap",
+            current_hp=0,  # Already at 0 HP (dead)
+            max_hp=HITPOINTS_START_LEVEL,
         )
         
-        async with AsyncSessionLocal() as session:
-            # Create test player
-            player = Player(
-                username="death_test_user",
-                hashed_password=get_password_hash("test123"),
-                x_coord=10,
-                y_coord=10,
-                map_id="samplemap",
-                current_hp=HITPOINTS_START_LEVEL,
-            )
-            session.add(player)
-            await session.commit()
-            await session.refresh(player)
-            
-            # Set up fake Valkey
-            fake_valkey = FakeValkey()
-            await fake_valkey.hset(
-                f"player:{player.username}",
-                {
-                    "x": "10",
-                    "y": "10",
-                    "map_id": "samplemap",
-                    "current_hp": "0",  # Already at 0 HP (dead)
-                    "max_hp": str(HITPOINTS_START_LEVEL),
-                    "player_id": str(player.id),
-                }
-            )
-            
-            # Mock settings to avoid 5 second delay
-            import server.src.core.config as config
-            original_delay = config.settings.DEATH_RESPAWN_DELAY
-            config.settings.DEATH_RESPAWN_DELAY = 0.0
-            
-            try:
-                # Run death sequence
-                result = await HpService.full_death_sequence(
-                    session, fake_valkey, player.username, mock_broadcast
-                )
-                
-                assert result.success is True
-                
-                # Check PLAYER_DIED was broadcast
-                died_calls = [c for c in broadcast_calls if c["type"] == "PLAYER_DIED"]
-                assert len(died_calls) == 1
-                
-                died_payload = died_calls[0]["payload"]
-                assert died_payload["username"] == player.username
-                assert "x" in died_payload
-                assert "y" in died_payload
-                assert "map_id" in died_payload
-                
-                # Check PLAYER_RESPAWN was broadcast
-                respawn_calls = [c for c in broadcast_calls if c["type"] == "PLAYER_RESPAWN"]
-                assert len(respawn_calls) == 1
-                
-                respawn_payload = respawn_calls[0]["payload"]
-                assert respawn_payload["username"] == player.username
-                assert "x" in respawn_payload
-                assert "y" in respawn_payload
-                assert "map_id" in respawn_payload
-                assert "current_hp" in respawn_payload
-                assert "max_hp" in respawn_payload
-                
-            finally:
-                config.settings.DEATH_RESPAWN_DELAY = original_delay
+        # Mock settings to avoid 5 second delay
+        import server.src.core.config as config
+        original_delay = config.settings.DEATH_RESPAWN_DELAY
+        config.settings.DEATH_RESPAWN_DELAY = 0.0
         
-        await engine.dispose()
+        try:
+            # Run death sequence using player_id
+            result = await HpService.full_death_sequence(
+                player_id=player.id,
+                broadcast_callback=mock_broadcast,
+            )
+            
+            assert result.success is True
+            
+            # Check PLAYER_DIED was broadcast
+            died_calls = [c for c in broadcast_calls if c["type"] == "PLAYER_DIED"]
+            assert len(died_calls) == 1
+            
+            died_payload = died_calls[0]["payload"]
+            assert died_payload["username"] == username
+            assert "x" in died_payload
+            assert "y" in died_payload
+            assert "map_id" in died_payload
+            
+            # Check PLAYER_RESPAWN was broadcast
+            respawn_calls = [c for c in broadcast_calls if c["type"] == "PLAYER_RESPAWN"]
+            assert len(respawn_calls) == 1
+            
+            respawn_payload = respawn_calls[0]["payload"]
+            assert respawn_payload["username"] == username
+            assert "x" in respawn_payload
+            assert "y" in respawn_payload
+            assert "map_id" in respawn_payload
+            assert "current_hp" in respawn_payload
+            assert "max_hp" in respawn_payload
+            
+        finally:
+            config.settings.DEATH_RESPAWN_DELAY = original_delay
 
     @pytest.mark.asyncio
-    async def test_death_sequence_without_callback(self):
+    async def test_death_sequence_without_callback(self, session, gsm):
         """Death sequence should work without broadcast callback."""
         from server.src.services.hp_service import HpService
-        from server.src.tests.conftest import FakeValkey
-        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-        from sqlalchemy.orm import sessionmaker
-        from server.src.models.base import Base
         from server.src.models.player import Player
         from server.src.core.security import get_password_hash
         from server.src.core.skills import HITPOINTS_START_LEVEL
+        import uuid
         
-        # Set up in-memory database
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        # Create test player
+        username = f"death_nocb_{uuid.uuid4().hex[:8]}"
+        player = Player(
+            
+            hashed_password=get_password_hash("test123"),
+            x_coord=10,
+            y_coord=10,
+            map_id="samplemap",
+            current_hp=HITPOINTS_START_LEVEL,
+        )
+        session.add(player)
+        await session.commit()
+        await session.refresh(player)
         
-        AsyncSessionLocal = sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
+        # Register player in GSM
+        gsm.register_online_player(player_id=player.id, username=username)
+        await gsm.set_player_full_state(
+            player_id=player.id,
+            
+            x=10,
+            y=10,
+            map_id="samplemap",
+            current_hp=0,  # Already at 0 HP (dead)
+            max_hp=HITPOINTS_START_LEVEL,
         )
         
-        async with AsyncSessionLocal() as session:
-            # Create test player
-            player = Player(
-                username="death_nocb_user",
-                hashed_password=get_password_hash("test123"),
-                x_coord=10,
-                y_coord=10,
-                map_id="samplemap",
-                current_hp=HITPOINTS_START_LEVEL,
-            )
-            session.add(player)
-            await session.commit()
-            await session.refresh(player)
-            
-            # Set up fake Valkey
-            fake_valkey = FakeValkey()
-            await fake_valkey.hset(
-                f"player:{player.username}",
-                {
-                    "x": "10",
-                    "y": "10",
-                    "map_id": "samplemap",
-                    "current_hp": "0",
-                    "max_hp": str(HITPOINTS_START_LEVEL),
-                    "player_id": str(player.id),
-                }
-            )
-            
-            # Mock settings
-            import server.src.core.config as config
-            original_delay = config.settings.DEATH_RESPAWN_DELAY
-            config.settings.DEATH_RESPAWN_DELAY = 0.0
-            
-            try:
-                # Run death sequence without callback
-                result = await HpService.full_death_sequence(
-                    session, fake_valkey, player.username, broadcast_callback=None
-                )
-                
-                # Should still succeed
-                assert result.success is True
-                assert result.new_hp == HITPOINTS_START_LEVEL
-                
-            finally:
-                config.settings.DEATH_RESPAWN_DELAY = original_delay
+        # Mock settings
+        import server.src.core.config as config
+        original_delay = config.settings.DEATH_RESPAWN_DELAY
+        config.settings.DEATH_RESPAWN_DELAY = 0.0
         
-        await engine.dispose()
+        try:
+            # Run death sequence without callback
+            result = await HpService.full_death_sequence(
+                player_id=player.id,
+                broadcast_callback=None,
+            )
+            
+            # Should still succeed
+            assert result.success is True
+            assert result.new_hp == HITPOINTS_START_LEVEL
+            
+        finally:
+            config.settings.DEATH_RESPAWN_DELAY = original_delay

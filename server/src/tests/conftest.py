@@ -19,6 +19,11 @@ from server.src.models.player import Player
 from server.src.models.item import GroundItem, PlayerInventory, PlayerEquipment
 from server.src.models.skill import PlayerSkill
 from server.src.core.security import get_password_hash, create_access_token
+from server.src.services.game_state_manager import (
+    GameStateManager,
+    init_game_state_manager,
+    reset_game_state_manager,
+)
 
 # Use SQLite in memory for tests to avoid async connection issues
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -80,25 +85,33 @@ class FakeValkey:
                 deleted += 1
         return deleted
     
-    async def delete(self, key: str) -> int:
-        """Delete a key."""
+    async def delete(self, keys: list | str) -> int:
+        """Delete one or more keys."""
         deleted = 0
-        if key in self._data:
-            del self._data[key]
-            deleted += 1
-        if key in self._string_data:
-            del self._string_data[key]
-            deleted += 1
-        if key in self._set_data:
-            del self._set_data[key]
-            deleted += 1
+        # Handle both single key (str) and list of keys
+        if isinstance(keys, str):
+            keys = [keys]
+        for key in keys:
+            if key in self._data:
+                del self._data[key]
+                deleted += 1
+            if key in self._string_data:
+                del self._string_data[key]
+                deleted += 1
+            if key in self._set_data:
+                del self._set_data[key]
+                deleted += 1
         return deleted
     
-    async def exists(self, key: str) -> int:
-        """Check if a key exists."""
-        if key in self._data or key in self._string_data or key in self._set_data:
-            return 1
-        return 0
+    async def exists(self, keys: list | str) -> int:
+        """Check if keys exist. Returns count of existing keys."""
+        if isinstance(keys, str):
+            keys = [keys]
+        count = 0
+        for key in keys:
+            if key in self._data or key in self._string_data or key in self._set_data:
+                count += 1
+        return count
     
     async def set(self, key: str, value: str) -> str:
         """Set a string value."""
@@ -247,6 +260,34 @@ async def fake_valkey() -> FakeValkey:
     valkey.clear()
 
 
+@pytest_asyncio.fixture(scope="function")
+async def gsm(fake_valkey: FakeValkey) -> AsyncGenerator[GameStateManager, None]:
+    """
+    Create a GameStateManager for tests that need GSM functionality.
+    
+    Initializes the global GSM with a FakeValkey and test session factory.
+    Tests using this fixture can call get_game_state_manager() and it will
+    return this initialized GSM instance.
+    """
+    if TestingSessionLocal is None:
+        raise RuntimeError("TestingSessionLocal not initialized")
+    
+    # Initialize the global GSM
+    gsm_instance = init_game_state_manager(fake_valkey, TestingSessionLocal)
+
+    # Load item cache from database for metadata lookups
+    try:
+        await gsm_instance.load_item_cache_from_db()
+    except Exception:
+        # Tests may not have items synced; caller tests should call ItemService.sync_items_to_db(session)
+        pass
+    
+    yield gsm_instance
+    
+    # Clean up - reset the global GSM
+    reset_game_state_manager()
+
+
 @pytest_asyncio.fixture
 async def client(
     session: AsyncSession, fake_valkey: FakeValkey
@@ -278,7 +319,8 @@ def create_test_player(
     session: AsyncSession,
 ) -> Callable[..., Awaitable[Player]]:
     """
-    Fixture factory to create a test player in the database.
+    Fixture factory to create a test player with proper initialization.
+    Uses PlayerService for consistent player creation with skills.
     """
     async def _create_player(
         username: str, 
@@ -288,21 +330,33 @@ def create_test_player(
         map_id: str = "samplemap",
         **extra_fields
     ) -> Player:
-        hashed_password = get_password_hash(password)
-
-        player_data = {
-            "username": username, 
-            "hashed_password": hashed_password,
-            "x_coord": x,
-            "y_coord": y,
-            "map_id": map_id,
-        }
-        player_data.update(extra_fields)
-
-        player = Player(**player_data)
-        session.add(player)
-        await session.commit()
-        await session.refresh(player)
+        from server.src.services.player_service import PlayerService
+        from server.src.schemas.player import PlayerCreate
+        
+        # Create player data using Pydantic model
+        player_data = PlayerCreate(
+            username=username,
+            password=password
+        )
+        
+        # Use PlayerService for proper player creation with skills initialization
+        player = await PlayerService.create_player(session, player_data)
+        
+        # Update position and map if different from defaults
+        if x != 10 or y != 10 or map_id != "samplemap" or extra_fields:
+            player.x_coord = x
+            player.y_coord = y
+            player.map_id = map_id
+            
+            # Apply any extra fields
+            for key, value in extra_fields.items():
+                if hasattr(player, key):
+                    setattr(player, key, value)
+            
+            session.add(player)
+            await session.commit()
+            await session.refresh(player)
+        
         return player
 
     return _create_player

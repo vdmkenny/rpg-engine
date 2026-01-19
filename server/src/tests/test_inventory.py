@@ -57,11 +57,15 @@ class TestAddItem:
 
     @pytest.mark.asyncio
     async def test_add_single_item(
-        self, session: AsyncSession, player_with_inventory
+        self, session: AsyncSession, player_with_inventory, gsm
     ):
         """Adding a single item should create inventory entry."""
         player = player_with_inventory
         item = await ItemService.get_item_by_name(session, "bronze_sword")
+
+        # Login player to initialize state in GSM (GSM singleton is already initialized by gsm fixture)
+        from server.src.services.player_service import PlayerService
+        await PlayerService.login_player(session, player)
 
         result = await InventoryService.add_item(session, player.id, item.id)
 
@@ -77,11 +81,15 @@ class TestAddItem:
 
     @pytest.mark.asyncio
     async def test_add_stackable_item(
-        self, session: AsyncSession, player_with_inventory
+        self, session: AsyncSession, player_with_inventory, gsm
     ):
         """Adding stackable items should create correct quantity."""
         player = player_with_inventory
         item = await ItemService.get_item_by_name(session, "copper_ore")
+
+        # Login player to initialize state in GSM (GSM singleton is already initialized by gsm fixture)
+        from server.src.services.player_service import PlayerService
+        await PlayerService.login_player(session, player)
 
         result = await InventoryService.add_item(
             session, player.id, item.id, quantity=10
@@ -95,11 +103,15 @@ class TestAddItem:
 
     @pytest.mark.asyncio
     async def test_add_to_existing_stack(
-        self, session: AsyncSession, player_with_inventory
+        self, session: AsyncSession, player_with_inventory, gsm
     ):
-        """Adding items should stack with existing items."""
+        """Adding to existing stack should increase quantity."""
         player = player_with_inventory
         item = await ItemService.get_item_by_name(session, "copper_ore")
+
+        # Login player to initialize state in GSM (GSM singleton is already initialized by gsm fixture)
+        from server.src.services.player_service import PlayerService
+        await PlayerService.login_player(session, player)
 
         # Add first batch
         await InventoryService.add_item(session, player.id, item.id, quantity=10)
@@ -118,11 +130,15 @@ class TestAddItem:
 
     @pytest.mark.asyncio
     async def test_add_exceeds_stack_size_creates_new_stack(
-        self, session: AsyncSession, player_with_inventory
+        self, session: AsyncSession, player_with_inventory, gsm
     ):
         """Adding more than max stack should create additional slots."""
         player = player_with_inventory
         item = await ItemService.get_item_by_name(session, "copper_ore")
+
+        # Login player to initialize state in GSM (GSM singleton is already initialized by gsm fixture)
+        from server.src.services.player_service import PlayerService
+        await PlayerService.login_player(session, player)
 
         # Add more than one stack can hold
         quantity = STACK_SIZE_MATERIALS + 10
@@ -142,11 +158,15 @@ class TestAddItem:
 
     @pytest.mark.asyncio
     async def test_add_item_invalid_quantity(
-        self, session: AsyncSession, player_with_inventory
+        self, session: AsyncSession, player_with_inventory, gsm
     ):
         """Adding zero or negative quantity should fail."""
         player = player_with_inventory
         item = await ItemService.get_item_by_name(session, "bronze_sword")
+
+        # Login player to initialize state in GSM (GSM singleton is already initialized by gsm fixture)
+        from server.src.services.player_service import PlayerService
+        await PlayerService.login_player(session, player)
 
         result = await InventoryService.add_item(
             session, player.id, item.id, quantity=0
@@ -160,10 +180,14 @@ class TestAddItem:
 
     @pytest.mark.asyncio
     async def test_add_item_invalid_item_id(
-        self, session: AsyncSession, player_with_inventory
+        self, session: AsyncSession, player_with_inventory, gsm
     ):
         """Adding non-existent item should fail."""
         player = player_with_inventory
+
+        # Login player to initialize state in GSM (GSM singleton is already initialized by gsm fixture)
+        from server.src.services.player_service import PlayerService
+        await PlayerService.login_player(session, player)
 
         result = await InventoryService.add_item(session, player.id, 99999)
         assert result.success is False
