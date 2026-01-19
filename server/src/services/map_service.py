@@ -868,6 +868,80 @@ class MapManager:
             "walkable_tiles": len(tile_map.walkable_tiles),
         }
 
+    async def validate_chunk_request_security(
+        self, player_id: int, map_id: str, chunk_x: int, chunk_y: int, radius: int = 1
+    ) -> bool:
+        """
+        Validate that a player can request the specified chunks (security check).
+
+        Prevents players from requesting chunks they shouldn't have access to
+        based on their actual position and reasonable distance limits.
+
+        Args:
+            player_id: Player making the request
+            map_id: Map being requested
+            chunk_x: Center chunk X coordinate
+            chunk_y: Center chunk Y coordinate
+            radius: Chunk radius being requested
+
+        Returns:
+            True if request is valid, False otherwise
+        """
+        # Import here to avoid circular dependency
+        from .player_service import PlayerService
+        
+        # Check if player has access to this general area
+        center_tile_x = chunk_x * 16  # Convert chunk to tile coordinates
+        center_tile_y = chunk_y * 16
+        
+        position_valid = await PlayerService.validate_player_position_access(
+            player_id, map_id, center_tile_x, center_tile_y
+        )
+        
+        if not position_valid:
+            logger.warning(
+                "Chunk request denied - invalid position access",
+                extra={
+                    "player_id": player_id,
+                    "map_id": map_id,
+                    "chunk": {"x": chunk_x, "y": chunk_y},
+                    "radius": radius,
+                }
+            )
+            return False
+        
+        # Enforce maximum radius to prevent abuse
+        max_radius = 2  # Allow up to 2 chunks radius
+        if radius > max_radius:
+            logger.warning(
+                "Chunk request denied - radius too large",
+                extra={
+                    "player_id": player_id,
+                    "requested_radius": radius,
+                    "max_radius": max_radius,
+                }
+            )
+            return False
+        
+        return True
+
+    def get_distance_between_positions(
+        self, pos1: Tuple[int, int], pos2: Tuple[int, int]
+    ) -> float:
+        """
+        Calculate distance between two tile positions.
+
+        Args:
+            pos1: First position (x, y)
+            pos2: Second position (x, y)
+
+        Returns:
+            Distance in tiles (Euclidean distance)
+        """
+        dx = pos1[0] - pos2[0]
+        dy = pos1[1] - pos2[1]
+        return (dx * dx + dy * dy) ** 0.5
+
 
 # Global map manager instance - lazy initialization
 _map_manager_instance = None

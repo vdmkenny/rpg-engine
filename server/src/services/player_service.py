@@ -200,3 +200,170 @@ class PlayerService:
             select(Player).where(Player.id == player_id)
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_player_position(player_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get player's current position and basic state from GameStateManager.
+
+        Args:
+            player_id: Player ID
+
+        Returns:
+            Dict with position data (x, y, map_id, etc.) or None if not online
+        """
+        from .game_state_manager import get_game_state_manager
+        
+        state_manager = get_game_state_manager()
+        
+        # Check if player is online
+        if not state_manager.is_player_online(player_id):
+            logger.debug(
+                "Player position requested but player not online",
+                extra={"player_id": player_id}
+            )
+            return None
+        
+        try:
+            # Get position data from GSM
+            position_data = await state_manager.get_player_position(player_id)
+            if position_data:
+                return {
+                    "x": position_data["x"],
+                    "y": position_data["y"], 
+                    "map_id": position_data["map_id"],
+                    "player_id": player_id
+                }
+            return None
+            
+        except Exception as e:
+            logger.error(
+                "Error getting player position",
+                extra={
+                    "player_id": player_id,
+                    "error": str(e),
+                }
+            )
+            return None
+
+    @staticmethod
+    async def get_nearby_players(
+        player_id: int, range_tiles: int = 80
+    ) -> List[Dict[str, Any]]:
+        """
+        Get players within range of the specified player for chat/visibility.
+
+        Args:
+            player_id: Center player ID
+            range_tiles: Range in tiles to search
+
+        Returns:
+            List of nearby player data dicts
+        """
+        from .game_state_manager import get_game_state_manager
+        
+        state_manager = get_game_state_manager()
+        
+        # Get current player's position
+        center_position = await PlayerService.get_player_position(player_id)
+        if not center_position:
+            return []
+        
+        try:
+            # Get all online players on the same map
+            online_players = state_manager.get_online_players()
+            nearby_players = []
+            
+            for other_player_id in online_players:
+                if other_player_id == player_id:
+                    continue  # Skip self
+                    
+                other_position = await state_manager.get_player_position(other_player_id)
+                if not other_position or other_position["map_id"] != center_position["map_id"]:
+                    continue  # Skip if different map or no position
+                
+                # Calculate distance
+                dx = abs(other_position["x"] - center_position["x"])
+                dy = abs(other_position["y"] - center_position["y"])
+                
+                # Use Manhattan distance for simplicity (good enough for chat range)
+                if dx <= range_tiles and dy <= range_tiles:
+                    nearby_players.append({
+                        "player_id": other_player_id,
+                        "username": state_manager.get_username_by_id(other_player_id),
+                        "x": other_position["x"],
+                        "y": other_position["y"],
+                        "map_id": other_position["map_id"]
+                    })
+            
+            return nearby_players
+            
+        except Exception as e:
+            logger.error(
+                "Error getting nearby players",
+                extra={
+                    "player_id": player_id,
+                    "range_tiles": range_tiles,
+                    "error": str(e),
+                }
+            )
+            return []
+
+    @staticmethod
+    async def validate_player_position_access(
+        player_id: int, requested_map_id: str, requested_x: int, requested_y: int
+    ) -> bool:
+        """
+        Validate that a player can access the requested position (security check).
+
+        Used to prevent players from requesting chunks or performing actions
+        on maps/positions they shouldn't have access to.
+
+        Args:
+            player_id: Player ID making the request
+            requested_map_id: Map ID being requested
+            requested_x: X coordinate being requested  
+            requested_y: Y coordinate being requested
+
+        Returns:
+            True if player can access this position, False otherwise
+        """
+        # Get player's actual position
+        actual_position = await PlayerService.get_player_position(player_id)
+        if not actual_position:
+            logger.warning(
+                "Position access validation failed - player not online",
+                extra={"player_id": player_id}
+            )
+            return False
+        
+        # Must be on the same map
+        if actual_position["map_id"] != requested_map_id:
+            logger.warning(
+                "Position access validation failed - wrong map",
+                extra={
+                    "player_id": player_id,
+                    "actual_map": actual_position["map_id"],
+                    "requested_map": requested_map_id,
+                }
+            )
+            return False
+        
+        # Calculate distance from player's actual position
+        dx = abs(requested_x - actual_position["x"])
+        dy = abs(requested_y - actual_position["y"])
+        
+        # Allow access within reasonable range (e.g., 5 chunks = 80 tiles)
+        max_distance = 80  # tiles
+        if dx > max_distance or dy > max_distance:
+            logger.warning(
+                "Position access validation failed - too far from player",
+                extra={
+                    "player_id": player_id,
+                    "distance": {"dx": dx, "dy": dy},
+                    "max_distance": max_distance,
+                }
+            )
+            return False
+        
+        return True
