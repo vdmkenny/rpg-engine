@@ -2,7 +2,7 @@
 Service for managing player equipment.
 """
 
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,10 @@ from .item_service import ItemService
 from .inventory_service import InventoryService
 from .ground_item_service import GroundItemService
 from .skill_service import SkillService
+from .game_state_manager import get_game_state_manager
+
+if TYPE_CHECKING:
+    from .game_state_manager import GameStateManager
 
 logger = get_logger(__name__)
 
@@ -47,6 +51,40 @@ class EquipmentService:
         Returns:
             Dictionary mapping slot name to PlayerEquipment
         """
+        # Get equipment state from GameStateManager
+        state_manager = get_game_state_manager()
+        if state_manager.is_online(player_id):
+            equipment_data = await state_manager.get_equipment(player_id)
+            if equipment_data:
+                # Convert GSM data to PlayerEquipment-like objects
+                equipment = {}
+                item_ids = [slot_data["item_id"] for slot_data in equipment_data.values()]
+                
+                # Get item data from database
+                if item_ids:
+                    result = await db.execute(
+                        select(Item).where(Item.id.in_(item_ids))
+                    )
+                    items_by_id = {item.id: item for item in result.scalars().all()}
+                    
+                    for slot, slot_data in equipment_data.items():
+                        item = items_by_id.get(slot_data["item_id"])
+                        if item:
+                            # Create a PlayerEquipment-like object
+                            eq = PlayerEquipment(
+                                player_id=player_id,
+                                equipment_slot=slot,
+                                item_id=slot_data["item_id"],
+                                quantity=slot_data.get("quantity", 1),
+                                current_durability=slot_data.get("current_durability"),
+                            )
+                            eq.item = item  # Attach item data
+                            equipment[slot] = eq
+                            
+                return equipment
+            return {}
+        
+        # Use GameStateManager for consistent state access
         result = await db.execute(
             select(PlayerEquipment)
             .where(PlayerEquipment.player_id == player_id)
@@ -70,7 +108,8 @@ class EquipmentService:
             EquipmentResponse with all slots and total stats
         """
         equipment = await EquipmentService.get_equipment(db, player_id)
-        total_stats = await EquipmentService.get_total_stats(db, player_id)
+        
+        total_stats = await EquipmentService.get_total_stats(player_id)
 
         slots = []
         for slot in EquipmentSlot:
@@ -105,6 +144,29 @@ class EquipmentService:
         Returns:
             PlayerEquipment if slot is occupied, None if empty
         """
+        # Always use GameStateManager for consistent state access
+        state_manager = get_game_state_manager()
+        if state_manager.is_online(player_id):
+            slot_data = await state_manager.get_equipment_slot(player_id, slot.value)
+            if slot_data:
+                # Get item data from database
+                result = await db.execute(
+                    select(Item).where(Item.id == slot_data["item_id"])
+                )
+                item = result.scalar_one_or_none()
+                if item:
+                    eq = PlayerEquipment(
+                        player_id=player_id,
+                        equipment_slot=slot.value,
+                        item_id=slot_data["item_id"],
+                        quantity=slot_data.get("quantity", 1),
+                        current_durability=slot_data.get("durability"),
+                    )
+                    eq.item = item  # Attach item data
+                    return eq
+            return None
+        
+        # Fallback to database if player is offline
         result = await db.execute(
             select(PlayerEquipment)
             .where(PlayerEquipment.player_id == player_id)
@@ -114,7 +176,7 @@ class EquipmentService:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_total_stats(db: AsyncSession, player_id: int) -> ItemStats:
+    async def get_total_stats(player_id: int) -> ItemStats:
         """
         Calculate total stats from all equipped items.
 
@@ -122,53 +184,96 @@ class EquipmentService:
         Negative stats reduce totals.
 
         Args:
-            db: Database session
             player_id: Player ID
 
         Returns:
             ItemStats with aggregated values
         """
-        equipment = await EquipmentService.get_equipment(db, player_id)
-
+        # Get all equipment from GSM
+        state_manager = get_game_state_manager()
+        equipment_data = await state_manager.get_equipment(player_id)
+        if not equipment_data:
+            return ItemStats()
+        
+        # Get item data for stat calculation
+        item_ids = [slot_data["item_id"] for slot_data in equipment_data.values()]
+        if not item_ids:
+            return ItemStats()
+        
+        # Get item stats for calculation
+        items_stats = {}
+        for item_id in item_ids:
+            item_info = state_manager.get_item_meta(item_id)
+            if item_info:
+                items_stats[item_id] = item_info
+        
+        # Calculate total stats
         stats = ItemStats()
-        for eq in equipment.values():
-            item = eq.item
-            stats.attack_bonus += item.attack_bonus
-            stats.strength_bonus += item.strength_bonus
-            stats.ranged_attack_bonus += item.ranged_attack_bonus
-            stats.ranged_strength_bonus += item.ranged_strength_bonus
-            stats.magic_attack_bonus += item.magic_attack_bonus
-            stats.magic_damage_bonus += item.magic_damage_bonus
-            stats.physical_defence_bonus += item.physical_defence_bonus
-            stats.magic_defence_bonus += item.magic_defence_bonus
-            stats.health_bonus += item.health_bonus
-            stats.speed_bonus += item.speed_bonus
-            stats.mining_bonus += item.mining_bonus
-            stats.woodcutting_bonus += item.woodcutting_bonus
-            stats.fishing_bonus += item.fishing_bonus
+        for slot_data in equipment_data.values():
+            item_info = items_stats.get(slot_data["item_id"])
+            if item_info:
+                stats.attack_bonus += item_info.get("attack_bonus", 0)
+                stats.strength_bonus += item_info.get("strength_bonus", 0)
+                stats.ranged_attack_bonus += item_info.get("ranged_attack_bonus", 0)
+                stats.ranged_strength_bonus += item_info.get("ranged_strength_bonus", 0)
+                stats.magic_attack_bonus += item_info.get("magic_attack_bonus", 0)
+                stats.magic_damage_bonus += item_info.get("magic_damage_bonus", 0)
+                stats.physical_defence_bonus += item_info.get("physical_defence_bonus", 0)
+                stats.magic_defence_bonus += item_info.get("magic_defence_bonus", 0)
+                stats.health_bonus += item_info.get("health_bonus", 0)
+                stats.speed_bonus += item_info.get("speed_bonus", 0)
+                stats.mining_bonus += item_info.get("mining_bonus", 0)
+                stats.woodcutting_bonus += item_info.get("woodcutting_bonus", 0)
+                stats.fishing_bonus += item_info.get("fishing_bonus", 0)
 
         return stats
 
     @staticmethod
-    async def get_max_hp(db: AsyncSession, player_id: int) -> int:
+    async def get_max_hp(player_id: int) -> int:
         """
         Calculate max HP for a player.
 
         Max HP = Hitpoints skill level + equipment health_bonus.
 
+        Reads from GSM (Valkey cache) for online players.
+
         Args:
-            db: Database session
             player_id: Player ID
 
         Returns:
             Maximum HP value
         """
-        # Get base HP from Hitpoints skill level
-        base_hp = await SkillService.get_hitpoints_level(db, player_id)
+        from server.src.core.skills import HITPOINTS_START_LEVEL
 
-        # Get equipment health bonus
-        equipment_stats = await EquipmentService.get_total_stats(db, player_id)
-        health_bonus = equipment_stats.health_bonus
+        gsm = get_game_state_manager()
+
+        # Get base HP from Hitpoints skill level in GSM
+        hitpoints_skill = await gsm.get_skill(player_id, "hitpoints")
+        if hitpoints_skill:
+            base_hp = hitpoints_skill.get("level", HITPOINTS_START_LEVEL)
+        else:
+            base_hp = HITPOINTS_START_LEVEL
+
+        # Get equipment from GSM and calculate total health bonus
+        equipment = await gsm.get_equipment(player_id)
+        if not equipment:
+            return base_hp
+
+        # Look up item stats from database to get health_bonus
+        health_bonus = 0
+        item_ids = [slot_data["item_id"] for slot_data in equipment.values()]
+
+        if item_ids:
+            async with gsm._db_session() as db:
+                result = await db.execute(
+                    select(Item).where(Item.id.in_(item_ids))
+                )
+                items_by_id = {item.id: item for item in result.scalars().all()}
+
+                for slot_data in equipment.values():
+                    item = items_by_id.get(slot_data["item_id"])
+                    if item and item.health_bonus:
+                        health_bonus += item.health_bonus
 
         return base_hp + health_bonus
 
@@ -243,7 +348,7 @@ class EquipmentService:
             return -1
 
         # Calculate new max HP (after unequipping, so without this item's bonus)
-        new_max_hp = await EquipmentService.get_max_hp(db, player_id)
+        new_max_hp = await EquipmentService.get_max_hp(player_id)
 
         # Remove health bonus from current HP, cap at new max, min 1
         new_current_hp = player.current_hp - health_bonus
@@ -285,7 +390,25 @@ class EquipmentService:
         if not item.required_skill:
             return CanEquipResult(can_equip=True, reason="OK")
 
-        # Get player's skill level
+        # Get skill level for equipment requirements
+        state_manager = get_game_state_manager()
+        if state_manager.is_online(player_id):
+            skill_data = await state_manager.get_skill(player_id, item.required_skill)
+            if not skill_data:
+                return CanEquipResult(
+                    can_equip=False,
+                    reason=f"Missing {item.required_skill} skill",
+                )
+            
+            current_level = skill_data.get("level", 1)
+            if current_level < item.required_level:
+                return CanEquipResult(
+                    can_equip=False,
+                    reason=f"Requires {item.required_skill} level {item.required_level} (you have {current_level})",
+                )
+            return CanEquipResult(can_equip=True, reason="OK")
+
+        # Use GameStateManager for consistent state access
         result = await db.execute(
             select(PlayerSkill)
             .join(Skill)
@@ -330,6 +453,8 @@ class EquipmentService:
         Returns:
             EquipItemResult with status and updated stats
         """
+        state_manager = get_game_state_manager()
+        
         # Get item from inventory
         inv = await InventoryService.get_item_at_slot(db, player_id, inventory_slot)
         if not inv:
@@ -376,7 +501,7 @@ class EquipmentService:
                 await db.delete(inv)
                 await db.commit()
                 
-                updated_stats = await EquipmentService.get_total_stats(db, player_id)
+                updated_stats = await EquipmentService.get_total_stats(player_id)
                 
                 logger.info(
                     "Added ammo to equipped stack",
@@ -401,7 +526,7 @@ class EquipmentService:
                 
                 await db.commit()
                 
-                updated_stats = await EquipmentService.get_total_stats(db, player_id)
+                updated_stats = await EquipmentService.get_total_stats(player_id)
                 
                 logger.info(
                     "Partially added ammo to equipped stack",
@@ -461,42 +586,33 @@ class EquipmentService:
 
         # Remove item from inventory
         equip_quantity = inv.quantity  # For stackable ammo
-        await db.delete(inv)
-        await db.flush()
+        await state_manager.delete_inventory_slot(player_id, inventory_slot)
 
         # Unequip items that need to be moved to inventory
         for eq in items_to_unequip:
             unequip_qty = eq.quantity  # Preserve quantity for ammo
-            await db.delete(eq)
-            await db.flush()
+            
+            # Remove from equipment
+            await state_manager.delete_equipment_slot(player_id, eq.equipment_slot)
 
             # Add to inventory
-            free_slot = await InventoryService.get_free_slot(db, player_id)
+            free_slot = await state_manager.get_free_inventory_slot(player_id)
             if free_slot is not None:
-                new_inv = PlayerInventory(
-                    player_id=player_id,
-                    item_id=eq.item_id,
-                    slot=free_slot,
-                    quantity=unequip_qty,
-                    current_durability=eq.current_durability,
+                await state_manager.set_inventory_slot(
+                    player_id, free_slot, eq.item_id, unequip_qty, eq.current_durability
                 )
-                db.add(new_inv)
                 unequipped_item_id = eq.item_id
 
         # Equip the new item
-        new_equipment = PlayerEquipment(
-            player_id=player_id,
-            equipment_slot=equipment_slot.value,
-            item_id=item.id,
-            quantity=equip_quantity if is_stackable_ammo else 1,
-            current_durability=inv.current_durability,
+        await state_manager.set_equipment_slot(
+            player_id, 
+            equipment_slot.value, 
+            item.id, 
+            equip_quantity if is_stackable_ammo else 1,
+            int(inv.current_durability) if inv.current_durability is not None else None
         )
-        db.add(new_equipment)
 
-        await db.commit()
-
-        # Handle HP adjustment for health_bonus changes
-        # Calculate net health bonus change (new item's bonus minus any unequipped item's bonus)
+        # Handle HP adjustment for health bonus changes
         health_bonus_gained = item.health_bonus if item.health_bonus else 0
         health_bonus_lost = 0
         for eq in items_to_unequip:
@@ -505,23 +621,21 @@ class EquipmentService:
 
         net_health_change = health_bonus_gained - health_bonus_lost
         if net_health_change != 0:
-            result = await db.execute(
-                select(Player).where(Player.id == player_id)
-            )
-            player = result.scalar_one_or_none()
-            if player:
+            current_hp = await state_manager.get_player_hp(player_id)
+            if current_hp is not None:
                 if net_health_change > 0:
                     # Gained health bonus - add to current HP
-                    player.current_hp += net_health_change
+                    new_hp = current_hp + net_health_change
                 else:
-                    # Lost health bonus - subtract from current HP, cap at max, min 1
-                    new_max_hp = await EquipmentService.get_max_hp(db, player_id)
-                    new_current_hp = player.current_hp + net_health_change  # net_health_change is negative
-                    player.current_hp = max(1, min(new_current_hp, new_max_hp))
-                await db.commit()
+                    # Lost health bonus - reduce current HP, minimum 1
+                    stats = await EquipmentService.get_total_stats(player_id)
+                    max_hp = stats.get("max_hp", 100)
+                    new_hp = max(1, min(current_hp + net_health_change, max_hp))
+                
+                await state_manager.set_player_hp(player_id, new_hp)
 
-        # Get updated stats
-        updated_stats = await EquipmentService.get_total_stats(db, player_id)
+        # Get updated stats for return value
+        updated_stats = await EquipmentService.get_total_stats(player_id)
 
         logger.info(
             "Equipped item",
@@ -566,6 +680,8 @@ class EquipmentService:
         Returns:
             UnequipItemResult with status
         """
+        state_manager = get_game_state_manager()
+        
         # Get equipped item
         equipped = await EquipmentService.get_equipped_in_slot(
             db, player_id, equipment_slot
@@ -591,16 +707,21 @@ class EquipmentService:
         if add_result.success and add_result.overflow_quantity == 0:
             # Successfully added all to inventory
             health_bonus_lost = item.health_bonus if item.health_bonus else 0
-            await db.delete(equipped)
-            await db.commit()
+            
+            # Remove from equipment using GSM
+            await state_manager.delete_equipment_slot(player_id, equipment_slot.value)
 
             # Handle HP adjustment for health_bonus loss
             if health_bonus_lost > 0:
-                await EquipmentService.adjust_hp_for_unequip(db, player_id, health_bonus_lost)
+                current_hp = await state_manager.get_player_hp(player_id)
+                if current_hp is not None:
+                    max_hp = await EquipmentService.get_max_hp(player_id)
+                    new_hp = max(1, min(current_hp - health_bonus_lost, max_hp))
+                    await state_manager.set_player_hp(player_id, new_hp)
 
-            updated_stats = await EquipmentService.get_total_stats(db, player_id)
+        updated_stats = await EquipmentService.get_total_stats(player_id)
 
-            logger.info(
+        logger.info(
                 "Unequipped item to inventory",
                 extra={
                     "player_id": player_id,
@@ -610,7 +731,7 @@ class EquipmentService:
                 },
             )
 
-            return UnequipItemResult(
+        return UnequipItemResult(
                 success=True,
                 message=f"Unequipped {item.display_name}" + (f" x{quantity}" if quantity > 1 else ""),
                 inventory_slot=add_result.slot,
@@ -622,8 +743,7 @@ class EquipmentService:
             # Determine how many need to be dropped
             dropped_quantity = quantity if not add_result.success else add_result.overflow_quantity
 
-            ground_item = await GroundItemService.create_ground_item(
-                db=db,
+            ground_item_id = await GroundItemService.create_ground_item(
                 item_id=equipped.item_id,
                 map_id=map_id,
                 x=player_x,
@@ -633,16 +753,21 @@ class EquipmentService:
                 current_durability=equipped.current_durability,
             )
 
-            if ground_item:
+            if ground_item_id:
                 health_bonus_lost = item.health_bonus if item.health_bonus else 0
-                await db.delete(equipped)
-                await db.commit()
+                
+                # Remove from equipment using GSM
+                await state_manager.delete_equipment_slot(player_id, equipment_slot.value)
 
                 # Handle HP adjustment for health_bonus loss
                 if health_bonus_lost > 0:
-                    await EquipmentService.adjust_hp_for_unequip(db, player_id, health_bonus_lost)
+                    current_hp = await state_manager.get_player_hp(player_id)
+                    if current_hp is not None:
+                        max_hp = await EquipmentService.get_max_hp(player_id)
+                        new_hp = max(1, min(current_hp - health_bonus_lost, max_hp))
+                        await state_manager.set_player_hp(player_id, new_hp)
 
-                updated_stats = await EquipmentService.get_total_stats(db, player_id)
+                updated_stats = await EquipmentService.get_total_stats(player_id)
 
                 if add_result.success and add_result.overflow_quantity > 0:
                     # Partial inventory, rest dropped
@@ -668,7 +793,7 @@ class EquipmentService:
                         extra={
                             "player_id": player_id,
                             "slot": equipment_slot.value,
-                            "ground_item_id": ground_item.id,
+                            "ground_item_id": ground_item_id,
                             "quantity": dropped_quantity,
                         },
                     )
@@ -704,6 +829,7 @@ class EquipmentService:
         Returns:
             Remaining durability, or None if item broke/doesn't have durability
         """
+        state_manager = get_game_state_manager()
         equipped = await EquipmentService.get_equipped_in_slot(db, player_id, slot)
         if not equipped:
             return None
@@ -715,9 +841,18 @@ class EquipmentService:
             return equipped.current_durability  # Item cannot degrade
 
         amount = amount * settings.EQUIPMENT_DURABILITY_LOSS_PER_HIT
-        equipped.current_durability = max(0, equipped.current_durability - amount)
+        new_durability = max(0, equipped.current_durability - amount)
+        
+        # Update durability in GSM
+        await state_manager.set_equipment_slot(
+            player_id,
+            slot.value,
+            equipped.item_id,
+            equipped.quantity,
+            int(new_durability)
+        )
 
-        if equipped.current_durability == 0:
+        if new_durability == 0:
             # Item broke - move to inventory in broken state
             # (or could be destroyed - depends on game design)
             logger.warning(
@@ -729,8 +864,7 @@ class EquipmentService:
                 },
             )
 
-        await db.commit()
-        return equipped.current_durability
+        return new_durability
 
     @staticmethod
     async def repair_equipment(
@@ -749,6 +883,7 @@ class EquipmentService:
         Returns:
             Tuple of (success, repair_cost)
         """
+        state_manager = get_game_state_manager()
         equipped = await EquipmentService.get_equipped_in_slot(db, player_id, slot)
         if not equipped:
             return (False, 0)
@@ -767,8 +902,14 @@ class EquipmentService:
             * damage_percent
         )
 
-        equipped.current_durability = equipped.item.max_durability
-        await db.commit()
+        # Update durability to max in GSM
+        await state_manager.set_equipment_slot(
+            player_id,
+            slot.value,
+            equipped.item_id,
+            equipped.quantity,
+            int(equipped.item.max_durability)
+        )
 
         logger.info(
             "Repaired equipment",
@@ -802,6 +943,7 @@ class EquipmentService:
             Tuple of (success, remaining_quantity)
             Returns (False, 0) if no ammo equipped or not enough ammo
         """
+        state_manager = get_game_state_manager()
         equipped = await EquipmentService.get_equipped_in_slot(
             db, player_id, EquipmentSlot.AMMO
         )
@@ -811,12 +953,11 @@ class EquipmentService:
         if equipped.quantity < amount:
             return (False, equipped.quantity)
 
-        equipped.quantity -= amount
+        new_quantity = equipped.quantity - amount
 
-        if equipped.quantity == 0:
-            # No ammo left - remove from equipment
-            await db.delete(equipped)
-            await db.commit()
+        if new_quantity == 0:
+            # No ammo left - remove from equipment using GSM
+            await state_manager.delete_equipment_slot(player_id, EquipmentSlot.AMMO.value)
 
             logger.info(
                 "Ammo depleted",
@@ -827,7 +968,14 @@ class EquipmentService:
             )
             return (True, 0)
 
-        await db.commit()
+        # Update quantity in GSM
+        await state_manager.set_equipment_slot(
+            player_id,
+            EquipmentSlot.AMMO.value,
+            equipped.item_id,
+            new_quantity,
+            float(equipped.current_durability) if equipped.current_durability else 0.0
+        )
 
         logger.debug(
             "Consumed ammo",
@@ -835,11 +983,11 @@ class EquipmentService:
                 "player_id": player_id,
                 "item_id": equipped.item_id,
                 "consumed": amount,
-                "remaining": equipped.quantity,
+                "remaining": new_quantity,
             },
         )
 
-        return (True, equipped.quantity)
+        return (True, new_quantity)
 
     @staticmethod
     async def clear_equipment(db: AsyncSession, player_id: int) -> int:
@@ -853,11 +1001,19 @@ class EquipmentService:
         Returns:
             Number of items unequipped
         """
-        result = await db.execute(
-            delete(PlayerEquipment).where(PlayerEquipment.player_id == player_id)
-        )
-        await db.commit()
-        return result.rowcount or 0
+        state_manager = get_game_state_manager()
+        
+        # Get all equipment first to count items
+        equipment = await state_manager.get_equipment(player_id)
+        if not equipment:
+            return 0
+        
+        item_count = len(equipment)
+        
+        # Clear all equipment in GSM
+        await state_manager.clear_equipment(player_id)
+        
+        return item_count
 
     @staticmethod
     async def get_all_equipped_items(
@@ -873,10 +1029,36 @@ class EquipmentService:
         Returns:
             List of (PlayerEquipment, Item) tuples
         """
+        state_manager = get_game_state_manager()
+        equipment_data = await state_manager.get_equipment(player_id)
+        
+        if not equipment_data:
+            return []
+        
+        # Get item data from database for the equipped items
+        item_ids = [slot_data["item_id"] for slot_data in equipment_data.values()]
+        if not item_ids:
+            return []
+            
         result = await db.execute(
-            select(PlayerEquipment)
-            .where(PlayerEquipment.player_id == player_id)
-            .options(selectinload(PlayerEquipment.item))
+            select(Item).where(Item.id.in_(item_ids))
         )
-        equipment = result.scalars().all()
-        return [(eq, eq.item) for eq in equipment]
+        items_by_id = {item.id: item for item in result.scalars().all()}
+        
+        # Build list of (PlayerEquipment, Item) tuples
+        equipped_items = []
+        for slot, slot_data in equipment_data.items():
+            item = items_by_id.get(slot_data["item_id"])
+            if item:
+                # Create a PlayerEquipment-like object
+                eq = PlayerEquipment(
+                    player_id=player_id,
+                    equipment_slot=slot,
+                    item_id=slot_data["item_id"],
+                    quantity=slot_data.get("quantity", 1),
+                    current_durability=slot_data.get("current_durability"),
+                )
+                eq.item = item  # Attach item data
+                equipped_items.append((eq, item))
+                
+        return equipped_items
