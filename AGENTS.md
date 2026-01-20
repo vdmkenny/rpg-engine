@@ -397,6 +397,27 @@ Key functions:
 - `server/src/game/game_loop.py` - Tick-based game loop with visibility system
 - `common/src/protocol.py` - Shared message types and payloads
 - `server/config.yml` - Game configuration (tick rate, movement, maps)
+- `GSM_ARCHITECTURE_PATTERNS.md` - **MANDATORY** GameStateManager architecture patterns and guidelines
+
+## GameStateManager (GSM) Architecture
+
+**CRITICAL**: All AI agents and developers MUST follow the patterns defined in `GSM_ARCHITECTURE_PATTERNS.md`. This document contains mandatory architecture guidelines for:
+
+- Data layer separation (GSM vs Services)
+- Hot/cold data lifecycle management  
+- Service implementation patterns
+- Error handling and testing approaches
+- Cross-service communication patterns
+
+**Key Principles**:
+- GSM handles ONLY data persistence (Valkey + PostgreSQL)
+- Services contain ALL business logic and validation
+- NO direct database/Valkey access outside GSM
+- NO database fallback patterns - fail fast approach
+- Reference data (items, skills) permanently cached at startup
+- Player data follows hot/cold TTL-based lifecycle
+
+**Violation of these patterns requires architectural review and approval.**
 
 ## Security Notes
 

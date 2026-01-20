@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     COLLISION_LAYER_NAMES: List[str] = ["tree", "building", "water", "farm", "obstacles", "collision"]
 
     # Valkey settings from config.yml
+    USE_VALKEY: bool = os.getenv(
+        "USE_VALKEY",
+        str(game_config.get("server", {}).get("valkey", {}).get("enabled", "true"))
+    ).lower() in ("true", "1", "yes", "on")
     VALKEY_HOST: str = os.getenv(
         "VALKEY_HOST",
         game_config.get("server", {}).get("valkey", {}).get("host", "valkey")

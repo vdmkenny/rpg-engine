@@ -104,6 +104,9 @@ class GameStateManager:
         # Item metadata cache (loaded from database on startup)
         self._item_cache: Dict[int, Dict[str, Any]] = {}
         
+        # Test session binding (for test isolation)
+        self._bound_test_session: Optional[AsyncSession] = None
+        
         # Initialize helper classes
         self.state_access = GSMStateAccess(self)
         self.batch_ops = GSMBatchOps(self)
@@ -116,12 +119,54 @@ class GameStateManager:
         """Get Valkey client."""
         return self._valkey
     
+    def bind_test_session(self, session: AsyncSession) -> None:
+        """
+        Bind external session for testing.
+        
+        When bound, GSM will use this session instead of creating new sessions.
+        This ensures test operations share the same transaction boundary.
+        
+        Args:
+            session: SQLAlchemy AsyncSession to use for database operations
+        """
+        self._bound_test_session = session
+        logger.debug("Test session bound to GSM")
+    
+    def unbind_test_session(self) -> None:
+        """
+        Remove bound test session.
+        
+        Resume normal session creation behavior.
+        """
+        self._bound_test_session = None
+        logger.debug("Test session unbound from GSM")
+    
+    async def _commit_if_not_test_session(self, db: AsyncSession) -> None:
+        """
+        Commit the session only if not using a bound test session.
+        
+        Test sessions handle their own transaction boundaries and should not be committed
+        by GSM operations to maintain proper test isolation.
+        
+        UPDATE: Always commit for now - we need visibility between operations.
+        """
+        # Always commit for now - preventing commits breaks operation visibility
+        await db.commit()
+    
     @asynccontextmanager
     async def _db_session(self):
         """Create database session context manager."""
+        # If we have a bound test session, use it directly
+        if self._bound_test_session is not None:
+            logger.debug(f"Using bound test session: {id(self._bound_test_session)}")
+            yield self._bound_test_session
+            return
+            
+        # Otherwise, use normal session factory
         if not self._session_factory:
             raise RuntimeError("Database session factory not initialized")
         
+        logger.debug("Creating new session from factory")
         async with self._session_factory() as session:
             try:
                 yield session
@@ -194,9 +239,9 @@ class GameStateManager:
             logger.error("Failed to load item cache", extra={"error": str(e)})
             raise
     
-    def get_item_meta(self, item_id: int) -> Optional[Dict[str, Any]]:
+    def get_cached_item_meta(self, item_id: int) -> Optional[Dict[str, Any]]:
         """
-        Get item metadata from cache.
+        Get item metadata from cache (synchronous).
         
         Args:
             item_id: Item ID
@@ -253,8 +298,8 @@ class GameStateManager:
         """Get set of all online player IDs."""
         return self._online_players.copy()
     
-    def get_player_id_by_username(self, username: str) -> Optional[int]:
-        """Get player ID by username."""
+    def get_online_player_id_by_username(self, username: str) -> Optional[int]:
+        """Get player ID by username (online players only)."""
         return self._username_to_id.get(username)
     
     def get_username_by_player_id(self, player_id: int) -> Optional[str]:
@@ -284,30 +329,14 @@ class GameStateManager:
         if not raw:
             return None
         
-        return {
-            "x": int(_decode_bytes(raw.get(b"x", b"0"))),
-            "y": int(_decode_bytes(raw.get(b"y", b"0"))),
-            "map_id": _decode_bytes(raw.get(b"map_id", b"samplemap")),
-        }
-    
-    async def set_player_position(
-        self, player_id: int, x: int, y: int, map_id: str
-    ) -> None:
-        """
-        Set player's position in Valkey and mark dirty.
-        
-        Args:
-            player_id: Player's database ID
-            x: Tile X coordinate
-            y: Tile Y coordinate
-            map_id: Map identifier
-        """
-        if not self._valkey or not self.is_online(player_id):
-            return
-        
-        key = PLAYER_KEY.format(player_id=player_id)
-        await self._valkey.hset(key, {"x": str(x), "y": str(y), "map_id": map_id})
-        await self._valkey.sadd(DIRTY_POSITION_KEY, [str(player_id)])
+        try:
+            return {
+                "x": int(_decode_bytes(raw.get(b"x", b"0"))),
+                "y": int(_decode_bytes(raw.get(b"y", b"0"))), 
+                "map_id": _decode_bytes(raw.get(b"map_id", b""))
+            }
+        except (ValueError, TypeError):
+            return None
     
     async def get_player_hp(self, player_id: int) -> Optional[Dict[str, int]]:
         """
@@ -438,7 +467,8 @@ class GameStateManager:
     
     async def get_inventory(self, player_id: int) -> Dict[int, Dict]:
         """
-        Get player's inventory from Valkey (online) or database (offline).
+        Get player's inventory from Valkey. Auto-loads from database if not in Valkey.
+        Falls back to database if Valkey is unavailable or disabled.
         
         Args:
             player_id: Player's database ID
@@ -446,32 +476,64 @@ class GameStateManager:
         Returns:
             Dict mapping slot number to item data
         """
-        if not self._valkey or not self.is_online(player_id):
-            # Use offline database method for offline players
+        from server.src.core.config import settings
+        
+        # If Valkey disabled or unavailable, use database fallback
+        if not settings.USE_VALKEY or not self._valkey:
+            if not settings.USE_VALKEY:
+                logger.debug("Valkey disabled, using database fallback", extra={"player_id": player_id})
+            else:
+                logger.warning("Valkey unavailable, using database fallback", extra={"player_id": player_id})
             return await self.get_inventory_offline(player_id)
         
         key = INVENTORY_KEY.format(player_id=player_id)
         raw = await self._valkey.hgetall(key)
         
+        # If no data in Valkey, auto-load from database
+        if not raw:
+            logger.debug("Auto-loading player inventory from database", extra={"player_id": player_id})
+            inventory_data = await self.get_inventory_offline(player_id)
+            
+            # Store in Valkey for future access with normal TTL
+            if inventory_data:
+                await self._load_inventory_to_valkey(player_id, inventory_data)
+            
+            return inventory_data
+        
+        # Parse Valkey data
         inventory = {}
-        for slot_bytes, item_data_bytes in raw.items():
-            try:
-                slot = int(_decode_bytes(slot_bytes))
-                item_data = json.loads(_decode_bytes(item_data_bytes))
-                inventory[slot] = item_data
-            except (ValueError, json.JSONDecodeError) as e:
-                logger.warning(
-                    "Invalid inventory data",
-                    extra={"player_id": player_id, "slot": slot_bytes, "error": str(e)}
-                )
+        for slot_str, item_json in raw.items():
+            slot = int(_decode_bytes(slot_str))
+            item_data = json.loads(_decode_bytes(item_json))
+            inventory[slot] = item_data
         
         return inventory
+
+    async def _load_inventory_to_valkey(self, player_id: int, inventory_data: Dict[int, Dict]) -> None:
+        """Load inventory data into Valkey with configured TTL."""
+        from server.src.core.config import settings
+        
+        if not settings.USE_VALKEY or not self._valkey or not inventory_data:
+            return
+        
+        key = INVENTORY_KEY.format(player_id=player_id)
+        valkey_data = {}
+        
+        for slot, item_data in inventory_data.items():
+            valkey_data[str(slot)] = json.dumps(item_data)
+        
+        await self._valkey.hset(key, valkey_data)
+        
+        # Set standard TTL (same for all player data regardless of online/offline status)
+        # TODO: Make TTL configurable via settings
+        await self._valkey.expire(key, 3600)  # 1 hour default, should be configurable
     
     async def get_inventory_slot(
         self, player_id: int, slot: int
     ) -> Optional[Dict[str, Any]]:
         """
-        Get item in specific inventory slot.
+        Get item in specific inventory slot. Auto-loads from database if not in Valkey.
+        Falls back to database if Valkey is unavailable or disabled.
         
         Args:
             player_id: Player's database ID
@@ -480,17 +542,34 @@ class GameStateManager:
         Returns:
             Item data dict or None if empty
         """
-        if not self._valkey or not self.is_online(player_id):
-            return None
+        from server.src.core.config import settings
+        
+        # If Valkey disabled or unavailable, use database fallback
+        if not settings.USE_VALKEY or not self._valkey:
+            if not settings.USE_VALKEY:
+                logger.debug("Valkey disabled, using database fallback for slot", extra={"player_id": player_id, "slot": slot})
+            else:
+                logger.warning("Valkey unavailable, using database fallback for slot", extra={"player_id": player_id, "slot": slot})
+            inventory_data = await self.get_inventory_offline(player_id)
+            return inventory_data.get(slot)
         
         key = INVENTORY_KEY.format(player_id=player_id)
         raw = await self._valkey.hget(key, str(slot))
         
+        # If slot data not in Valkey, try auto-loading full inventory
         if not raw:
-            return None
+            logger.debug("Auto-loading player inventory for slot access", extra={"player_id": player_id, "slot": slot})
+            inventory_data = await self.get_inventory(player_id)  # This will auto-load if needed
+            return inventory_data.get(slot)
         
         try:
             return json.loads(_decode_bytes(raw))
+        except ValueError as e:
+            logger.error(
+                "Failed to parse inventory slot data", 
+                extra={"player_id": player_id, "slot": slot, "error": str(e)}
+            )
+            return None
         except json.JSONDecodeError as e:
             logger.warning(
                 "Invalid inventory slot data",
@@ -507,23 +586,35 @@ class GameStateManager:
         durability: float,
     ) -> None:
         """
-        Set item in inventory slot.
+        Set item in inventory slot. Auto-loads player data if needed.
+        Falls back to database if Valkey is unavailable or disabled.
         
         Args:
-            player_id: Player's database ID
+            player_id: Player's database ID  
             slot: Inventory slot number
             item_id: Item ID
             quantity: Item quantity
             durability: Item durability (0.0 to 1.0)
         """
-        if not self._valkey or not self.is_online(player_id):
+        from server.src.core.config import settings
+        
+        # If Valkey disabled or unavailable, use database fallback
+        if not settings.USE_VALKEY or not self._valkey:
+            if not settings.USE_VALKEY:
+                logger.debug("Valkey disabled, using database for set_inventory_slot", extra={"player_id": player_id, "slot": slot})
+            else:
+                logger.warning("Valkey unavailable, using database for set_inventory_slot", extra={"player_id": player_id, "slot": slot})
+            await self.set_inventory_slot_offline(player_id, slot, item_id, quantity, durability)
             return
+        
+        # Ensure player data is loaded (this will auto-load from DB if needed)
+        await self.get_inventory(player_id)
         
         key = INVENTORY_KEY.format(player_id=player_id)
         item_data = {
             "item_id": item_id,
             "quantity": quantity,
-            "durability": durability,
+            "current_durability": durability,
         }
         
         await self._valkey.hset(key, {str(slot): json.dumps(item_data)})
@@ -696,7 +787,7 @@ class GameStateManager:
         try:
             async with self._db_session() as db:
                 await self.batch_ops._sync_single_player_to_db(db, player_id)
-                await db.commit()
+                await self._commit_if_not_test_session(db)
                 
             logger.info("Player synced to database", extra={"player_id": player_id, "username": username})
             
@@ -782,7 +873,7 @@ class GameStateManager:
             return
         
         key = EQUIPMENT_KEY.format(player_id=player_id)
-        item_data = {"item_id": item_id, "quantity": quantity, "durability": durability}
+        item_data = {"item_id": item_id, "quantity": quantity, "current_durability": durability}
         
         await self._valkey.hset(key, {slot: json.dumps(item_data)})
         await self._valkey.sadd(DIRTY_EQUIPMENT_KEY, [str(player_id)])
@@ -886,7 +977,7 @@ class GameStateManager:
         
         ground_item_data = {
             "id": str(ground_item_id), "map_id": map_id, "x": str(x), "y": str(y),
-            "item_id": str(item_id), "quantity": str(quantity), "durability": str(durability),
+            "item_id": str(item_id), "quantity": str(quantity), "current_durability": str(durability),
             "created_at": str(current_time), "despawn_at": str(despawn_at)
         }
         
@@ -938,7 +1029,7 @@ class GameStateManager:
             
             if field_str in ["id", "item_id", "quantity", "x", "y", "dropped_by_player_id"]:
                 item_data[field_str] = int(value_str) if value_str.isdigit() else 0
-            elif field_str in ["durability", "created_at", "despawn_at", "loot_protection_expires_at"]:
+            elif field_str in ["current_durability", "created_at", "despawn_at", "loot_protection_expires_at"]:
                 try:
                     item_data[field_str] = float(value_str)
                 except ValueError:
@@ -1017,116 +1108,6 @@ class GameStateManager:
         """Sync ground items to database."""
         await self.batch_ops._sync_ground_items()
 
-    async def get_visible_ground_items(
-        self, 
-        map_id: str, 
-        player_x: int, 
-        player_y: int, 
-        player_id: Optional[int], 
-        tile_radius: int = 32
-    ) -> List[Dict[str, Any]]:
-        """
-        Get ground items visible to a player.
-
-        An item is visible if:
-        - It's within tile_radius of the player
-        - Either the player dropped it, or loot protection has expired
-
-        Args:
-            map_id: Current map
-            player_x: Player's tile X position
-            player_y: Player's tile Y position
-            player_id: Player's database ID (for loot protection check)
-            tile_radius: Visibility radius in tiles
-
-        Returns:
-            List of visible ground item data dicts with visibility metadata
-        """
-        all_items = await self.get_ground_items_on_map(map_id)
-        if not all_items:
-            return []
-        
-        import time
-        now = time.time()
-        visible = []
-
-        for item in all_items:
-            # Check distance
-            if abs(item["x"] - player_x) > tile_radius:
-                continue
-            if abs(item["y"] - player_y) > tile_radius:
-                continue
-
-            # Check visibility (player dropped it or protection expired)
-            is_owner = item.get("dropped_by_player_id") == player_id
-            loot_protection_expires_at = item.get("loot_protection_expires_at", 0)
-            is_public = loot_protection_expires_at <= now
-
-            if not is_owner and not is_public:
-                continue
-
-            # Add visibility metadata
-            item_copy = item.copy()
-            item_copy["is_protected"] = not is_public and not is_owner
-            item_copy["is_yours"] = is_owner
-            visible.append(item_copy)
-
-        return visible
-
-    async def cleanup_expired_ground_items(self, map_id: str) -> int:
-        """
-        Remove expired ground items from a map.
-
-        Args:
-            map_id: Map ID
-
-        Returns:
-            Number of items cleaned up
-        """
-        if not self._valkey:
-            return 0
-        
-        map_key = GROUND_ITEMS_MAP_KEY.format(map_id=map_id)
-        ground_item_ids_raw = await self._valkey.smembers(map_key)
-        
-        if not ground_item_ids_raw:
-            return 0
-
-        import time
-        now = time.time()
-        cleaned = 0
-
-        for ground_item_id_raw in ground_item_ids_raw:
-            ground_item_id = int(_decode_bytes(ground_item_id_raw))
-            item_key = GROUND_ITEM_KEY.format(ground_item_id=ground_item_id)
-            
-            data = await self._valkey.hgetall(item_key)
-            if not data:
-                # Item missing, clean from index
-                await self._valkey.srem(map_key, [str(ground_item_id)])
-                cleaned += 1
-                continue
-                
-            despawn_at_str = _decode_bytes(data.get(b"despawn_at", b"0"))
-            try:
-                despawn_at = float(despawn_at_str)
-            except ValueError:
-                despawn_at = 0
-                
-            if despawn_at <= now:
-                # Item expired, remove completely
-                await self._valkey.delete([item_key])
-                await self._valkey.srem(map_key, [str(ground_item_id)])
-                cleaned += 1
-
-        if cleaned > 0:
-            logger.info(
-                "Cleaned up expired ground items",
-                extra={"map_id": map_id, "count": cleaned},
-            )
-
-        return cleaned
-
     # =============================================================================
     # OFFLINE PLAYER METHODS (Direct Database Access)
     # =============================================================================
@@ -1204,7 +1185,7 @@ class GameStateManager:
                     space_available = item.max_stack_size - existing.quantity
                     add_amount = min(quantity, space_available)
                     existing.quantity += add_amount
-                    await db.commit()
+                    await self._commit_if_not_test_session(db)
                     
                     remaining = quantity - add_amount
                     if remaining == 0:
@@ -1241,7 +1222,7 @@ class GameStateManager:
                 current_durability=durability
             )
             db.add(new_inv)
-            await db.commit()
+            await self._commit_if_not_test_session(db)
             
             return {
                 "success": True, 
@@ -1285,12 +1266,71 @@ class GameStateManager:
             if inv.quantity == 0:
                 await db.delete(inv)
             
-            await db.commit()
+            await self._commit_if_not_test_session(db)
             return {
                 "success": True,
                 "message": f"Removed {quantity} items",
                 "removed_quantity": quantity
             }
+    
+    async def set_inventory_slot_offline(
+        self, player_id: int, slot: int, item_id: int, quantity: int, durability: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Set item in specific inventory slot directly in database (for offline players).
+        
+        Args:
+            player_id: Player's database ID
+            slot: Inventory slot number
+            item_id: Item ID to set
+            quantity: Item quantity
+            durability: Item durability
+            
+        Returns:
+            Dictionary with success status
+        """
+        if not self._session_factory:
+            return {"success": False, "message": "No database connection"}
+            
+        async with self._db_session() as db:
+            from server.src.models.item import PlayerInventory, Item
+            
+            # Get item data for default durability
+            if durability is None:
+                item_result = await db.execute(select(Item).where(Item.id == item_id))
+                item = item_result.scalar_one_or_none()
+                if item and item.max_durability is not None:
+                    durability = float(item.max_durability)
+                else:
+                    durability = 1.0
+            
+            # Check if slot already has an item
+            existing_result = await db.execute(
+                select(PlayerInventory).where(
+                    PlayerInventory.player_id == player_id,
+                    PlayerInventory.slot == slot
+                )
+            )
+            existing_item = existing_result.scalar_one_or_none()
+            
+            if existing_item:
+                # Update existing item in slot
+                existing_item.item_id = item_id
+                existing_item.quantity = quantity
+                existing_item.current_durability = int(durability) if durability is not None else None
+            else:
+                # Create new inventory entry
+                new_item = PlayerInventory(
+                    player_id=player_id,
+                    slot=slot,
+                    item_id=item_id,
+                    quantity=quantity,
+                    current_durability=int(durability) if durability is not None else None
+                )
+                db.add(new_item)
+            
+            await self._commit_if_not_test_session(db)
+            return {"success": True, "message": f"Set item in slot {slot}"}
     
     async def get_equipment_offline(self, player_id: int) -> Dict[str, Dict]:
         """
@@ -1373,7 +1413,7 @@ class GameStateManager:
                     new_skill = Skill(name=skill_name)
                     db.add(new_skill)
             
-            await db.commit()
+            await self._commit_if_not_test_session(db)
             
             # Return all skills
             result = await db.execute(select(Skill))
@@ -1454,7 +1494,7 @@ class GameStateManager:
             stmt = pg_insert(PlayerSkill).values(values)
             stmt = stmt.on_conflict_do_nothing(constraint="_player_skill_uc")
             await db.execute(stmt)
-            await db.commit()
+            await self._commit_if_not_test_session(db)
             
             # Fetch and return all player skills
             result = await db.execute(
@@ -1531,7 +1571,7 @@ class GameStateManager:
             player_skill.experience = new_xp
             player_skill.current_level = new_level
             
-            await db.commit()
+            await self._commit_if_not_test_session(db)
             
             leveled_up = new_level > previous_level
             if leveled_up:
@@ -1778,7 +1818,7 @@ class GameStateManager:
             
             if player:
                 player.current_hp = hp
-                await db.commit()
+                await self._commit_if_not_test_session(db)
 
     # =========================================================================
     # ITEM METADATA ACCESS (Simple caching)

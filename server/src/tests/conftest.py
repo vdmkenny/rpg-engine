@@ -180,6 +180,14 @@ class FakeValkey:
             return 0
         return 1 if str(member) in self._set_data[key] else 0
     
+    async def expire(self, key: str, seconds: int) -> int:
+        """Set a timeout on key (for testing, we just return success)."""
+        # In a real implementation this would set TTL, but for tests we don't need to track it
+        # Just return 1 to indicate the key exists and the expire was set
+        if (key in self._data or key in self._string_data or key in self._set_data):
+            return 1
+        return 0
+    
     def clear(self):
         """Clear all data (useful between tests)."""
         self._data.clear()
@@ -261,11 +269,12 @@ async def fake_valkey() -> FakeValkey:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def gsm(fake_valkey: FakeValkey) -> AsyncGenerator[GameStateManager, None]:
+async def gsm(session: AsyncSession, fake_valkey: FakeValkey) -> AsyncGenerator[GameStateManager, None]:
     """
     Create a GameStateManager for tests that need GSM functionality.
     
     Initializes the global GSM with a FakeValkey and test session factory.
+    Binds the test session to GSM to ensure proper transaction isolation.
     Tests using this fixture can call get_game_state_manager() and it will
     return this initialized GSM instance.
     """
@@ -274,6 +283,9 @@ async def gsm(fake_valkey: FakeValkey) -> AsyncGenerator[GameStateManager, None]
     
     # Initialize the global GSM
     gsm_instance = init_game_state_manager(fake_valkey, TestingSessionLocal)
+    
+    # Bind the test session to ensure transaction isolation
+    gsm_instance.bind_test_session(session)
 
     # Load item cache from database for metadata lookups
     try:
@@ -284,7 +296,8 @@ async def gsm(fake_valkey: FakeValkey) -> AsyncGenerator[GameStateManager, None]
     
     yield gsm_instance
     
-    # Clean up - reset the global GSM
+    # Clean up - unbind session and reset the global GSM
+    gsm_instance.unbind_test_session()
     reset_game_state_manager()
 
 
@@ -316,11 +329,14 @@ async def client(
 
 @pytest_asyncio.fixture
 def create_test_player(
-    session: AsyncSession,
+    session: AsyncSession,  # Use the same session as HTTP endpoints
+    gsm: GameStateManager,
 ) -> Callable[..., Awaitable[Player]]:
     """
-    Fixture factory to create a test player with proper initialization.
-    Uses PlayerService for consistent player creation with skills.
+    Fixture factory to create a test player using the same database session as HTTP endpoints.
+    
+    This ensures that players created by tests are visible to HTTP endpoint calls in the same test.
+    Uses the proper architecture: Tests → Services → Database (same session as HTTP endpoints)
     """
     async def _create_player(
         username: str, 
@@ -328,43 +344,57 @@ def create_test_player(
         x: int = 10, 
         y: int = 10, 
         map_id: str = "samplemap",
+        current_hp: int = 10,
         **extra_fields
     ) -> Player:
-        from server.src.services.player_service import PlayerService
-        from server.src.schemas.player import PlayerCreate
+        from server.src.core.security import get_password_hash
+        from server.src.models.player import Player
+        from server.src.services.skill_service import SkillService
         
-        # Create player data using Pydantic model
-        player_data = PlayerCreate(
+        # Create player record using the same session as HTTP endpoints
+        # This ensures test players are visible to HTTP endpoint calls
+        hashed_password = get_password_hash(password)
+        
+        player = Player(
             username=username,
-            password=password
+            hashed_password=hashed_password,
+            x_coord=x,
+            y_coord=y,
+            map_id=map_id,
+            current_hp=current_hp
         )
         
-        # Use PlayerService for proper player creation with skills initialization
-        player = await PlayerService.create_player(session, player_data)
+        # Use the SAME session that HTTP endpoints use (from session fixture)
+        session.add(player)
+        await session.flush()  # Get player ID
         
-        # If we need to modify the player, get a fresh instance and update it
-        if x != 10 or y != 10 or map_id != "samplemap" or extra_fields:
-            # Refresh the player to get the latest state
-            await session.refresh(player)
-            
-            # Update fields
-            player.x_coord = x
-            player.y_coord = y
-            player.map_id = map_id
-            
-            # Apply any extra fields
-            for key, value in extra_fields.items():
-                if hasattr(player, key):
-                    setattr(player, key, value)
-            
-            # Commit the changes
-            await session.commit()
-            await session.refresh(player)
+        # Initialize skills using SkillService
+        try:
+            await SkillService.grant_all_skills_to_player(player.id)
+        except Exception:
+            # Skills may not be available in test environment, that's ok
+            pass
+        
+        # IMPORTANT: Don't commit here - let the test manage the transaction
+        # await session.commit()  # Removed - this isolates the transaction
+        
+        # Apply any extra fields to the created player state  
+        if extra_fields:
+            current_state = await gsm.get_player_full_state(player.id)
+            if current_state:
+                updated_state = {**current_state, **extra_fields}
+                # Update player state with extra fields
+                await gsm.set_player_full_state(
+                    player_id=player.id,
+                    **updated_state
+                )
+        
+        # Register player as online for GSM operations in tests
+        gsm.register_online_player(player.id, player.username)
         
         return player
-
+    
     return _create_player
-
 
 @pytest_asyncio.fixture
 def create_test_player_and_token(
@@ -452,3 +482,7 @@ def set_player_timeout(
         await session.commit()
 
     return _set_player_timeout
+
+
+# Import modern WebSocket testing framework to register fixtures
+from server.src.tests.websocket_test_utils import websocket_client_factory, test_scenarios

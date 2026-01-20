@@ -454,13 +454,13 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     player_data = await valkey.hgetall(player_key)
                     player_id = int(player_data.get(b"player_id", b"0")) if player_data else None
                     
-                    # Use GameStateManager for ground item visibility
-                    gsm = get_game_state_manager()
-                    visible_ground_items = await gsm.get_visible_ground_items(
-                        map_id=map_id,
-                        player_x=player_x,
-                        player_y=player_y,
+                    # Use GroundItemService for ground item visibility (proper architecture)
+                    from ..services.ground_item_service import GroundItemService
+                    visible_ground_items = await GroundItemService.get_visible_ground_items_raw(
                         player_id=player_id,
+                        map_id=map_id,
+                        center_x=player_x,
+                        center_y=player_y,
                         tile_radius=32,  # Same as visibility range
                     )
                     

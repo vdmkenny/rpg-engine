@@ -169,15 +169,15 @@ class TestCreateGroundItem:
 
         ground_item = await gsm.get_ground_item(ground_item_id)
         
-        # Should have public_at and despawn_at set
-        assert ground_item["public_at"] is not None
+        # Should have loot_protection_expires_at and despawn_at set
+        assert ground_item["loot_protection_expires_at"] is not None
         assert ground_item["despawn_at"] is not None
 
-        # public_at should be in the future (protection period)
-        assert ground_item["public_at"] > now
+        # loot_protection_expires_at should be in the future (protection period)
+        assert ground_item["loot_protection_expires_at"] > now
 
-        # despawn_at should be after public_at
-        assert ground_item["despawn_at"] > ground_item["public_at"]
+        # despawn_at should be after loot_protection_expires_at
+        assert ground_item["despawn_at"] > ground_item["loot_protection_expires_at"]
 
     @pytest.mark.asyncio
     async def test_create_ground_item_invalid_item(
@@ -416,7 +416,7 @@ class TestPickupItem:
         # Make item public by modifying the Valkey data directly
         item_key = f"ground_item:{ground_item_id}"
         past_time = datetime.now(timezone.utc).timestamp() - 1
-        await gsm._valkey.hset(item_key, {"public_at": str(past_time)})
+        await gsm._valkey.hset(item_key, {"loot_protection_expires_at": str(past_time)})
 
         result = await GroundItemService.pickup_item(
             player_id=other.id,
@@ -590,7 +590,7 @@ class TestVisibility:
         # Make item public
         item_key = f"ground_item:{ground_item_id}"
         past_time = datetime.now(timezone.utc).timestamp() - 1
-        await gsm._valkey.hset(item_key, {"public_at": str(past_time)})
+        await gsm._valkey.hset(item_key, {"loot_protection_expires_at": str(past_time)})
 
         response = await GroundItemService.get_visible_ground_items(
             player_id=other.id,
