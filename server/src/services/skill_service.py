@@ -87,10 +87,10 @@ class SkillService:
         xp_amount: int,
     ) -> Optional[LevelUpResult]:
         """
-        Add experience to a player's skill.
+        Add experience to a player's skill with transparent online/offline handling.
 
-        Automatically recalculates the level based on new XP total.
-        Handles both online (Valkey) and offline (database) players.
+        Uses GSM auto-loading to handle both online (Valkey) and offline (database) players
+        identically. All XP calculation business logic is consolidated here.
 
         Args:
             player_id: The player's database ID
@@ -106,72 +106,58 @@ class SkillService:
         gsm = get_game_state_manager()
         skill_name = skill.name.lower()
 
-        # Check if player is online - use Valkey if available
-        if gsm.is_online(player_id):
-            # For online players, update skill in Valkey and mark dirty
-            current_skill = await gsm.get_skill(player_id, skill_name)
-            if not current_skill:
-                logger.warning(
-                    "Player skill not found in Valkey",
-                    extra={"player_id": player_id, "skill": skill_name}
-                )
-                return None
-
-            from server.src.core.skills import (
-                get_skill_xp_multiplier, level_for_xp, xp_to_next_level, MAX_LEVEL
+        # Get current skill data using auto-loading GSM
+        current_skill = await gsm.get_skill(player_id, skill_name)
+        if not current_skill:
+            logger.warning(
+                "Player skill not found",
+                extra={"player_id": player_id, "skill": skill_name}
             )
-            
-            xp_multiplier = get_skill_xp_multiplier(skill)
-            previous_level = current_skill["level"]
-            previous_xp = current_skill["experience"]
-            
-            # Calculate new XP and level
-            new_xp = previous_xp + xp_amount
-            new_level = level_for_xp(new_xp, xp_multiplier)
-            
-            # Cap at max level
-            if new_level > MAX_LEVEL:
-                new_level = MAX_LEVEL
-            
-            # Update in Valkey (this marks as dirty for database sync)
-            await gsm.set_skill(
-                player_id, skill_name, current_skill["skill_id"], new_level, new_xp
-            )
-            
-            leveled_up = new_level > previous_level
-            if leveled_up:
-                logger.info(
-                    "Player leveled up (online)",
-                    extra={
-                        "player_id": player_id,
-                        "skill": skill_name,
-                        "previous_level": previous_level,
-                        "new_level": new_level,
-                        "xp_gained": xp_amount,
-                    }
-                )
-
-            return LevelUpResult(
-                skill_name=skill.value.name,
-                previous_level=previous_level,
-                new_level=new_level,
-                current_xp=new_xp,
-                xp_to_next=xp_to_next_level(new_xp, xp_multiplier),
-                leveled_up=leveled_up,
-            )
-        else:
-            # For offline players, use database directly
-            result = await gsm.add_experience_offline(player_id, skill_name, xp_amount)
-            if result:
-                return LevelUpResult(
-                    skill_name=result["skill_name"],
-                    previous_level=result["previous_level"],
-                    new_level=result["new_level"],
-                    current_xp=result["current_xp"],
-                    xp_to_next=result["xp_to_next"],
-                    leveled_up=result["leveled_up"],
-                )
             return None
+
+        # Business logic: Calculate new XP and level
+        from server.src.core.skills import (
+            get_skill_xp_multiplier, level_for_xp, xp_to_next_level, MAX_LEVEL
+        )
+        
+        xp_multiplier = get_skill_xp_multiplier(skill)
+        previous_level = current_skill["level"]
+        previous_xp = current_skill["experience"]
+        
+        # Calculate new XP and level
+        new_xp = previous_xp + xp_amount
+        new_level = level_for_xp(new_xp, xp_multiplier)
+        
+        # Cap at max level
+        if new_level > MAX_LEVEL:
+            new_level = MAX_LEVEL
+        
+        # Update skill data via GSM (handles online/offline transparently)
+        await gsm.set_skill(
+            player_id, skill_name, current_skill["skill_id"], new_level, new_xp
+        )
+        
+        leveled_up = new_level > previous_level
+        if leveled_up:
+            logger.info(
+                "Player leveled up",
+                extra={
+                    "player_id": player_id,
+                    "skill": skill_name,
+                    "previous_level": previous_level,
+                    "new_level": new_level,
+                    "xp_gained": xp_amount,
+                }
+            )
+
+        return LevelUpResult(
+            skill_name=skill.value.name,
+            previous_level=previous_level,
+            new_level=new_level,
+            current_xp=new_xp,
+            xp_to_next=xp_to_next_level(new_xp, xp_multiplier),
+            leveled_up=leveled_up,
+        )
 
     @staticmethod
     async def get_player_skills(player_id: int) -> List[Dict]:
@@ -194,8 +180,9 @@ class SkillService:
     @staticmethod
     async def get_total_level(player_id: int) -> int:
         """
-        Calculate the sum of all skill levels for a player.
-        Handles both online and offline players.
+        Calculate the sum of all skill levels for a player using auto-loading.
+        
+        Uses GSM transparent access - no difference between online/offline players.
 
         Args:
             player_id: The player's database ID
@@ -205,20 +192,16 @@ class SkillService:
         """
         gsm = get_game_state_manager()
         
-        if gsm.is_online(player_id):
-            # For online players, get from Valkey
-            skills = await gsm.get_all_skills(player_id)
-            return sum(skill_data["level"] for skill_data in skills.values())
-        else:
-            # For offline players, use database
-            return await gsm.get_total_level_offline(player_id)
+        # Use auto-loading GSM method - works for both online and offline players
+        skills = await gsm.get_all_skills(player_id)
+        return sum(skill_data["level"] for skill_data in skills.values())
 
     @staticmethod
     async def get_hitpoints_level(player_id: int) -> int:
         """
-        Get the player's Hitpoints skill level.
-        Handles both online and offline players.
-
+        Get the player's Hitpoints skill level using auto-loading.
+        
+        Uses GSM transparent access - no difference between online/offline players.
         This is the base max HP before equipment bonuses.
 
         Args:
@@ -229,11 +212,10 @@ class SkillService:
         """
         gsm = get_game_state_manager()
         
-        if gsm.is_online(player_id):
-            # For online players, get from Valkey
-            hitpoints_skill = await gsm.get_skill(player_id, "hitpoints")
-            if hitpoints_skill:
-                return hitpoints_skill["level"]
+        # Use auto-loading GSM method - works for both online and offline players
+        hitpoints_skill = await gsm.get_skill(player_id, "hitpoints")
+        if hitpoints_skill:
+            return hitpoints_skill["level"]
             
-        # Fallback to offline method
+        # If skill not found, fallback to offline method for safety
         return await gsm.get_hitpoints_level_offline(player_id)

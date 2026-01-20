@@ -527,6 +527,25 @@ class GameStateManager:
         # Set standard TTL (same for all player data regardless of online/offline status)
         # TODO: Make TTL configurable via settings
         await self._valkey.expire(key, 3600)  # 1 hour default, should be configurable
+
+    async def _cache_skills_in_valkey(self, player_id: int, skills_data: Dict[str, Dict]) -> None:
+        """Load skills data into Valkey with configured TTL."""
+        from server.src.core.config import settings
+        
+        if not settings.USE_VALKEY or not self._valkey or not skills_data:
+            return
+        
+        key = SKILLS_KEY.format(player_id=player_id)
+        valkey_data = {}
+        
+        for skill_name, skill_data in skills_data.items():
+            valkey_data[skill_name.lower()] = json.dumps(skill_data)
+        
+        await self._valkey.hset(key, valkey_data)
+        
+        # Set standard TTL (same for all player data regardless of online/offline status)
+        # TODO: Make TTL configurable via settings
+        await self._valkey.expire(key, 3600)  # 1 hour default, should be configurable
     
     async def get_inventory_slot(
         self, player_id: int, slot: int
@@ -901,53 +920,124 @@ class GameStateManager:
     # =========================================================================
     
     async def get_skill(self, player_id: int, skill_name: str) -> Optional[Dict[str, Any]]:
-        """Get specific skill data from Valkey (online) or database (offline)."""
-        if not self._valkey or not self.is_online(player_id):
-            # Use offline database method for offline players
-            skills_data = await self.get_skills_offline(player_id)
-            return skills_data.get(skill_name.lower())
+        """Get specific skill data with auto-loading from database."""
+        # Check Valkey first (if available and enabled)
+        if self._valkey and settings.USE_VALKEY:
+            try:
+                key = SKILLS_KEY.format(player_id=player_id)
+                raw = await self._valkey.hget(key, skill_name.lower())
+                
+                if raw is not None:
+                    try:
+                        return json.loads(_decode_bytes(raw))
+                    except json.JSONDecodeError as e:
+                        logger.warning("Invalid skill data in Valkey", extra={"player_id": player_id, "skill": skill_name, "error": str(e)})
+                        # Fall through to auto-load from database
+                
+                # Auto-load all skills from database and cache them
+                skills_data = await self.get_skills_offline(player_id)
+                if skills_data:
+                    # Cache all skills in Valkey with TTL
+                    await self._cache_skills_in_valkey(player_id, skills_data)
+                    return skills_data.get(skill_name.lower())
+                
+                return None
+                
+            except Exception as e:
+                # Valkey unavailable - fallback to database
+                logger.warning("Valkey unavailable for skill access, using database", extra={"player_id": player_id, "error": str(e)})
         
-        key = SKILLS_KEY.format(player_id=player_id)
-        raw = await self._valkey.hget(key, skill_name.lower())
-        
-        if not raw:
-            return None
-        
-        try:
-            return json.loads(_decode_bytes(raw))
-        except json.JSONDecodeError:
-            return None
+        # Valkey disabled or unavailable - use database directly
+        skills_data = await self.get_skills_offline(player_id)
+        return skills_data.get(skill_name.lower())
     
     async def get_all_skills(self, player_id: int) -> Dict[str, Dict]:
-        """Get all skills for a player from Valkey (online) or database (offline)."""
-        if not self._valkey or not self.is_online(player_id):
-            # Use offline database method for offline players
-            return await self.get_skills_offline(player_id)
-        
-        key = SKILLS_KEY.format(player_id=player_id)
-        raw = await self._valkey.hgetall(key)
-        
-        skills = {}
-        for skill_name_bytes, skill_data_bytes in raw.items():
+        """Get all skills for a player with auto-loading from database."""
+        # Check Valkey first (if available and enabled)
+        if self._valkey and settings.USE_VALKEY:
             try:
-                skill_name = _decode_bytes(skill_name_bytes)
-                skill_data = json.loads(_decode_bytes(skill_data_bytes))
-                skills[skill_name] = skill_data
-            except json.JSONDecodeError as e:
-                logger.warning("Invalid skill data", extra={"player_id": player_id, "error": str(e)})
+                key = SKILLS_KEY.format(player_id=player_id)
+                raw = await self._valkey.hgetall(key)
+                
+                if raw:
+                    # Parse existing Valkey data
+                    skills = {}
+                    for skill_name_bytes, skill_data_bytes in raw.items():
+                        try:
+                            skill_name = _decode_bytes(skill_name_bytes)
+                            skill_data = json.loads(_decode_bytes(skill_data_bytes))
+                            skills[skill_name] = skill_data
+                        except json.JSONDecodeError as e:
+                            logger.warning("Invalid skill data in Valkey", extra={"player_id": player_id, "error": str(e)})
+                    return skills
+                
+                # Auto-load from database and cache
+                logger.debug("Auto-loading player skills from database", extra={"player_id": player_id})
+                skills_data = await self.get_skills_offline(player_id)
+                
+                # Cache in Valkey for future access
+                if skills_data:
+                    await self._cache_skills_in_valkey(player_id, skills_data)
+                
+                return skills_data
+                
+            except Exception as e:
+                # Valkey unavailable - fallback to database
+                logger.warning("Valkey unavailable for skills access, using database", extra={"player_id": player_id, "error": str(e)})
         
-        return skills
+        # Valkey disabled or unavailable - use database directly
+        return await self.get_skills_offline(player_id)
     
     async def set_skill(self, player_id: int, skill_name: str, skill_id: int, level: int, experience: int) -> None:
-        """Set skill data."""
-        if not self._valkey or not self.is_online(player_id):
+        """Set skill data with transparent online/offline handling."""
+        from server.src.core.config import settings
+        
+        # Try Valkey first if available and enabled
+        if self._valkey and settings.USE_VALKEY:
+            try:
+                key = SKILLS_KEY.format(player_id=player_id)
+                skill_data = {"skill_id": skill_id, "level": level, "experience": experience}
+                
+                await self._valkey.hset(key, {skill_name.lower(): json.dumps(skill_data)})
+                
+                # Set TTL to keep data fresh
+                await self._valkey.expire(key, 3600)
+                
+                # Mark for database sync if player is online
+                if self.is_online(player_id):
+                    await self._valkey.sadd(DIRTY_SKILLS_KEY, [str(player_id)])
+                else:
+                    # For offline players, also update database immediately
+                    await self._update_skill_in_database(player_id, skill_name, skill_id, level, experience)
+                
+                return
+                
+            except Exception as e:
+                logger.warning("Valkey unavailable for skill update, using database", extra={"player_id": player_id, "error": str(e)})
+        
+        # Valkey disabled or unavailable - update database directly
+        await self._update_skill_in_database(player_id, skill_name, skill_id, level, experience)
+
+    async def _update_skill_in_database(self, player_id: int, skill_name: str, skill_id: int, level: int, experience: int) -> None:
+        """Update skill data directly in database."""
+        if not self._session_factory:
             return
-        
-        key = SKILLS_KEY.format(player_id=player_id)
-        skill_data = {"skill_id": skill_id, "level": level, "experience": experience}
-        
-        await self._valkey.hset(key, {skill_name.lower(): json.dumps(skill_data)})
-        await self._valkey.sadd(DIRTY_SKILLS_KEY, [str(player_id)])
+            
+        async with self._db_session() as db:
+            from server.src.models.skill import PlayerSkill
+            from sqlalchemy import update
+            
+            # Update the PlayerSkill record
+            await db.execute(
+                update(PlayerSkill)
+                .where(
+                    PlayerSkill.player_id == player_id,
+                    PlayerSkill.skill_id == skill_id,
+                )
+                .values(current_level=level, experience=experience)
+            )
+            
+            await self._commit_if_not_test_session(db)
     
     # =========================================================================
     # GROUND ITEM OPERATIONS  
@@ -1381,6 +1471,7 @@ class GameStateManager:
             skill_data = {}
             for player_skill, skill_name in skills:
                 skill_data[skill_name] = {
+                    "skill_id": player_skill.skill_id,  # Include skill_id for GSM compatibility
                     "level": player_skill.current_level,
                     "experience": player_skill.experience
                 }
@@ -1508,93 +1599,6 @@ class GameStateManager:
             )
             
             return player_skills
-    
-    async def add_experience_offline(self, player_id: int, skill_name: str, xp_amount: int) -> Optional[Dict[str, Any]]:
-        """
-        Add experience to a players skill (offline).
-        
-        Args:
-            player_id: Player ID
-            skill_name: Skill name (lowercase)
-            xp_amount: Amount of XP to add
-            
-        Returns:
-            Dict with level up result or None if skill not found
-        """
-        if not self._session_factory or xp_amount <= 0:
-            return None
-            
-        async with self._db_session() as db:
-            from server.src.models.skill import PlayerSkill, Skill
-            from server.src.core.skills import (
-                SkillType, get_skill_xp_multiplier, level_for_xp, xp_to_next_level, MAX_LEVEL
-            )
-            
-            # Get the skill ID
-            skill_result = await db.execute(select(Skill).where(Skill.name == skill_name))
-            skill_record = skill_result.scalar_one_or_none()
-            
-            if skill_record is None:
-                return None
-            
-            # Get player's current progress
-            result = await db.execute(
-                select(PlayerSkill).where(
-                    PlayerSkill.player_id == player_id,
-                    PlayerSkill.skill_id == skill_record.id,
-                )
-            )
-            player_skill = result.scalar_one_or_none()
-            
-            if player_skill is None:
-                return None
-            
-            # Get skill type and multiplier
-            skill_type = SkillType.from_name(skill_name)
-            if skill_type is None:
-                return None
-                
-            xp_multiplier = get_skill_xp_multiplier(skill_type)
-            
-            previous_level = player_skill.current_level
-            previous_xp = player_skill.experience
-            
-            # Calculate new XP and level
-            new_xp = previous_xp + xp_amount
-            new_level = level_for_xp(new_xp, xp_multiplier)
-            
-            # Cap at max level
-            if new_level > MAX_LEVEL:
-                new_level = MAX_LEVEL
-            
-            # Update the record
-            player_skill.experience = new_xp
-            player_skill.current_level = new_level
-            
-            await self._commit_if_not_test_session(db)
-            
-            leveled_up = new_level > previous_level
-            if leveled_up:
-                logger.info(
-                    "Player leveled up via GSM offline",
-                    extra={
-                        "player_id": player_id,
-                        "skill": skill_name,
-                        "previous_level": previous_level,
-                        "new_level": new_level,
-                        "xp_gained": xp_amount,
-                    },
-                )
-            
-            return {
-                "skill_name": skill_type.value.name,
-                "previous_level": previous_level,
-                "new_level": new_level,
-                "current_xp": new_xp,
-                "xp_to_next": xp_to_next_level(new_xp, xp_multiplier),
-                "leveled_up": leveled_up,
-                "levels_gained": new_level - previous_level,
-            }
     
     async def get_player_skills_offline(self, player_id: int) -> list:
         """
