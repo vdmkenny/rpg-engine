@@ -1,13 +1,15 @@
 """
 Service for managing chat operations.
 
-Handles chat message validation, channel routing, and broadcasting logic.
+Handles chat message validation, channel routing, permission checking, and broadcasting logic.
 """
 
 from typing import Dict, List, Optional, Any
 from sqlalchemy.ext.asyncio import AsyncSession
+import time
 
 from ..core.logging_config import get_logger
+from ..core.config import settings
 from .game_state_manager import get_game_state_manager
 from .player_service import PlayerService
 
@@ -17,47 +19,149 @@ logger = get_logger(__name__)
 class ChatService:
     """Service for managing chat operations."""
 
-    # Chat message limits
-    MAX_MESSAGE_LENGTH = 280
-    MIN_MESSAGE_LENGTH = 1
-
-    # Chat ranges in tiles
-    LOCAL_CHAT_RANGE = 80  # 5 chunks = 80 tiles
+    @staticmethod
+    def get_message_length_limit(channel: str) -> int:
+        """
+        Get message length limit for specific channel type.
+        
+        Args:
+            channel: Channel type (local, global, dm)
+            
+        Returns:
+            Maximum message length for the channel
+        """
+        channel = channel.lower()
+        if channel == "local":
+            return settings.CHAT_MAX_MESSAGE_LENGTH_LOCAL
+        elif channel == "global":
+            return settings.CHAT_MAX_MESSAGE_LENGTH_GLOBAL
+        elif channel == "dm":
+            return settings.CHAT_MAX_MESSAGE_LENGTH_DM
+        else:
+            # Default to local chat limit for unknown channels
+            return settings.CHAT_MAX_MESSAGE_LENGTH_LOCAL
 
     @staticmethod
-    async def validate_message(message: str, channel_type: str) -> Dict[str, Any]:
+    def create_system_error_message(error_message: str, channel: str = "system") -> Dict[str, Any]:
         """
-        Validate a chat message for content and channel appropriateness.
+        Create standardized system error message for chat UI.
+        
+        Args:
+            error_message: The error message to display
+            channel: Channel type for the system message
+            
+        Returns:
+            Formatted system message dict
+        """
+        return {
+            "username": "System",
+            "message": error_message,
+            "channel": channel,
+            "timestamp": time.time()
+        }
 
+    @staticmethod
+    async def validate_global_chat_permission(
+        db: AsyncSession, player_id: int
+    ) -> Dict[str, Any]:
+        """
+        Validate if player has permission to send global chat messages.
+        
+        Args:
+            db: Database session
+            player_id: Player ID to check
+            
+        Returns:
+            Dict with validation result and error message if needed
+        """
+        try:
+            # Check if global chat is enabled server-wide
+            if not settings.CHAT_GLOBAL_ENABLED:
+                return {
+                    "valid": False,
+                    "error_message": "Global chat is currently disabled.",
+                    "system_message": ChatService.create_system_error_message(
+                        "Global chat is currently disabled."
+                    )
+                }
+            
+            # Check player's role permission
+            has_permission = await PlayerService.check_global_chat_permission(db, player_id)
+            if not has_permission:
+                return {
+                    "valid": False,
+                    "error_message": "You don't have permission to send global messages.",
+                    "system_message": ChatService.create_system_error_message(
+                        "You don't have permission to send global messages."
+                    )
+                }
+            
+            return {"valid": True}
+            
+        except Exception as e:
+            logger.error(
+                "Error validating global chat permission",
+                extra={
+                    "player_id": player_id,
+                    "error": str(e),
+                }
+            )
+            return {
+                "valid": False,
+                "error_message": "Permission check failed.",
+                "system_message": ChatService.create_system_error_message(
+                    "Unable to verify chat permissions."
+                )
+            }
+
+    @staticmethod
+    async def validate_message(
+        message: str, channel: str, db: AsyncSession, player_id: int
+    ) -> Dict[str, Any]:
+        """
+        Validate a chat message with channel-specific limits and permissions.
+        
         Args:
             message: Message content
-            channel_type: Type of chat channel (local, global, dm)
-
+            channel: Channel type (local, global, dm)
+            db: Database session (required for permission checking)
+            player_id: Player ID (required for permission checking)
+            
         Returns:
-            Dict with validation result and processed message
+            Dict with validation result, processed message, and any error messages
         """
         validation_result = {
             "valid": True,
             "message": message,
-            "reason": None
+            "reason": None,
+            "system_message": None
         }
 
+        channel = channel.lower()
+        
+        # Get channel-specific message length limit
+        max_length = ChatService.get_message_length_limit(channel)
+        
         # Check message length
-        if len(message) < ChatService.MIN_MESSAGE_LENGTH:
+        if len(message) == 0:
             validation_result.update({
                 "valid": False,
-                "reason": "Message too short"
+                "reason": "Message too short",
+                "system_message": ChatService.create_system_error_message(
+                    "Message cannot be empty."
+                )
             })
             return validation_result
 
-        if len(message) > ChatService.MAX_MESSAGE_LENGTH:
+        if len(message) > max_length:
             # Truncate instead of rejecting
-            validation_result["message"] = message[:ChatService.MAX_MESSAGE_LENGTH]
+            validation_result["message"] = message[:max_length]
             logger.info(
-                "Message truncated to maximum length",
+                "Message truncated to channel maximum length",
                 extra={
+                    "channel": channel,
                     "original_length": len(message),
-                    "max_length": ChatService.MAX_MESSAGE_LENGTH
+                    "max_length": max_length
                 }
             )
 
@@ -68,18 +172,31 @@ class ChatService:
         if not validation_result["message"]:
             validation_result.update({
                 "valid": False,
-                "reason": "Message empty after processing"
+                "reason": "Message empty after processing",
+                "system_message": ChatService.create_system_error_message(
+                    "Message cannot be empty."
+                )
             })
             return validation_result
 
-        # Basic content filtering could be added here
-        # For now, we accept all non-empty messages
+        # Channel-specific validation
+        if channel == "global":
+            # Check global chat permissions
+            permission_result = await ChatService.validate_global_chat_permission(db, player_id)
+            if not permission_result["valid"]:
+                validation_result.update({
+                    "valid": False,
+                    "reason": permission_result["error_message"],
+                    "system_message": permission_result["system_message"]
+                })
+                return validation_result
 
         logger.debug(
             "Message validated successfully",
             extra={
-                "channel_type": channel_type,
-                "message_length": len(validation_result["message"])
+                "channel": channel,
+                "message_length": len(validation_result["message"]),
+                "original_length": len(message)
             }
         )
 
@@ -100,9 +217,13 @@ class ChatService:
             List of recipient player data
         """
         try:
+            # Calculate local chat range in tiles from chunk radius
+            # Each chunk is 16x16 tiles, so radius * 16 gives tile range
+            local_chat_range = settings.CHAT_LOCAL_CHUNK_RADIUS * 16
+            
             # Get nearby players within local chat range
             nearby_players = await PlayerService.get_nearby_players(
-                sender_id, ChatService.LOCAL_CHAT_RANGE
+                sender_id, local_chat_range
             )
 
             recipients = []
@@ -118,7 +239,8 @@ class ChatService:
                 "Found local chat recipients",
                 extra={
                     "sender_id": sender_id,
-                    "recipient_count": len(recipients)
+                    "recipient_count": len(recipients),
+                    "chat_range": local_chat_range
                 }
             )
 
@@ -148,8 +270,6 @@ class ChatService:
         Returns:
             Recipient data or None if not found/not online
         """
-        from .player_service import PlayerService
-        
         try:
             # Get player from database
             recipient = await PlayerService.get_player_by_username(db, recipient_username)
@@ -161,8 +281,7 @@ class ChatService:
                 return None
 
             # Check if player is online
-            state_manager = get_game_state_manager()
-            if not state_manager.is_player_online(recipient.id):
+            if not PlayerService.is_player_online(recipient.id):
                 logger.debug(
                     "DM recipient not online",
                     extra={"recipient_username": recipient_username}
@@ -213,6 +332,10 @@ class ChatService:
             return recipients
 
         except Exception as e:
+            logger.error(
+                "Error getting global chat recipients",
+                extra={"error": str(e)}
+            )
             return []
 
     @staticmethod
@@ -236,7 +359,6 @@ class ChatService:
         Returns:
             Dict with result status and message details
         """
-        import time
         import msgpack
         from common.src.protocol import GameMessage, MessageType
         
@@ -244,16 +366,28 @@ class ChatService:
             channel = payload.get("channel", "local").lower()
             message = payload.get("message", "").strip()
             
-            # Validate message using service
-            validation_result = await ChatService.validate_message(message)
+            # Validate message using enhanced service with permission checking
+            validation_result = await ChatService.validate_message(
+                message, channel, db, player_id
+            )
+            
             if not validation_result["valid"]:
+                # Send system error message to the sender
+                if validation_result.get("system_message"):
+                    system_msg = GameMessage(
+                        type=MessageType.NEW_CHAT_MESSAGE,
+                        payload=validation_result["system_message"]
+                    )
+                    packed_message = msgpack.packb(system_msg.model_dump(), use_bin_type=True)
+                    await connection_manager.send_personal_message(username, packed_message)
+                
                 return {
                     "success": False,
                     "reason": validation_result["reason"]
                 }
                 
             # Use the processed message (potentially truncated)
-            processed_message = validation_result["processed_message"]
+            processed_message = validation_result["message"]
             
             logger.info(
                 "Processing chat message via service",
@@ -286,7 +420,7 @@ class ChatService:
             elif channel == "local":
                 # Get nearby players for local chat
                 nearby_players = await ChatService.get_local_chat_recipients(
-                    db, player_id, username
+                    player_id, "current_map"  # TODO: Get actual map_id from player state
                 )
                 
                 if nearby_players:
@@ -305,6 +439,17 @@ class ChatService:
                         await connection_manager.send_personal_message(target_username, packed_message)
                         recipients = [target_username]
                     else:
+                        # Send system error message for DM recipient not found
+                        error_msg = ChatService.create_system_error_message(
+                            f"Player '{target_username}' not found or offline."
+                        )
+                        system_response = GameMessage(
+                            type=MessageType.NEW_CHAT_MESSAGE,
+                            payload=error_msg
+                        )
+                        packed_message = msgpack.packb(system_response.model_dump(), use_bin_type=True)
+                        await connection_manager.send_personal_message(username, packed_message)
+                        
                         return {
                             "success": False,
                             "reason": "dm_recipient_not_found"
@@ -313,22 +458,21 @@ class ChatService:
                     # DM system notification  
                     dm_response = GameMessage(
                         type=MessageType.NEW_CHAT_MESSAGE,
-                        payload={
-                            "username": "System",
-                            "message": "Direct messages not yet implemented",
-                            "channel": "dm",
-                            "timestamp": time.time()
-                        }
+                        payload=ChatService.create_system_error_message(
+                            "Direct messages require a target username.",
+                            "system"
+                        )
                     )
                     packed_message = msgpack.packb(dm_response.model_dump(), use_bin_type=True)
                     await connection_manager.send_personal_message(username, packed_message)
                     recipients = [username]
-                    
+                     
             return {
                 "success": True,
                 "channel": channel,
                 "recipients": recipients,
-                "message_id": f"{player_id}_{int(time.time())}"
+                "message_id": f"{player_id}_{int(time.time())}",
+                "message_data": chat_response.model_dump()
             }
             
         except Exception as e:

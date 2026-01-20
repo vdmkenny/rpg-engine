@@ -258,7 +258,7 @@ class TestSkillServiceSync:
     async def test_sync_skills_creates_all_skills(self, session: AsyncSession, gsm):
         """sync_skills_to_db should create all skills in the database."""
         # Sync skills
-        skills = await SkillService.sync_skills_to_db()
+        skills = await SkillService.sync_skills_to_db(session)
         
         # Verify all skills were created
         assert len(skills) == len(SkillType)
@@ -271,8 +271,8 @@ class TestSkillServiceSync:
     async def test_sync_skills_is_idempotent(self, session: AsyncSession, gsm):
         """Calling sync_skills_to_db multiple times should not create duplicates."""
         # Sync twice
-        await SkillService.sync_skills_to_db()
-        skills = await SkillService.sync_skills_to_db()
+        await SkillService.sync_skills_to_db(session)
+        skills = await SkillService.sync_skills_to_db(session)
         
         # Should still have exactly the right number
         assert len(skills) == len(SkillType)
@@ -288,10 +288,10 @@ class TestSkillServiceGrant:
         """grant_all_skills_to_player should create PlayerSkill records for all skills."""
         # Create player and sync skills first
         player = await create_test_player("test_skills", "password123")
-        await SkillService.sync_skills_to_db()
+        await SkillService.sync_skills_to_db(session)
         
         # Grant skills
-        player_skills = await SkillService.grant_all_skills_to_player(player.id)
+        player_skills = await SkillService.grant_all_skills_to_player(session, player.id)
         
         # Verify all skills were granted
         assert len(player_skills) == len(SkillType)
@@ -318,11 +318,11 @@ class TestSkillServiceGrant:
     ):
         """Granting skills multiple times should not create duplicates."""
         player = await create_test_player("test_idempotent", "password123")
-        await SkillService.sync_skills_to_db()
+        await SkillService.sync_skills_to_db(session)
         
         # Grant twice
-        await SkillService.grant_all_skills_to_player(player.id)
-        await SkillService.grant_all_skills_to_player(player.id)
+        await SkillService.grant_all_skills_to_player(session, player.id)
+        await SkillService.grant_all_skills_to_player(session, player.id)
         
         # Check we don't have duplicates
         result = await session.execute(
@@ -341,11 +341,13 @@ class TestSkillServiceAddExperience:
     ):
         """Adding XP should update the PlayerSkill record."""
         player = await create_test_player("test_xp", "password123")
-        await SkillService.sync_skills_to_db()
-        await SkillService.grant_all_skills_to_player(player.id)
+        await SkillService.sync_skills_to_db(session)
+        await SkillService.grant_all_skills_to_player(session, player.id)
         
         # Add some XP to attack
-        result = await SkillService.add_experience(player.id, SkillType.ATTACK, 100)
+        result = await SkillService.add_experience(
+            session, player.id, SkillType.ATTACK, 100, state_manager=gsm
+        )
         
         assert result is not None
         assert result.skill_name == "Attack"
@@ -358,11 +360,13 @@ class TestSkillServiceAddExperience:
     ):
         """Adding enough XP should trigger a level up."""
         player = await create_test_player("test_levelup", "password123")
-        await SkillService.sync_skills_to_db()
-        await SkillService.grant_all_skills_to_player(player.id)
+        await SkillService.sync_skills_to_db(session)
+        await SkillService.grant_all_skills_to_player(session, player.id)
         
         # Add enough XP to reach level 2 (around 83 XP)
-        result = await SkillService.add_experience(player.id, SkillType.ATTACK, 100)
+        result = await SkillService.add_experience(
+            session, player.id, SkillType.ATTACK, 100, state_manager=gsm
+        )
         
         assert result is not None
         assert result.leveled_up is True
@@ -375,11 +379,13 @@ class TestSkillServiceAddExperience:
     ):
         """Adding a large amount of XP should trigger multiple level ups."""
         player = await create_test_player("test_multi_levelup", "password123")
-        await SkillService.sync_skills_to_db()
-        await SkillService.grant_all_skills_to_player(player.id)
+        await SkillService.sync_skills_to_db(session)
+        await SkillService.grant_all_skills_to_player(session, player.id)
         
         # Add enough XP for level 10+ (around 1,154 XP for level 10)
-        result = await SkillService.add_experience(player.id, SkillType.ATTACK, 5000)
+        result = await SkillService.add_experience(
+            session, player.id, SkillType.ATTACK, 5000, state_manager=gsm
+        )
         
         assert result is not None
         assert result.leveled_up is True
@@ -392,13 +398,17 @@ class TestSkillServiceAddExperience:
     ):
         """Adding 0 or negative XP should return None."""
         player = await create_test_player("test_zero_xp", "password123")
-        await SkillService.sync_skills_to_db()
-        await SkillService.grant_all_skills_to_player(player.id)
+        await SkillService.sync_skills_to_db(session)
+        await SkillService.grant_all_skills_to_player(session, player.id)
         
-        result = await SkillService.add_experience(player.id, SkillType.ATTACK, 0)
+        result = await SkillService.add_experience(
+            session, player.id, SkillType.ATTACK, 0, state_manager=gsm
+        )
         assert result is None
         
-        result = await SkillService.add_experience(player.id, SkillType.ATTACK, -100)
+        result = await SkillService.add_experience(
+            session, player.id, SkillType.ATTACK, -100, state_manager=gsm
+        )
         assert result is None
 
 
@@ -411,10 +421,10 @@ class TestSkillServiceGetPlayerSkills:
     ):
         """get_player_skills should return all skills with metadata."""
         player = await create_test_player("test_get_skills", "password123")
-        await SkillService.sync_skills_to_db()
-        await SkillService.grant_all_skills_to_player(player.id)
+        await SkillService.sync_skills_to_db(session)
+        await SkillService.grant_all_skills_to_player(session, player.id)
         
-        skills = await SkillService.get_player_skills(player.id)
+        skills = await SkillService.get_player_skills(session, player.id)
         
         assert len(skills) == len(SkillType)
         
@@ -437,18 +447,20 @@ class TestSkillServiceGetPlayerSkills:
     ):
         """get_total_level should return sum of all skill levels."""
         player = await create_test_player("test_total_level", "password123")
-        await SkillService.sync_skills_to_db()
-        await SkillService.grant_all_skills_to_player(player.id)
+        await SkillService.sync_skills_to_db(session)
+        await SkillService.grant_all_skills_to_player(session, player.id)
         
         # All skills start at level 1 except Hitpoints which starts at level 10
         # So total = (num_skills - 1) * 1 + 10 = num_skills + 9
         expected_total = (len(SkillType) - 1) + HITPOINTS_START_LEVEL
-        total = await SkillService.get_total_level(player.id)
+        total = await SkillService.get_total_level(session, player.id)
         assert total == expected_total
         
         # Add some XP to level up one skill
-        await SkillService.add_experience(player.id, SkillType.ATTACK, 5000)
+        await SkillService.add_experience(
+            session, player.id, SkillType.ATTACK, 5000, state_manager=gsm
+        )
         
         # Total should increase
-        new_total = await SkillService.get_total_level(player.id)
+        new_total = await SkillService.get_total_level(session, player.id)
         assert new_total > total

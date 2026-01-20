@@ -4,7 +4,7 @@ Service for managing player operations.
 Handles player creation, login/logout, and core player state management.
 """
 
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Dict, Any, List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from ..core.config import settings
 from ..core.security import get_password_hash
 from ..models.player import Player
-from ..schemas.player import PlayerCreate
+from ..schemas.player import PlayerCreate, PlayerRole
 from ..core.logging_config import get_logger
 
 if TYPE_CHECKING:
@@ -60,7 +60,7 @@ class PlayerService:
             
             # Initialize player skills with default values
             from .skill_service import SkillService
-            await SkillService.grant_all_skills_to_player(db, player.id)
+            await SkillService.grant_all_skills_to_player(player.id)
             
             await db.commit()
             
@@ -202,6 +202,22 @@ class PlayerService:
         return result.scalar_one_or_none()
 
     @staticmethod
+    def is_player_online(player_id: int) -> bool:
+        """
+        Check if a player is currently online.
+
+        Args:
+            player_id: Player ID to check
+
+        Returns:
+            True if player is online, False otherwise
+        """
+        from .game_state_manager import get_game_state_manager
+        
+        state_manager = get_game_state_manager()
+        return state_manager.is_online(player_id)
+
+    @staticmethod
     async def get_player_position(player_id: int) -> Optional[Dict[str, Any]]:
         """
         Get player's current position and basic state from GameStateManager.
@@ -217,7 +233,7 @@ class PlayerService:
         state_manager = get_game_state_manager()
         
         # Check if player is online
-        if not state_manager.is_player_online(player_id):
+        if not PlayerService.is_player_online(player_id):
             logger.debug(
                 "Player position requested but player not online",
                 extra={"player_id": player_id}
@@ -367,3 +383,87 @@ class PlayerService:
             return False
         
         return True
+
+    @staticmethod
+    async def get_player_role(
+        db: AsyncSession, player_id: int
+    ) -> Optional[PlayerRole]:
+        """
+        Get player's role from database.
+
+        Args:
+            db: Database session
+            player_id: Player ID
+
+        Returns:
+            PlayerRole if player found, None otherwise
+        """
+        try:
+            player = await PlayerService.get_player_by_id(db, player_id)
+            if player:
+                return player.role
+            return None
+            
+        except Exception as e:
+            logger.error(
+                "Error getting player role",
+                extra={
+                    "player_id": player_id,
+                    "error": str(e),
+                }
+            )
+            return None
+
+    @staticmethod
+    async def check_global_chat_permission(
+        db: AsyncSession, player_id: int
+    ) -> bool:
+        """
+        Check if player has permission to send global chat messages.
+
+        Args:
+            db: Database session
+            player_id: Player ID
+
+        Returns:
+            True if player can send global messages, False otherwise
+        """
+        try:
+            # Check if global chat is enabled
+            if not settings.CHAT_GLOBAL_ENABLED:
+                return False
+            
+            # Get player role
+            player_role = await PlayerService.get_player_role(db, player_id)
+            if not player_role:
+                return False
+            
+            # Check if role is in allowed roles list
+            allowed_roles = settings.CHAT_GLOBAL_ALLOWED_ROLES
+            return player_role.value.upper() in [role.upper() for role in allowed_roles]
+            
+        except Exception as e:
+            logger.error(
+                "Error checking global chat permission",
+                extra={
+                    "player_id": player_id,
+                    "error": str(e),
+                }
+            )
+            return False
+
+    @staticmethod
+    async def get_player_data_by_id(
+        db: AsyncSession, player_id: int
+    ) -> Optional[Player]:
+        """
+        Get complete player data including role (alias for get_player_by_id with explicit naming).
+
+        Args:
+            db: Database session
+            player_id: Player ID
+
+        Returns:
+            Complete Player instance if found, None otherwise
+        """
+        return await PlayerService.get_player_by_id(db, player_id)

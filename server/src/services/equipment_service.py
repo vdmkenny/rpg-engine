@@ -25,7 +25,6 @@ from ..schemas.item import (
 from .item_service import ItemService
 from .inventory_service import InventoryService
 from .ground_item_service import GroundItemService
-from .skill_service import SkillService
 from .game_state_manager import get_game_state_manager
 
 if TYPE_CHECKING:
@@ -259,35 +258,29 @@ class EquipmentService:
         if not equipment:
             return base_hp
 
-        # Look up item stats from database to get health_bonus
+        # Get item metadata from GSM cache (NO database session creation)
         health_bonus = 0
         item_ids = [slot_data["item_id"] for slot_data in equipment.values()]
 
         if item_ids:
-            async with gsm._db_session() as db:
-                result = await db.execute(
-                    select(Item).where(Item.id.in_(item_ids))
-                )
-                items_by_id = {item.id: item for item in result.scalars().all()}
-
-                for slot_data in equipment.values():
-                    item = items_by_id.get(slot_data["item_id"])
-                    if item and item.health_bonus:
-                        health_bonus += item.health_bonus
+            # Use GSM's item metadata cache instead of direct database query
+            items_meta = await gsm.get_items_meta(item_ids)
+            
+            for slot_data in equipment.values():
+                item_meta = items_meta.get(slot_data["item_id"])
+                if item_meta and item_meta.get("health_bonus"):
+                    health_bonus += item_meta["health_bonus"]
 
         return base_hp + health_bonus
 
     @staticmethod
-    async def adjust_hp_for_equip(
-        db: AsyncSession, player_id: int, health_bonus: int
-    ) -> int:
+    async def adjust_hp_for_equip(player_id: int, health_bonus: int) -> int:
         """
         Adjust player's current HP when equipping item with health bonus.
 
         Equipping adds to both max HP and current HP.
 
         Args:
-            db: Database session
             player_id: Player ID
             health_bonus: Health bonus from the equipped item
 
@@ -297,40 +290,39 @@ class EquipmentService:
         if health_bonus <= 0:
             return -1  # No adjustment needed
 
-        result = await db.execute(
-            select(Player).where(Player.id == player_id)
-        )
-        player = result.scalar_one_or_none()
-        if not player:
+        gsm = get_game_state_manager()
+        
+        # Get current HP through GSM
+        hp_data = await gsm.get_player_hp(player_id)
+        if not hp_data:
             return -1
-
-        # Add health bonus to current HP
-        player.current_hp += health_bonus
-        await db.commit()
+            
+        current_hp = hp_data.get("current_hp", 0)
+        new_hp = current_hp + health_bonus
+        
+        # Update HP through GSM (handles both cache and database)
+        await gsm.update_player_hp(player_id, new_hp)
 
         logger.info(
             "Adjusted HP for equip",
             extra={
                 "player_id": player_id,
                 "health_bonus": health_bonus,
-                "new_current_hp": player.current_hp,
+                "new_current_hp": new_hp,
             },
         )
 
-        return player.current_hp
+        return new_hp
 
     @staticmethod
-    async def adjust_hp_for_unequip(
-        db: AsyncSession, player_id: int, health_bonus: int
-    ) -> int:
+    async def adjust_hp_for_unequip(player_id: int, health_bonus: int) -> int:
         """
-        Adjust player's current HP when unequipping item with health bonus.
+        Reduce player's current health when removing equipment that provided health bonus.
 
         Unequipping removes from current HP, capped at new max HP.
         Current HP will never drop below 1 from unequipping.
 
         Args:
-            db: Database session
             player_id: Player ID
             health_bonus: Health bonus from the unequipped item
 
@@ -340,22 +332,19 @@ class EquipmentService:
         if health_bonus <= 0:
             return -1  # No adjustment needed
 
-        result = await db.execute(
-            select(Player).where(Player.id == player_id)
-        )
-        player = result.scalar_one_or_none()
-        if not player:
+        gsm = get_game_state_manager()
+        hp_data = await gsm.get_player_hp(player_id)
+        if not hp_data:
             return -1
 
         # Calculate new max HP (after unequipping, so without this item's bonus)
         new_max_hp = await EquipmentService.get_max_hp(player_id)
 
         # Remove health bonus from current HP, cap at new max, min 1
-        new_current_hp = player.current_hp - health_bonus
+        new_current_hp = hp_data["current_hp"] - health_bonus
         new_current_hp = max(1, min(new_current_hp, new_max_hp))
 
-        player.current_hp = new_current_hp
-        await db.commit()
+        await gsm.update_player_hp(player_id, new_current_hp)
 
         logger.info(
             "Adjusted HP for unequip",
@@ -370,14 +359,11 @@ class EquipmentService:
         return new_current_hp
 
     @staticmethod
-    async def can_equip(
-        db: AsyncSession, player_id: int, item: Item
-    ) -> CanEquipResult:
+    async def can_equip(player_id: int, item: Item) -> CanEquipResult:
         """
-        Check if a player meets requirements to equip an item.
+        Check if player meets skill requirements to equip an item.
 
         Args:
-            db: Database session
             player_id: Player ID
             item: Item to check
 
@@ -390,10 +376,12 @@ class EquipmentService:
         if not item.required_skill:
             return CanEquipResult(can_equip=True, reason="OK")
 
-        # Get skill level for equipment requirements
-        state_manager = get_game_state_manager()
-        if state_manager.is_online(player_id):
-            skill_data = await state_manager.get_skill(player_id, item.required_skill)
+        # Check skill level for equipment requirements
+        gsm = get_game_state_manager()
+        
+        if gsm.is_online(player_id):
+            # Player is online, use cached skills
+            skill_data = await gsm.get_skill(player_id, item.required_skill)
             if not skill_data:
                 return CanEquipResult(
                     can_equip=False,
@@ -401,32 +389,23 @@ class EquipmentService:
                 )
             
             current_level = skill_data.get("level", 1)
-            if current_level < item.required_level:
+        else:
+            # Player is offline, get skills from database via GSM
+            skills_data = await gsm.get_skills_offline(player_id)
+            skill_data = skills_data.get(item.required_skill)
+            
+            if not skill_data:
                 return CanEquipResult(
                     can_equip=False,
-                    reason=f"Requires {item.required_skill} level {item.required_level} (you have {current_level})",
+                    reason=f"Missing {item.required_skill} skill",
                 )
-            return CanEquipResult(can_equip=True, reason="OK")
+            
+            current_level = skill_data.get("level", 1)
 
-        # Use GameStateManager for consistent state access
-        result = await db.execute(
-            select(PlayerSkill)
-            .join(Skill)
-            .where(PlayerSkill.player_id == player_id)
-            .where(Skill.name == item.required_skill)
-        )
-        player_skill = result.scalar_one_or_none()
-
-        if not player_skill:
+        if current_level < item.required_level:
             return CanEquipResult(
                 can_equip=False,
-                reason=f"Missing {item.required_skill} skill",
-            )
-
-        if player_skill.current_level < item.required_level:
-            return CanEquipResult(
-                can_equip=False,
-                reason=f"Requires {item.required_skill} level {item.required_level} (you have {player_skill.current_level})",
+                reason=f"Requires {item.required_skill} level {item.required_level} (you have {current_level})",
             )
 
         return CanEquipResult(can_equip=True, reason="OK")
@@ -467,7 +446,7 @@ class EquipmentService:
             return EquipItemResult(success=False, message="Item cannot be equipped")
 
         # Check requirements
-        can_equip = await EquipmentService.can_equip(db, player_id, item)
+        can_equip = await EquipmentService.can_equip(player_id, item)
         if not can_equip.can_equip:
             return EquipItemResult(success=False, message=can_equip.reason)
 

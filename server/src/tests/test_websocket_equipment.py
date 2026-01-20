@@ -224,6 +224,8 @@ class TestEquipUnequipWithRealItems:
         from server.src.services.equipment_service import EquipmentService
         from server.src.services.item_service import ItemService
         from server.src.services.skill_service import SkillService
+        from server.src.services.game_state_manager import init_game_state_manager
+        from server.src.tests.conftest import FakeValkey
         
         # Set up in-memory database
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -237,7 +239,11 @@ class TestEquipUnequipWithRealItems:
         async with AsyncSessionLocal() as session:
             # Sync items and skills to database
             await ItemService.sync_items_to_db(session)
-            await SkillService.sync_skills_to_db(session)
+            
+            # Initialize GSM for SkillService
+            fake_valkey = FakeValkey()
+            init_game_state_manager(fake_valkey, AsyncSessionLocal)
+            await SkillService.sync_skills_to_db()
             
             # Get a weapon item
             bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -259,7 +265,7 @@ class TestEquipUnequipWithRealItems:
             await session.refresh(player)
             
             # Grant skills (needed for level requirements)
-            await SkillService.grant_all_skills_to_player(session, player.id)
+            await SkillService.grant_all_skills_to_player(player.id)
             
             # Add sword to inventory at slot 0
             add_result = await InventoryService.add_item(
@@ -299,6 +305,8 @@ class TestEquipUnequipWithRealItems:
         from server.src.services.equipment_service import EquipmentService
         from server.src.services.item_service import ItemService
         from server.src.services.skill_service import SkillService
+        from server.src.services.game_state_manager import init_game_state_manager
+        from server.src.tests.conftest import FakeValkey
         
         # Set up in-memory database
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -312,7 +320,11 @@ class TestEquipUnequipWithRealItems:
         async with AsyncSessionLocal() as session:
             # Sync items and skills to database
             await ItemService.sync_items_to_db(session)
-            await SkillService.sync_skills_to_db(session)
+            
+            # Initialize GSM for SkillService
+            fake_valkey = FakeValkey()
+            init_game_state_manager(fake_valkey, AsyncSessionLocal)
+            await SkillService.sync_skills_to_db()
             
             # Get a weapon item
             bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
@@ -334,7 +346,7 @@ class TestEquipUnequipWithRealItems:
             await session.refresh(player)
             
             # Grant skills
-            await SkillService.grant_all_skills_to_player(session, player.id)
+            await SkillService.grant_all_skills_to_player(player.id)
             
             # Add sword to inventory and equip it
             await InventoryService.add_item(session, player.id, bronze_sword.id)
@@ -378,6 +390,8 @@ class TestEquipUnequipWithRealItems:
         from server.src.services.equipment_service import EquipmentService
         from server.src.services.item_service import ItemService
         from server.src.services.skill_service import SkillService
+        from server.src.services.game_state_manager import init_game_state_manager
+        from server.src.tests.conftest import FakeValkey
         from server.src.models.skill import PlayerSkill, Skill
         from sqlalchemy.future import select
         
@@ -393,7 +407,11 @@ class TestEquipUnequipWithRealItems:
         async with AsyncSessionLocal() as session:
             # Sync items and skills to database
             await ItemService.sync_items_to_db(session)
-            await SkillService.sync_skills_to_db(session)
+            
+            # Initialize GSM for SkillService
+            fake_valkey = FakeValkey()
+            init_game_state_manager(fake_valkey, AsyncSessionLocal)
+            await SkillService.sync_skills_to_db()
             
             # Get two bronze swords (no level requirement)
             # We'll test swap with same item type - the swap mechanism is the same

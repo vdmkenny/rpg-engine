@@ -98,8 +98,8 @@ async def lifespan(app: FastAPI):
         
         # Sync all active players via GSM
         if active_players:
-            synced_count = await gsm.sync_all_on_shutdown(active_players)
-            logger.info(f"Synced {synced_count} active players to database on shutdown")
+            await gsm.sync_all_on_shutdown()
+            logger.info(f"Synced {len(active_players)} active players to database on shutdown")
     except Exception as e:
         logger.error(f"Error syncing players on shutdown: {e}", exc_info=True)
     

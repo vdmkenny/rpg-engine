@@ -21,7 +21,22 @@ from glide import GlideClient, GlideClientConfiguration, NodeAddress
 from server.src.core.config import settings
 
 # --- PostgreSQL Database Setup ---
-engine = create_async_engine(settings.DATABASE_URL, echo=settings.DATABASE_ECHO, future=True)
+engine = create_async_engine(
+    settings.DATABASE_URL, 
+    echo=settings.DATABASE_ECHO, 
+    future=True,
+    pool_size=settings.DB_POOL_SIZE,           # Persistent connections (default 20)
+    max_overflow=settings.DB_MAX_OVERFLOW,     # Additional connections (default 30, total 50)
+    pool_timeout=settings.DB_POOL_TIMEOUT,     # Wait timeout in seconds (default 30)
+    pool_recycle=settings.DB_POOL_RECYCLE,     # Recycle connections after seconds (default 3600 = 1 hour)
+    pool_pre_ping=settings.DB_POOL_PRE_PING,  # Validate connections before use (default True)
+    connect_args={
+        "server_settings": {
+            "jit": "off",                       # Disable JIT for consistent performance
+            "application_name": "rpg_engine"    # Application name for PostgreSQL logging
+        }
+    }
+)
 
 AsyncSessionLocal = sessionmaker(
     autocommit=False, autoflush=False, bind=engine, class_=AsyncSession
@@ -40,12 +55,22 @@ def reset_engine():
     The old engine's connections will be garbage collected.
     """
     global engine, AsyncSessionLocal
-    # Create a fresh engine with pool_pre_ping to check connections before use
+    # Create a fresh engine with production pool settings
     engine = create_async_engine(
         settings.DATABASE_URL, 
         echo=settings.DATABASE_ECHO, 
         future=True,
-        pool_pre_ping=True,  # Check connections are valid before using
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        pool_timeout=settings.DB_POOL_TIMEOUT,
+        pool_recycle=settings.DB_POOL_RECYCLE,
+        pool_pre_ping=settings.DB_POOL_PRE_PING,
+        connect_args={
+            "server_settings": {
+                "jit": "off",
+                "application_name": "rpg_engine"
+            }
+        }
     )
     AsyncSessionLocal = sessionmaker(
         autocommit=False, autoflush=False, bind=engine, class_=AsyncSession

@@ -29,7 +29,6 @@ from server.src.models.skill import PlayerSkill, Skill
 from server.src.services.map_service import map_manager
 from server.src.services.inventory_service import InventoryService
 from server.src.services.equipment_service import EquipmentService
-from server.src.services.skill_service import SkillService
 from server.src.services.ground_item_service import GroundItemService
 from server.src.services.game_state_manager import get_game_state_manager
 from server.src.services.authentication_service import AuthenticationService
@@ -227,6 +226,12 @@ async def handle_chat_message(
                     "message_id": chat_result.get("message_id")
                 }
             )
+            
+            # Send the processed message back to the sender for echo
+            if "message_data" in chat_result:
+                import msgpack
+                packed_message = msgpack.packb(chat_result["message_data"], use_bin_type=True)
+                await websocket.send_bytes(packed_message)
         else:
             logger.warning(
                 "Chat message rejected by service",
@@ -623,7 +628,7 @@ async def handle_chunk_request(
         await websocket.send_bytes(
             msgpack.packb(error_message.model_dump(), use_bin_type=True)
         )
-            return
+        return
 
         player_data = {k.decode(): v.decode() for k, v in player_data_raw.items()}
         current_map = player_data.get("map_id", settings.DEFAULT_MAP)

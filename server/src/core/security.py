@@ -51,6 +51,26 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
+def verify_token(token: str) -> Optional[TokenData]:
+    """
+    Verify and decode JWT token.
+    
+    Args:
+        token: JWT token string
+        
+    Returns:
+        TokenData if token is valid, None otherwise
+    """
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            return None
+        return TokenData(username=username)
+    except JWTError:
+        return None
+
+
 async def get_current_user(
     db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)
 ) -> Player:

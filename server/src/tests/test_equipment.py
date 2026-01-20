@@ -39,9 +39,9 @@ async def items_synced(session: AsyncSession):
 
 
 @pytest_asyncio.fixture
-async def skills_synced(session: AsyncSession):
+async def skills_synced(session: AsyncSession, gsm):
     """Ensure skills are synced to database."""
-    await SkillService.sync_skills_to_db(session)
+    await SkillService.sync_skills_to_db()
 
 
 @pytest_asyncio.fixture

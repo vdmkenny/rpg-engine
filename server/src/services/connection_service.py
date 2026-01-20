@@ -19,7 +19,8 @@ class ConnectionService:
 
     @staticmethod
     async def initialize_player_connection(
-        db: AsyncSession, player_id: int, username: str
+        db: AsyncSession, player_id: int, username: str, x: int, y: int, 
+        map_id: str, current_hp: int, max_hp: int
     ) -> Dict[str, Any]:
         """
         Initialize a player's WebSocket connection state.
@@ -30,6 +31,11 @@ class ConnectionService:
             db: Database session
             player_id: Player ID
             username: Player username
+            x: Player's X coordinate
+            y: Player's Y coordinate
+            map_id: Player's map ID
+            current_hp: Player's current HP
+            max_hp: Player's maximum HP
 
         Returns:
             Dict with initialization data
@@ -37,32 +43,20 @@ class ConnectionService:
         try:
             state_manager = get_game_state_manager()
 
-            # Get player's position data
-            position_data = await PlayerService.get_player_position(player_id)
-            if not position_data:
-                # Fallback to database position if not in GSM
-                from .player_service import PlayerService
-                player = await PlayerService.get_player_by_id(db, player_id)
-                if player:
-                    position_data = {
-                        "x": player.x_coord,
-                        "y": player.y_coord,
-                        "map_id": player.map_id,
-                        "player_id": player_id
-                    }
-                    # Set initial position in GSM
-                    await state_manager.set_player_position(
-                        player_id, player.x_coord, player.y_coord, player.map_id
-                    )
-                else:
-                    raise ValueError(f"Player {player_id} not found in database")
+            # Use provided position and HP data to initialize GSM state
+            position_data = {
+                "x": x,
+                "y": y,
+                "map_id": map_id,
+                "player_id": player_id
+            }
+            
+            # Set position in GSM
+            await state_manager.set_player_position(player_id, x, y, map_id)
 
-            # Get HP data
-            hp_data = await state_manager.get_player_hp(player_id)
-            if not hp_data:
-                # Initialize HP if not set
-                await state_manager.set_player_hp(player_id, 100, 100)
-                hp_data = {"current_hp": 100, "max_hp": 100}
+            # Set HP data in GSM
+            hp_data = {"current_hp": current_hp, "max_hp": max_hp}
+            await state_manager.set_player_hp(player_id, current_hp, max_hp)
 
             # Get nearby players for initial state
             nearby_players = await PlayerService.get_nearby_players(
@@ -150,7 +144,8 @@ class ConnectionService:
 
     @staticmethod
     async def handle_player_disconnect(
-        db: AsyncSession, player_id: int, username: str
+        db: AsyncSession, username: str, player_map: Optional[str] = None, 
+        manager = None, operation_rate_limiter = None
     ) -> Dict[str, Any]:
         """
         Handle player disconnection cleanup.
@@ -159,13 +154,32 @@ class ConnectionService:
 
         Args:
             db: Database session
-            player_id: Disconnecting player ID
             username: Disconnecting player username
+            player_map: Player's current map (optional)
+            manager: Connection manager instance (optional)
+            operation_rate_limiter: Rate limiter instance (optional)
 
         Returns:
             Dict with disconnection result
         """
         try:
+            # Get player_id from username
+            player = await PlayerService.get_player_by_username(db, username)
+            if not player:
+                logger.warning(
+                    "Player not found during disconnect",
+                    extra={"username": username}
+                )
+                return {
+                    "player_id": None,
+                    "username": username,
+                    "nearby_players_to_notify": [],
+                    "cleanup_completed": False,
+                    "error": "Player not found"
+                }
+            
+            player_id = player.id
+
             # Get nearby players before cleanup for notifications
             nearby_players = await PlayerService.get_nearby_players(
                 player_id, range_tiles=80
@@ -196,6 +210,15 @@ class ConnectionService:
             return disconnection_data
 
         except Exception as e:
+            # Try to get player_id for logging if possible
+            player_id = None
+            try:
+                player = await PlayerService.get_player_by_username(db, username)
+                if player:
+                    player_id = player.id
+            except:
+                pass
+
             logger.error(
                 "Error handling player disconnect",
                 extra={
@@ -205,16 +228,17 @@ class ConnectionService:
                 }
             )
             # Still try to clean up even on error
-            try:
-                await ConnectionService._cleanup_connection_resources(player_id)
-            except Exception as cleanup_error:
-                logger.error(
-                    "Error during cleanup after disconnect error",
-                    extra={
-                        "player_id": player_id,
-                        "cleanup_error": str(cleanup_error)
-                    }
-                )
+            if player_id:
+                try:
+                    await ConnectionService._cleanup_connection_resources(player_id)
+                except Exception as cleanup_error:
+                    logger.error(
+                        "Error during cleanup after disconnect error",
+                        extra={
+                            "player_id": player_id,
+                            "cleanup_error": str(cleanup_error)
+                        }
+                    )
             
             return {
                 "player_id": player_id,
@@ -336,20 +360,26 @@ class ConnectionService:
             existing_players = []
             
             # Get all connected usernames on the map
-            for other_username in manager.connections_by_map.get(map_id, {}):
+            connected_usernames = manager.connections_by_map.get(map_id, {})
+            
+            # In integration tests, this is usually empty, so return early
+            if not connected_usernames:
+                logger.debug(
+                    "No existing players on map",
+                    extra={"map_id": map_id, "exclude_username": exclude_username}
+                )
+                return existing_players
+            
+            # For each connected player (excluding the new one)
+            for other_username in connected_usernames:
                 if other_username != exclude_username:
-                    # Get position using PlayerService instead of direct Valkey
+                    # Get position using PlayerService
                     try:
-                        # First get player ID for this username
-                        from server.src.models.player import Player
-                        from sqlalchemy.future import select
+                        # First get player ID for this username - use PlayerService to avoid direct DB access
+                        player = await PlayerService.get_player_by_username(db, other_username)
                         
-                        query = select(Player.id).where(Player.username == other_username)
-                        result = await db.execute(query)
-                        player_id = result.scalar_one_or_none()
-                        
-                        if player_id:
-                            position_data = await PlayerService.get_player_position(player_id)
+                        if player and PlayerService.is_player_online(player.id):
+                            position_data = await PlayerService.get_player_position(player.id)
                             if position_data:
                                 existing_players.append({
                                     "type": "player",

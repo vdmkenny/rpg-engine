@@ -163,6 +163,38 @@ class Settings(BaseSettings):
         )
     )
 
+    # Chat system settings from config.yml
+    CHAT_GLOBAL_ENABLED: bool = bool(
+        game_config.get("game", {}).get("chat", {}).get("global", {}).get("enabled", True)
+    )
+    CHAT_GLOBAL_ALLOWED_ROLES: List[str] = game_config.get("game", {}).get(
+        "chat", {}
+    ).get("global", {}).get("allowed_roles", ["ADMIN", "MODERATOR"])
+    
+    CHAT_MAX_MESSAGE_LENGTH_LOCAL: int = int(
+        game_config.get("game", {}).get("chat", {}).get("max_message_length", {}).get("local", 280)
+    )
+    CHAT_MAX_MESSAGE_LENGTH_GLOBAL: int = int(
+        game_config.get("game", {}).get("chat", {}).get("max_message_length", {}).get("global", 200)
+    )
+    CHAT_MAX_MESSAGE_LENGTH_DM: int = int(
+        game_config.get("game", {}).get("chat", {}).get("max_message_length", {}).get("dm", 500)
+    )
+    
+    CHAT_RATE_LIMIT_LOCAL: float = float(
+        game_config.get("game", {}).get("chat", {}).get("rate_limits", {}).get("local", 1.0)
+    )
+    CHAT_RATE_LIMIT_GLOBAL: float = float(
+        game_config.get("game", {}).get("chat", {}).get("rate_limits", {}).get("global", 5.0)
+    )
+    CHAT_RATE_LIMIT_DM: float = float(
+        game_config.get("game", {}).get("chat", {}).get("rate_limits", {}).get("dm", 0.5)
+    )
+    
+    CHAT_LOCAL_CHUNK_RADIUS: int = int(
+        game_config.get("game", {}).get("chat", {}).get("local_chunk_radius", 2)
+    )
+
     # HP regeneration settings from config.yml
     HP_REGEN_INTERVAL_TICKS: int = int(
         game_config.get("game", {}).get("hp_regen", {}).get("interval_ticks", 200)
@@ -181,6 +213,13 @@ class Settings(BaseSettings):
 
     # Database settings
     DATABASE_ECHO: bool = os.getenv("DATABASE_ECHO", "").lower() in ("true", "1", "yes")
+    
+    # Database Connection Pool Settings (for production scalability)
+    DB_POOL_SIZE: int = int(os.getenv("DB_POOL_SIZE", "20"))
+    DB_MAX_OVERFLOW: int = int(os.getenv("DB_MAX_OVERFLOW", "30")) 
+    DB_POOL_TIMEOUT: int = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+    DB_POOL_RECYCLE: int = int(os.getenv("DB_POOL_RECYCLE", "3600"))
+    DB_POOL_PRE_PING: bool = os.getenv("DB_POOL_PRE_PING", "true").lower() in ("true", "1", "yes")
 
     @model_validator(mode="after")
     def validate_jwt_secret(self) -> "Settings":

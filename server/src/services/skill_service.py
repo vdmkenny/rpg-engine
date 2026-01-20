@@ -2,28 +2,15 @@
 Service layer for skill operations.
 
 Handles skill synchronization, granting skills to players,
-and experience/level calculations.
+and experience/level calculations using GameStateManager.
 """
 
 from dataclasses import dataclass
-from typing import Optional
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from typing import Optional, Dict, Any, List
 
 from server.src.core.logging_config import get_logger
-from server.src.models.skill import Skill, PlayerSkill
-from server.src.core.skills import (
-    SkillType,
-    get_skill_xp_multiplier,
-    level_for_xp,
-    xp_for_level,
-    xp_to_next_level,
-    progress_to_next_level,
-    MAX_LEVEL,
-    HITPOINTS_START_LEVEL,
-)
+from server.src.core.skills import SkillType
+from server.src.services.game_state_manager import get_game_state_manager
 
 logger = get_logger(__name__)
 
@@ -45,59 +32,35 @@ class LevelUpResult:
 
 
 class SkillService:
-    """Service for managing player skills."""
+    """Service for managing player skills via GameStateManager."""
 
     @staticmethod
-    async def sync_skills_to_db(db: AsyncSession) -> list[Skill]:
+    async def sync_skills_to_db() -> list:
         """
         Ensure all SkillType entries exist in the skills table.
 
         This should be called on server startup to ensure the database
         has all skills defined in the SkillType enum.
 
-        Args:
-            db: Database session
-
         Returns:
             List of all Skill records in the database
         """
-        skill_names = SkillType.all_skill_names()
-
-        # Get existing skills
-        result = await db.execute(select(Skill))
-        existing_skills = {s.name: s for s in result.scalars().all()}
-
-        # Insert missing skills
-        for skill_name in skill_names:
-            if skill_name not in existing_skills:
-                new_skill = Skill(name=skill_name)
-                db.add(new_skill)
-                logger.info(f"Added new skill to database: {skill_name}")
-
-        await db.commit()
-
-        # Return all skills
-        result = await db.execute(select(Skill))
-        return list(result.scalars().all())
+        gsm = get_game_state_manager()
+        return await gsm.sync_skills_to_db_offline()
 
     @staticmethod
-    async def get_skill_id_map(db: AsyncSession) -> dict[str, int]:
+    async def get_skill_id_map() -> Dict[str, int]:
         """
         Get a mapping of skill names to their database IDs.
-
-        Args:
-            db: Database session
 
         Returns:
             Dict mapping lowercase skill name to skill ID
         """
-        result = await db.execute(select(Skill))
-        return {s.name: s.id for s in result.scalars().all()}
+        gsm = get_game_state_manager()
+        return await gsm.get_skill_id_map_offline()
 
     @staticmethod
-    async def grant_all_skills_to_player(
-        db: AsyncSession, player_id: int
-    ) -> list[PlayerSkill]:
+    async def grant_all_skills_to_player(player_id: int) -> list:
         """
         Create PlayerSkill rows for all skills.
 
@@ -109,70 +72,16 @@ class SkillService:
         and idempotency.
 
         Args:
-            db: Database session
             player_id: The player's database ID
 
         Returns:
             List of all PlayerSkill records for the player
         """
-        skill_id_map = await SkillService.get_skill_id_map(db)
-
-        if not skill_id_map:
-            # No skills in database yet, sync them first
-            await SkillService.sync_skills_to_db(db)
-            skill_id_map = await SkillService.get_skill_id_map(db)
-
-        if not skill_id_map:
-            # Still no skills, return empty list
-            return []
-
-        # Calculate XP needed for Hitpoints starting level
-        hitpoints_xp_multiplier = get_skill_xp_multiplier(SkillType.HITPOINTS)
-        hitpoints_start_xp = xp_for_level(HITPOINTS_START_LEVEL, hitpoints_xp_multiplier)
-
-        # Build values for all skills in a single INSERT
-        values = []
-        for skill_name, skill_id in skill_id_map.items():
-            if skill_name == "hitpoints":
-                # Hitpoints starts at level 10
-                values.append({
-                    "player_id": player_id,
-                    "skill_id": skill_id,
-                    "current_level": HITPOINTS_START_LEVEL,
-                    "experience": hitpoints_start_xp,
-                })
-            else:
-                # All other skills start at level 1 with 0 XP
-                values.append({
-                    "player_id": player_id,
-                    "skill_id": skill_id,
-                    "current_level": 1,
-                    "experience": 0,
-                })
-
-        # Use INSERT ON CONFLICT DO NOTHING for idempotency
-        # If the player already has a skill, it won't be overwritten
-        stmt = pg_insert(PlayerSkill).values(values)
-        stmt = stmt.on_conflict_do_nothing(constraint="_player_skill_uc")
-        await db.execute(stmt)
-        await db.commit()
-
-        # Fetch and return all player skills
-        result = await db.execute(
-            select(PlayerSkill).where(PlayerSkill.player_id == player_id)
-        )
-        player_skills = list(result.scalars().all())
-
-        logger.info(
-            "Granted skills to player",
-            extra={"player_id": player_id, "total_skills": len(player_skills)},
-        )
-
-        return player_skills
+        gsm = get_game_state_manager()
+        return await gsm.grant_all_skills_to_player_offline(player_id)
 
     @staticmethod
     async def add_experience(
-        db: AsyncSession,
         player_id: int,
         skill: SkillType,
         xp_amount: int,
@@ -181,9 +90,9 @@ class SkillService:
         Add experience to a player's skill.
 
         Automatically recalculates the level based on new XP total.
+        Handles both online (Valkey) and offline (database) players.
 
         Args:
-            db: Database session
             player_id: The player's database ID
             skill: The skill to add XP to
             xp_amount: Amount of XP to add (must be positive)
@@ -194,170 +103,137 @@ class SkillService:
         if xp_amount <= 0:
             return None
 
+        gsm = get_game_state_manager()
         skill_name = skill.name.lower()
-        xp_multiplier = get_skill_xp_multiplier(skill)
 
-        # Get the skill ID
-        skill_result = await db.execute(select(Skill).where(Skill.name == skill_name))
-        skill_record = skill_result.scalar_one_or_none()
+        # Check if player is online - use Valkey if available
+        if gsm.is_online(player_id):
+            # For online players, update skill in Valkey and mark dirty
+            current_skill = await gsm.get_skill(player_id, skill_name)
+            if not current_skill:
+                logger.warning(
+                    "Player skill not found in Valkey",
+                    extra={"player_id": player_id, "skill": skill_name}
+                )
+                return None
 
-        if skill_record is None:
-            logger.warning(f"Skill not found in database: {skill_name}")
+            from server.src.core.skills import (
+                get_skill_xp_multiplier, level_for_xp, xp_to_next_level, MAX_LEVEL
+            )
+            
+            xp_multiplier = get_skill_xp_multiplier(skill)
+            previous_level = current_skill["level"]
+            previous_xp = current_skill["experience"]
+            
+            # Calculate new XP and level
+            new_xp = previous_xp + xp_amount
+            new_level = level_for_xp(new_xp, xp_multiplier)
+            
+            # Cap at max level
+            if new_level > MAX_LEVEL:
+                new_level = MAX_LEVEL
+            
+            # Update in Valkey (this marks as dirty for database sync)
+            await gsm.set_skill(
+                player_id, skill_name, current_skill["skill_id"], new_level, new_xp
+            )
+            
+            leveled_up = new_level > previous_level
+            if leveled_up:
+                logger.info(
+                    "Player leveled up (online)",
+                    extra={
+                        "player_id": player_id,
+                        "skill": skill_name,
+                        "previous_level": previous_level,
+                        "new_level": new_level,
+                        "xp_gained": xp_amount,
+                    }
+                )
+
+            return LevelUpResult(
+                skill_name=skill.value.name,
+                previous_level=previous_level,
+                new_level=new_level,
+                current_xp=new_xp,
+                xp_to_next=xp_to_next_level(new_xp, xp_multiplier),
+                leveled_up=leveled_up,
+            )
+        else:
+            # For offline players, use database directly
+            result = await gsm.add_experience_offline(player_id, skill_name, xp_amount)
+            if result:
+                return LevelUpResult(
+                    skill_name=result["skill_name"],
+                    previous_level=result["previous_level"],
+                    new_level=result["new_level"],
+                    current_xp=result["current_xp"],
+                    xp_to_next=result["xp_to_next"],
+                    leveled_up=result["leveled_up"],
+                )
             return None
-
-        # Get player's current progress
-        result = await db.execute(
-            select(PlayerSkill).where(
-                PlayerSkill.player_id == player_id,
-                PlayerSkill.skill_id == skill_record.id,
-            )
-        )
-        player_skill = result.scalar_one_or_none()
-
-        if player_skill is None:
-            logger.warning(
-                f"Player does not have skill",
-                extra={"player_id": player_id, "skill": skill_name},
-            )
-            return None
-
-        previous_level = player_skill.current_level
-        previous_xp = player_skill.experience
-
-        # Calculate new XP and level
-        new_xp = previous_xp + xp_amount
-        new_level = level_for_xp(new_xp, xp_multiplier)
-
-        # Cap at max level
-        if new_level > MAX_LEVEL:
-            new_level = MAX_LEVEL
-
-        # Update the record
-        player_skill.experience = new_xp
-        player_skill.current_level = new_level
-
-        await db.commit()
-
-        leveled_up = new_level > previous_level
-        if leveled_up:
-            logger.info(
-                f"Player leveled up",
-                extra={
-                    "player_id": player_id,
-                    "skill": skill_name,
-                    "previous_level": previous_level,
-                    "new_level": new_level,
-                    "xp_gained": xp_amount,
-                },
-            )
-
-        return LevelUpResult(
-            skill_name=skill.value.name,
-            previous_level=previous_level,
-            new_level=new_level,
-            current_xp=new_xp,
-            xp_to_next=xp_to_next_level(new_xp, xp_multiplier),
-            leveled_up=leveled_up,
-        )
 
     @staticmethod
-    async def get_player_skills(
-        db: AsyncSession, player_id: int
-    ) -> list[dict]:
+    async def get_player_skills(player_id: int) -> List[Dict]:
         """
         Fetch all skills for a player with computed metadata.
+        Handles both online and offline players.
 
         Args:
-            db: Database session
             player_id: The player's database ID
 
         Returns:
             List of skill info dicts with name, category, level, xp, etc.
         """
-        result = await db.execute(
-            select(PlayerSkill, Skill)
-            .join(Skill, PlayerSkill.skill_id == Skill.id)
-            .where(PlayerSkill.player_id == player_id)
-        )
-
-        skills_data = []
-        for player_skill, skill in result.all():
-            skill_type = SkillType.from_name(skill.name)
-            if skill_type is None:
-                continue
-
-            xp_multiplier = get_skill_xp_multiplier(skill_type)
-            current_xp = player_skill.experience
-            current_level = player_skill.current_level
-
-            skills_data.append({
-                "name": skill_type.value.name,
-                "category": skill_type.value.category.value,
-                "description": skill_type.value.description,
-                "current_level": current_level,
-                "experience": current_xp,
-                "xp_for_current_level": xp_for_level(current_level, xp_multiplier),
-                "xp_for_next_level": xp_for_level(current_level + 1, xp_multiplier) if current_level < MAX_LEVEL else 0,
-                "xp_to_next_level": xp_to_next_level(current_xp, xp_multiplier),
-                "xp_multiplier": xp_multiplier,
-                "progress_percent": progress_to_next_level(current_xp, xp_multiplier),
-                "max_level": MAX_LEVEL,
-            })
-
-        return skills_data
+        gsm = get_game_state_manager()
+        
+        # Always use offline method for now to ensure consistency
+        # TODO: Add Valkey support for skill metadata computations
+        return await gsm.get_player_skills_offline(player_id)
 
     @staticmethod
-    async def get_total_level(db: AsyncSession, player_id: int) -> int:
+    async def get_total_level(player_id: int) -> int:
         """
         Calculate the sum of all skill levels for a player.
+        Handles both online and offline players.
 
         Args:
-            db: Database session
             player_id: The player's database ID
 
         Returns:
             Total level across all skills
         """
-        result = await db.execute(
-            select(PlayerSkill).where(PlayerSkill.player_id == player_id)
-        )
-        player_skills = result.scalars().all()
-        return sum(ps.current_level for ps in player_skills)
+        gsm = get_game_state_manager()
+        
+        if gsm.is_online(player_id):
+            # For online players, get from Valkey
+            skills = await gsm.get_all_skills(player_id)
+            return sum(skill_data["level"] for skill_data in skills.values())
+        else:
+            # For offline players, use database
+            return await gsm.get_total_level_offline(player_id)
 
     @staticmethod
-    async def get_hitpoints_level(db: AsyncSession, player_id: int) -> int:
+    async def get_hitpoints_level(player_id: int) -> int:
         """
         Get the player's Hitpoints skill level.
+        Handles both online and offline players.
 
         This is the base max HP before equipment bonuses.
 
         Args:
-            db: Database session
             player_id: The player's database ID
 
         Returns:
             Hitpoints level (minimum HITPOINTS_START_LEVEL if not found)
         """
-        # Get the hitpoints skill ID
-        skill_result = await db.execute(
-            select(Skill).where(Skill.name == "hitpoints")
-        )
-        skill_record = skill_result.scalar_one_or_none()
-
-        if skill_record is None:
-            # Skill not synced yet, return default
-            return HITPOINTS_START_LEVEL
-
-        # Get player's hitpoints level
-        result = await db.execute(
-            select(PlayerSkill).where(
-                PlayerSkill.player_id == player_id,
-                PlayerSkill.skill_id == skill_record.id,
-            )
-        )
-        player_skill = result.scalar_one_or_none()
-
-        if player_skill is None:
-            return HITPOINTS_START_LEVEL
-
-        return player_skill.current_level
+        gsm = get_game_state_manager()
+        
+        if gsm.is_online(player_id):
+            # For online players, get from Valkey
+            hitpoints_skill = await gsm.get_skill(player_id, "hitpoints")
+            if hitpoints_skill:
+                return hitpoints_skill["level"]
+            
+        # Fallback to offline method
+        return await gsm.get_hitpoints_level_offline(player_id)

@@ -35,9 +35,24 @@ game:
     x: 25
     y: 25
 
+  # Chat system configuration
+  chat:
+    global:
+      enabled: true
+      allowed_roles: ["ADMIN", "MODERATOR"]  # Roles that can send global messages
+    max_message_length:
+      local: 280      # Local chat character limit
+      global: 200     # Global chat character limit (shorter to prevent spam)
+      dm: 500         # Direct message character limit
+    rate_limits:
+      local: 1.0      # Seconds between local messages
+      global: 5.0     # Seconds between global messages
+      dm: 0.5         # Seconds between DMs
+    local_chunk_radius: 2  # Chunks radius for local chat (32 tile radius with 16x16 chunks)
+
   # Security and rate limiting configuration
   security:
-    # Maximum length of chat messages (longer messages are truncated)
+    # Maximum length of chat messages (longer messages are truncated) - DEPRECATED: Use chat.max_message_length instead
     chat_max_message_length: 500
     # Minimum time between inventory operations (move, sort, drop, pickup) in seconds
     inventory_operation_cooldown: 0.1
