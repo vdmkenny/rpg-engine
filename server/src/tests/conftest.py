@@ -290,10 +290,10 @@ async def gsm(fake_valkey: FakeValkey) -> AsyncGenerator[GameStateManager, None]
 
 @pytest_asyncio.fixture
 async def client(
-    session: AsyncSession, fake_valkey: FakeValkey
+    session: AsyncSession, fake_valkey: FakeValkey, gsm: GameStateManager
 ) -> AsyncGenerator[AsyncClient, None]:
     """
-    Create an HTTP client that uses the test database session and fake Valkey.
+    Create an HTTP client that uses the test database session, fake Valkey, and initialized GSM.
     """
     # Override database dependency
     async def override_get_db():
@@ -342,8 +342,12 @@ def create_test_player(
         # Use PlayerService for proper player creation with skills initialization
         player = await PlayerService.create_player(session, player_data)
         
-        # Update position and map if different from defaults
+        # If we need to modify the player, get a fresh instance and update it
         if x != 10 or y != 10 or map_id != "samplemap" or extra_fields:
+            # Refresh the player to get the latest state
+            await session.refresh(player)
+            
+            # Update fields
             player.x_coord = x
             player.y_coord = y
             player.map_id = map_id
@@ -353,7 +357,7 @@ def create_test_player(
                 if hasattr(player, key):
                     setattr(player, key, value)
             
-            session.add(player)
+            # Commit the changes
             await session.commit()
             await session.refresh(player)
         
