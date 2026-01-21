@@ -6,13 +6,16 @@ import pytest
 import pytest_asyncio
 import msgpack
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Callable, Awaitable, Dict, Any, Optional
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.future import select
-from sqlalchemy import delete
+from sqlalchemy import delete, create_engine, text
+from alembic import command
+from alembic.config import Config
 
 from server.src.main import app
 from server.src.core.database import get_db, get_valkey
@@ -31,8 +34,13 @@ from server.src.services.game_state_manager import (
 # Configure logger for test fixtures
 logger = logging.getLogger(__name__)
 
-# Use SQLite in memory for tests to avoid async connection issues
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+# Use PostgreSQL for tests (production parity)
+# When running inside Docker container, use service names
+# When running locally, connect to Docker containers on localhost  
+TEST_DATABASE_URL = os.getenv(
+    "DATABASE_URL", 
+    "postgresql+asyncpg://rpg_test:rpg_test_password@localhost:5433/rpg_test"
+)
 
 # Global test engine and session maker
 test_engine = None
@@ -209,13 +217,66 @@ class FakeValkey:
         return self._set_data.get(key, set())
 
 
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_db_sync():
+    """Set up test database schema using complete schema reset for maximum isolation."""
+    # Set the DATABASE_URL environment variable for Alembic
+    test_db_url = os.getenv(
+        "DATABASE_URL", 
+        "postgresql+asyncpg://rpg_test:rpg_test_password@localhost:5433/rpg_test"
+    )
+    os.environ["DATABASE_URL"] = test_db_url
+    
+    # For maximum isolation, drop all schema objects and recreate them
+    # This approach is slower but ensures no conflicts between test runs
+    from sqlalchemy import create_engine, text
+    
+    # Use sync engine for schema operations (Alembic compatibility)
+    sync_db_url = test_db_url.replace("+asyncpg", "")  # Remove asyncpg for sync operations
+    sync_engine = create_engine(sync_db_url, echo=False)
+    
+    try:
+        # Drop all schema objects for a clean slate
+        with sync_engine.connect() as conn:
+            logger.info("Dropping all database objects for clean test environment...")
+            
+            # Drop all tables (this will also drop dependent objects)
+            conn.execute(text("DROP SCHEMA public CASCADE"))
+            conn.execute(text("CREATE SCHEMA public"))
+            conn.execute(text("GRANT ALL ON SCHEMA public TO rpg_test"))
+            conn.execute(text("GRANT ALL ON SCHEMA public TO public"))
+            conn.commit()
+            
+        logger.info("Database schema reset successfully")
+        
+        # Run Alembic migrations to create fresh schema
+        alembic_cfg = Config("server/alembic.ini")
+        alembic_cfg.set_main_option("script_location", "server/alembic")
+        
+        # Now run upgrade to create all tables
+        command.upgrade(alembic_cfg, "head") 
+        logger.info("Alembic migrations applied successfully")
+        
+    except Exception as e:
+        logger.error(f"Database setup failed: {e}")
+        raise
+    finally:
+        sync_engine.dispose()
+
+    yield
+    
+    # No cleanup needed - Docker containers will be reset between test sessions
+
+
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def setup_test_db():
-    """Set up test database once per session."""
+    """Set up async database engine and session factory."""
     global test_engine, TestingSessionLocal
 
     test_engine = create_async_engine(
-        TEST_DATABASE_URL, echo=False, connect_args={"check_same_thread": False}
+        TEST_DATABASE_URL, 
+        echo=False,
+        # Remove SQLite-specific connect_args for PostgreSQL
     )
     TestingSessionLocal = sessionmaker(
         autocommit=False,
@@ -224,10 +285,6 @@ async def setup_test_db():
         class_=AsyncSession,
         expire_on_commit=False,
     )
-
-    # Create all tables
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
 
     yield
 
