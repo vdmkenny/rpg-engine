@@ -147,6 +147,17 @@ cd docker && docker-compose up
 
 ## Code Style Guidelines
 
+### CRITICAL RULE: No Legacy Compatibility
+
+**NEVER create legacy compatibility aliases, wrappers, or backward compatibility code.**
+- Do NOT add legacy aliases for renamed functions, classes, or constants
+- Do NOT create backward compatibility layers for protocol changes
+- Do NOT maintain old API endpoints alongside new ones
+- Always update all references when making changes
+- Breaking changes are preferred over legacy compatibility
+
+This ensures the codebase remains clean and maintainable without technical debt from legacy support.
+
 ### Naming Conventions
 
 | Element | Convention | Example |

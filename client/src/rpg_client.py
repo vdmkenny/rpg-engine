@@ -16,7 +16,7 @@ from typing import Optional, Dict, Any, List
 # Import common protocol
 workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(workspace_root)
-from common.src.protocol import MessageType, GameMessage
+from common.src.protocol import MessageType, WSMessage
 
 # Import our separated components
 from game_states import GameState
@@ -142,7 +142,7 @@ class RPGClient:
             return
 
         try:
-            chat_message = GameMessage(
+            chat_message = WSMessage(
                 type=MessageType.SEND_CHAT_MESSAGE,
                 payload={
                     "channel": channel.lower(),
@@ -202,7 +202,7 @@ class RPGClient:
                 )
 
                 # Send authentication message
-                auth_message = GameMessage(
+                auth_message = WSMessage(
                     type=MessageType.AUTHENTICATE,
                     payload={"token": self.jwt_token}
                 )
@@ -718,7 +718,7 @@ class RPGClient:
 
         if direction:
             try:
-                move_message = GameMessage(
+                move_message = WSMessage(
                     type=MessageType.MOVE_INTENT,
                     payload={"direction": direction}
                 )
@@ -785,7 +785,7 @@ class RPGClient:
             return
 
         try:
-            chunk_request = GameMessage(
+            chunk_request = WSMessage(
                 type=MessageType.REQUEST_CHUNKS,
                 payload={
                     "map_id": map_id,
@@ -827,7 +827,7 @@ class RPGClient:
             await self.handle_welcome_message(payload)
         elif msg_type == MessageType.CHUNK_DATA.value:
             self.handle_chunk_data(payload)
-        elif msg_type == MessageType.GAME_STATE_UPDATE.value:
+        elif msg_type == MessageType.EVENT_GAME_STATE_UPDATE.value:
             await self.handle_game_state_update(payload)
         elif msg_type == MessageType.NEW_CHAT_MESSAGE.value:
             self.handle_chat_message(payload)

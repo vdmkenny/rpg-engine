@@ -1,47 +1,38 @@
 """Common protocol definitions shared between client and server."""
 
 from .protocol import (
-    # Core message types
-    GameMessage,
+    # Core message structure
+    WSMessage,
     MessageType,
-    Direction,
-    # Movement
-    MoveIntentPayload,
-    MovementValidator,
-    # Game state
-    GameStateUpdatePayload,
-    # Chunks
-    ChunkRequestPayload,
-    ChunkData,
-    ChunkDataPayload,
-    TileData,
-    # Authentication
+    # Command payloads
     AuthenticatePayload,
-    # Welcome
-    PlayerInfo,
-    GameConfig,
-    WelcomePayload,
-    # Chat
-    SendChatMessagePayload,
-    ChatMessagePayload,
-    # Error
+    MovePayload,
+    ChatSendPayload,
+    InventoryMovePayload,
+    InventorySortPayload,
+    ItemDropPayload,
+    ItemPickupPayload,
+    ItemEquipPayload,
+    ItemUnequipPayload,
+    # Query payloads
+    InventoryQueryPayload,
+    EquipmentQueryPayload,
+    StatsQueryPayload,
+    MapChunksQueryPayload,
+    # Response payloads
+    SuccessPayload,
     ErrorPayload,
-    # Player lifecycle
-    PlayerDisconnectPayload,
-    ServerShutdownPayload,
-    PlayerDiedPayload,
-    PlayerRespawnPayload,
-    # Inventory
-    MoveInventoryItemPayload,
-    SortInventoryPayload,
-    DropItemPayload,
-    # Equipment
-    EquipItemPayload,
-    UnequipItemPayload,
-    # Ground items
-    PickupItemPayload,
-    # Operation results
-    OperationResultPayload,
+    DataPayload,
+    # Event payloads
+    WelcomeEventPayload,
+    StateUpdateEventPayload,
+    GameUpdateEventPayload,
+    ChatMessageEventPayload,
+    PlayerJoinedEventPayload,
+    PlayerLeftEventPayload,
+    ServerShutdownEventPayload,
+    # Error codes
+    ErrorCodes,
 )
 
 from .constants import (
@@ -74,4 +65,4 @@ from .constants import (
     ANIMATION_START,
 )
 
-__version__ = "1.0"
+__version__ = "2.0"
