@@ -130,8 +130,8 @@ class HpService:
         # Update via GSM
         await HpService.set_hp(player_id, new_hp)
 
-        gsm = get_game_state_manager()
-        username = gsm.get_username_by_player_id(player_id) or "unknown"
+        from .player_service import PlayerService
+        username = await PlayerService.get_username_by_player_id(player_id) or "unknown"
 
         logger.info(
             "Dealt damage to player",
@@ -198,8 +198,8 @@ class HpService:
         # Update via GSM
         await HpService.set_hp(player_id, new_hp)
 
-        gsm = get_game_state_manager()
-        username = gsm.get_username_by_player_id(player_id) or "unknown"
+        from .player_service import PlayerService
+        username = await PlayerService.get_username_by_player_id(player_id) or "unknown"
 
         logger.info(
             "Healed player",
@@ -304,8 +304,8 @@ class HpService:
         Returns:
             RespawnResult with new location and HP
         """
-        gsm = get_game_state_manager()
-        username = gsm.get_username_by_player_id(player_id)
+        from .player_service import PlayerService
+        username = await PlayerService.get_username_by_player_id(player_id)
         
         if not username:
             return RespawnResult(
@@ -318,16 +318,13 @@ class HpService:
             )
 
         # Get spawn position
-        map_manager = get_map_manager()
-        spawn_map_id, spawn_x, spawn_y = map_manager.get_default_spawn_position()
+        spawn_map_id, spawn_x, spawn_y = HpService._get_spawn_position()
+        current_hp, max_hp = await HpService.get_hp(player_id)
 
-        # Calculate max HP (equipment was dropped, so just base HP now)
-        max_hp = await EquipmentService.get_max_hp(player_id)
-
+        gsm = get_game_state_manager()
         # Update player position and HP via GSM
         await gsm.set_player_full_state(
             player_id=player_id,
-            username=username,
             x=spawn_x,
             y=spawn_y,
             map_id=spawn_map_id,
@@ -362,10 +359,10 @@ class HpService:
         """
         Execute the full death sequence:
         1. Drop all items at death location
-        2. Broadcast PLAYER_DIED to nearby players
+        2. Broadcast EVENT_PLAYER_DIED to nearby players
         3. Wait for respawn delay
         4. Respawn at spawn point with full HP
-        5. Broadcast PLAYER_RESPAWN
+        5. Broadcast EVENT_PLAYER_RESPAWN
 
         Args:
             player_id: Player's database ID
@@ -375,18 +372,18 @@ class HpService:
         Returns:
             RespawnResult with respawn info
         """
-        gsm = get_game_state_manager()
-        username = gsm.get_username_by_player_id(player_id) or "unknown"
+        from .player_service import PlayerService
+        username = await PlayerService.get_username_by_player_id(player_id) or "unknown"
 
         # Step 1: Handle death (drop items)
         death_map_id, death_x, death_y, items_dropped = await HpService.handle_death(
             player_id
         )
 
-        # Step 2: Broadcast PLAYER_DIED
+        # Step 2: Broadcast EVENT_PLAYER_DIED
         if broadcast_callback:
             await broadcast_callback(
-                "PLAYER_DIED",
+                "EVENT_PLAYER_DIED",
                 {
                     "username": username,
                     "x": death_x,
@@ -403,10 +400,10 @@ class HpService:
         # Step 4: Respawn player
         respawn_result = await HpService.respawn_player(player_id)
 
-        # Step 5: Broadcast PLAYER_RESPAWN
+        # Step 5: Broadcast EVENT_PLAYER_RESPAWN
         if broadcast_callback and respawn_result.success:
             await broadcast_callback(
-                "PLAYER_RESPAWN",
+                "EVENT_PLAYER_RESPAWN",
                 {
                     "username": username,
                     "x": respawn_result.x,
@@ -419,3 +416,13 @@ class HpService:
             )
 
         return respawn_result
+
+    @staticmethod
+    def _get_spawn_position() -> Tuple[str, int, int]:
+        """
+        Get default spawn position from configuration.
+        
+        Returns:
+            Tuple of (map_id, x, y) coordinates for respawn location
+        """
+        return settings.DEFAULT_MAP, settings.DEFAULT_SPAWN_X, settings.DEFAULT_SPAWN_Y

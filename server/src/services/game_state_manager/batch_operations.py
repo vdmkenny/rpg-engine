@@ -64,7 +64,8 @@ class GSMBatchOps:
         logger.info("Starting shutdown sync for all online players")
         
         try:
-            online_players = self._gsm.get_online_player_ids()
+            from ..connection_service import ConnectionService
+            online_players = ConnectionService.get_online_player_ids()
             
             async with self._gsm._db_session() as db:
                 for player_id in online_players:
@@ -163,29 +164,30 @@ class GSMBatchOps:
                             "player_id": player_id,
                             "slot": slot,
                             "item_id": item_data["item_id"],
-                            "quantity": item_data["quantity"], 
-                            "current_durability": item_data["durability"]
+                            "quantity": item_data["quantity"],
+                            "current_durability": item_data["current_durability"]
                         })
                 
                 if inventory_records:
-                    await db.execute(
-                        pg_insert(PlayerInventory).values(inventory_records)
-                    )
+                    await db.execute(pg_insert(PlayerInventory).values(inventory_records))
                 
                 await db.commit()
-                await self.valkey.delete(["dirty:inventory"])
                 
-            logger.debug(
-                "Synced inventories",
-                extra={"players": len(dirty_players), "items": len(inventory_records)}
-            )
+                # Clear dirty flags for processed players
+                for player_id in dirty_players:
+                    await self.valkey.srem("dirty:inventory", str(player_id))
+                
+                logger.debug("Inventory sync completed", extra={"player_count": len(dirty_players)})
             
         except Exception as e:
-            logger.error("Failed to sync inventories", extra={"error": str(e)})
+            logger.error(
+                "Failed to sync inventories",
+                extra={"error": str(e)}
+            )
             raise
-    
+
     async def _sync_equipment(self) -> None:
-        """Sync dirty equipment to database."""
+        """Sync dirty equipment data to database."""
         if not self.valkey:
             return
             
@@ -199,7 +201,7 @@ class GSMBatchOps:
             async with self._gsm._db_session() as db:
                 from server.src.models.item import PlayerEquipment
                 
-                # Delete existing equipment data
+                # Delete existing equipment data for dirty players
                 await db.execute(
                     delete(PlayerEquipment).where(PlayerEquipment.player_id.in_(dirty_players))
                 )
@@ -211,31 +213,31 @@ class GSMBatchOps:
                     for slot, item_data in equipment.items():
                         equipment_records.append({
                             "player_id": player_id,
-                            "equipment_slot": slot,
+                            "slot": slot,
                             "item_id": item_data["item_id"],
-                            "quantity": item_data["quantity"],
-                            "current_durability": item_data["durability"]
+                            "current_durability": item_data.get("current_durability", None)
                         })
                 
                 if equipment_records:
-                    await db.execute(
-                        pg_insert(PlayerEquipment).values(equipment_records)
-                    )
+                    await db.execute(pg_insert(PlayerEquipment).values(equipment_records))
                 
                 await db.commit()
-                await self.valkey.delete(["dirty:equipment"])
                 
-            logger.debug(
-                "Synced equipment", 
-                extra={"players": len(dirty_players), "items": len(equipment_records)}
-            )
+                # Clear dirty flags for processed players
+                for player_id in dirty_players:
+                    await self.valkey.srem("dirty:equipment", str(player_id))
+                
+                logger.debug("Equipment sync completed", extra={"player_count": len(dirty_players)})
             
         except Exception as e:
-            logger.error("Failed to sync equipment", extra={"error": str(e)})
+            logger.error(
+                "Failed to sync equipment",
+                extra={"error": str(e)}
+            )
             raise
-    
+
     async def _sync_skills(self) -> None:
-        """Sync dirty skills to database."""
+        """Sync dirty skills data to database."""
         if not self.valkey:
             return
             
@@ -249,41 +251,48 @@ class GSMBatchOps:
             async with self._gsm._db_session() as db:
                 from server.src.models.skill import PlayerSkill
                 
+                # Delete existing skills data for dirty players
+                await db.execute(
+                    delete(PlayerSkill).where(PlayerSkill.player_id.in_(dirty_players))
+                )
+                
+                # Insert fresh skills data
+                skills_records = []
                 for player_id in dirty_players:
-                    skills = await self._gsm.get_all_skills(player_id)
-                    
+                    skills = await self._gsm.get_skills_offline(player_id)  # Use offline method for consistency
                     for skill_name, skill_data in skills.items():
-                        # Update existing skill record
-                        stmt = (
-                            select(PlayerSkill)
-                            .where(PlayerSkill.player_id == player_id)
-                            .where(PlayerSkill.skill_id == skill_data["skill_id"])
-                        )
-                        result = await db.execute(stmt)
-                        player_skill = result.scalar_one_or_none()
-                        
-                        if player_skill:
-                            player_skill.current_level = skill_data["level"]
-                            player_skill.experience = skill_data["experience"]
+                        skills_records.append({
+                            "player_id": player_id,
+                            "skill_id": skill_data["skill_id"],
+                            "current_level": skill_data["level"],
+                            "experience": skill_data["experience"]
+                        })
+                
+                if skills_records:
+                    await db.execute(pg_insert(PlayerSkill).values(skills_records))
                 
                 await db.commit()
-                await self.valkey.delete(["dirty:skills"])
                 
-            logger.debug(
-                "Synced skills",
-                extra={"players": len(dirty_players)}
-            )
+                # Clear dirty flags for processed players
+                for player_id in dirty_players:
+                    await self.valkey.srem("dirty:skills", str(player_id))
+                
+                logger.debug("Skills sync completed", extra={"player_count": len(dirty_players)})
             
         except Exception as e:
-            logger.error("Failed to sync skills", extra={"error": str(e)})
+            logger.error(
+                "Failed to sync skills",
+                extra={"error": str(e)}
+            )
             raise
-    
+
     async def _sync_ground_items(self) -> None:
-        """Sync dirty ground items to database."""
+        """Sync dirty ground items data to database."""
         if not self.valkey:
             return
             
         try:
+            # Ground items are synced by map, not by player
             dirty_maps_raw = await self.valkey.smembers("dirty:ground_items")
             if not dirty_maps_raw:
                 return
@@ -299,119 +308,119 @@ class GSMBatchOps:
                         delete(GroundItem).where(GroundItem.map_id == map_id)
                     )
                     
-                    # Insert current ground items
+                    # Insert fresh ground items data
                     ground_items = await self._gsm.get_ground_items_on_map(map_id)
-                    
-                    ground_item_records = []
-                    for item in ground_items:
-                        ground_item_records.append({
-                            "id": item["id"],
-                            "map_id": map_id,
-                            "x": item["x"],
-                            "y": item["y"],
-                            "item_id": item["item_id"],
-                            "quantity": item["quantity"],
-                            "current_durability": item["durability"],
-                            "dropped_by_player_id": item.get("dropped_by_player_id"),
-                            "loot_protection_expires_at": item.get("loot_protection_expires_at"),
-                            "despawn_at": item["despawn_at"],
-                            "created_at": item["created_at"]
-                        })
-                    
-                    if ground_item_records:
-                        await db.execute(
-                            pg_insert(GroundItem).values(ground_item_records)
-                        )
+                    if ground_items:
+                        ground_item_records = []
+                        for item_data in ground_items:
+                            ground_item_records.append({
+                                "id": item_data["id"],
+                                "item_id": item_data["item_id"],
+                                "x": item_data["x"],
+                                "y": item_data["y"],
+                                "map_id": item_data["map_id"],
+                                "quantity": item_data["quantity"],
+                                "current_durability": item_data.get("current_durability", None),
+                                "dropped_by": item_data.get("dropped_by", None),
+                                "dropped_at": item_data.get("dropped_at", None),
+                                "protected_until": item_data.get("protected_until", None)
+                            })
+                        
+                        if ground_item_records:
+                            await db.execute(pg_insert(GroundItem).values(ground_item_records))
                 
                 await db.commit()
-                await self.valkey.delete(["dirty:ground_items"])
                 
-            logger.debug(
-                "Synced ground items",
-                extra={"maps": len(dirty_maps)}
-            )
+                # Clear dirty flags for processed maps
+                for map_id in dirty_maps:
+                    await self.valkey.srem("dirty:ground_items", map_id)
+                
+                logger.debug("Ground items sync completed", extra={"map_count": len(dirty_maps)})
             
         except Exception as e:
-            logger.error("Failed to sync ground items", extra={"error": str(e)})
+            logger.error(
+                "Failed to sync ground items",
+                extra={"error": str(e)}
+            )
             raise
-    
+
     async def _sync_single_player_to_db(self, db: AsyncSession, player_id: int) -> None:
-        """Sync a single player's complete state to database."""
+        """
+        Sync all data for a single player to the database.
+        Used during shutdown to ensure data integrity.
+        
+        Args:
+            db: Database session to use
+            player_id: Player ID to sync
+        """
         try:
-            # Import models here to avoid circular imports
             from server.src.models.player import Player
-            from server.src.models.item import PlayerInventory, PlayerEquipment
+            from server.src.models.item import PlayerInventory, PlayerEquipment, GroundItem
             from server.src.models.skill import PlayerSkill
             
-            # Get player from database
-            stmt = select(Player).where(Player.id == player_id)
-            result = await db.execute(stmt)
-            player = result.scalar_one_or_none()
-            
-            if not player:
-                logger.warning("Player not found for sync", extra={"player_id": player_id})
-                return
-            
-            # Update position and HP
+            # Update player position and HP
             position_data = await self._gsm.get_player_position(player_id)
             hp_data = await self._gsm.get_player_hp(player_id)
             
-            if position_data:
-                player.x_coord = position_data["x"]
-                player.y_coord = position_data["y"]
-                player.map_id = position_data["map_id"]
-            
-            if hp_data:
-                player.current_hp = hp_data["current_hp"]
+            if position_data and hp_data:
+                stmt = select(Player).where(Player.id == player_id)
+                result = await db.execute(stmt)
+                player = result.scalar_one_or_none()
+                
+                if player:
+                    player.x_coord = position_data["x"]
+                    player.y_coord = position_data["y"] 
+                    player.map_id = position_data["map_id"]
+                    player.current_hp = hp_data["current_hp"]
             
             # Sync inventory
             await db.execute(delete(PlayerInventory).where(PlayerInventory.player_id == player_id))
             inventory = await self._gsm.get_inventory(player_id)
+            if inventory:
+                inventory_records = []
+                for slot, item_data in inventory.items():
+                    inventory_records.append({
+                        "player_id": player_id,
+                        "slot": slot,
+                        "item_id": item_data["item_id"],
+                        "quantity": item_data["quantity"],
+                        "current_durability": item_data["current_durability"]
+                    })
+                
+                if inventory_records:
+                    await db.execute(pg_insert(PlayerInventory).values(inventory_records))
             
-            inventory_records = []
-            for slot, item_data in inventory.items():
-                inventory_records.append({
-                    "player_id": player_id,
-                    "slot": slot,
-                    "item_id": item_data["item_id"],
-                    "quantity": item_data["quantity"],
-                    "current_durability": item_data["durability"]
-                })
-            
-            if inventory_records:
-                await db.execute(pg_insert(PlayerInventory).values(inventory_records))
-            
-            # Sync equipment
+            # Sync equipment  
             await db.execute(delete(PlayerEquipment).where(PlayerEquipment.player_id == player_id))
             equipment = await self._gsm.get_equipment(player_id)
-            
-            equipment_records = []
-            for slot, item_data in equipment.items():
-                equipment_records.append({
-                    "player_id": player_id,
-                    "equipment_slot": slot,
-                    "item_id": item_data["item_id"],
-                    "quantity": item_data["quantity"],
-                    "current_durability": item_data["durability"]
-                })
-            
-            if equipment_records:
-                await db.execute(pg_insert(PlayerEquipment).values(equipment_records))
+            if equipment:
+                equipment_records = []
+                for slot, item_data in equipment.items():
+                    equipment_records.append({
+                        "player_id": player_id,
+                        "slot": slot,
+                        "item_id": item_data["item_id"],
+                        "current_durability": item_data.get("current_durability", None)
+                    })
+                
+                if equipment_records:
+                    await db.execute(pg_insert(PlayerEquipment).values(equipment_records))
             
             # Sync skills
-            skills = await self._gsm.get_all_skills(player_id)
-            for skill_name, skill_data in skills.items():
-                stmt = (
-                    select(PlayerSkill)
-                    .where(PlayerSkill.player_id == player_id)
-                    .where(PlayerSkill.skill_id == skill_data["skill_id"])
-                )
-                result = await db.execute(stmt)
-                player_skill = result.scalar_one_or_none()
+            await db.execute(delete(PlayerSkill).where(PlayerSkill.player_id == player_id))
+            skills = await self._gsm.get_skills_offline(player_id)
+            if skills:
+                skills_records = []
+                for skill_name, skill_data in skills.items():
+                    skills_records.append({
+                        "player_id": player_id,
+                        "skill_id": skill_data["skill_id"],
+                        "current_level": skill_data["level"],
+                        "experience": skill_data["experience"]
+                    })
                 
-                if player_skill:
-                    player_skill.current_level = skill_data["level"]
-                    player_skill.experience = skill_data["experience"]
+                if skills_records:
+                    await db.execute(pg_insert(PlayerSkill).values(skills_records))
             
             logger.debug("Single player sync completed", extra={"player_id": player_id})
             

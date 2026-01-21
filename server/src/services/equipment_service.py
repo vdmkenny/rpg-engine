@@ -28,6 +28,9 @@ from .ground_item_service import GroundItemService
 from .game_state_manager import get_game_state_manager
 
 if TYPE_CHECKING:
+    from .hp_service import HpService
+
+if TYPE_CHECKING:
     from .game_state_manager import GameStateManager
 
 logger = get_logger(__name__)
@@ -159,7 +162,7 @@ class EquipmentService:
                         equipment_slot=slot.value,
                         item_id=slot_data["item_id"],
                         quantity=slot_data.get("quantity", 1),
-                        current_durability=slot_data.get("durability"),
+                        current_durability=slot_data.get("current_durability"),
                     )
                     eq.item = item  # Attach item data
                     return eq
@@ -202,7 +205,7 @@ class EquipmentService:
         # Get item stats for calculation
         items_stats = {}
         for item_id in item_ids:
-            item_info = state_manager.get_item_meta(item_id)
+            item_info = state_manager.get_cached_item_meta(item_id)
             if item_info:
                 items_stats[item_id] = item_info
         
@@ -383,24 +386,20 @@ class EquipmentService:
             # Player is online, use cached skills
             skill_data = await gsm.get_skill(player_id, item.required_skill)
             if not skill_data:
-                return CanEquipResult(
-                    can_equip=False,
-                    reason=f"Missing {item.required_skill} skill",
-                )
-            
-            current_level = skill_data.get("level", 1)
+                # Player doesn't have skill in cache, assume default level 1
+                current_level = 1
+            else:
+                current_level = skill_data.get("level", 1)
         else:
             # Player is offline, get skills from database via GSM
             skills_data = await gsm.get_skills_offline(player_id)
             skill_data = skills_data.get(item.required_skill)
             
             if not skill_data:
-                return CanEquipResult(
-                    can_equip=False,
-                    reason=f"Missing {item.required_skill} skill",
-                )
-            
-            current_level = skill_data.get("level", 1)
+                # Player doesn't have skill in database, assume default level 1
+                current_level = 1
+            else:
+                current_level = skill_data.get("level", 1)
 
         if current_level < item.required_level:
             return CanEquipResult(
@@ -435,11 +434,13 @@ class EquipmentService:
         state_manager = get_game_state_manager()
         
         # Get item from inventory
-        inv = await InventoryService.get_item_at_slot(db, player_id, inventory_slot)
+        inv = await InventoryService.get_item_at_slot(player_id, inventory_slot)
         if not inv:
             return EquipItemResult(success=False, message="Inventory slot is empty")
 
-        item = inv.item
+        item = await ItemService.get_item_by_id(db, inv.item_id)
+        if not item:
+            return EquipItemResult(success=False, message="Item not found")
 
         # Check if item is equipable
         if not item.equipment_slot:
@@ -476,8 +477,13 @@ class EquipmentService:
             
             if new_total <= max_stack:
                 # All ammo fits in equipped stack
-                current_equipped.quantity = new_total
-                await db.delete(inv)
+                # Update equipment through GSM (preserving durability)
+                current_durability = current_equipped.current_durability or 1.0
+                await state_manager.set_equipment_slot(
+                    player_id, equipment_slot.value, item.id, new_total, current_durability
+                )
+                # Remove the inventory item using service layer
+                await InventoryService.remove_item(player_id, inventory_slot, add_qty)
                 await db.commit()
                 
                 updated_stats = await EquipmentService.get_total_stats(player_id)
@@ -500,9 +506,16 @@ class EquipmentService:
             else:
                 # Partial fit - equip what we can, leave rest in inventory
                 amount_to_add = max_stack - current_qty
-                current_equipped.quantity = max_stack
-                inv.quantity = new_total - max_stack
+                remaining_qty = new_total - max_stack
                 
+                # Update equipment through GSM to max stack
+                current_durability = current_equipped.current_durability or 1.0
+                await state_manager.set_equipment_slot(
+                    player_id, equipment_slot.value, item.id, max_stack, current_durability
+                )
+                
+                # Remove amount_to_add from inventory (leaving remaining_qty)
+                await InventoryService.remove_item(player_id, inventory_slot, amount_to_add)
                 await db.commit()
                 
                 updated_stats = await EquipmentService.get_total_stats(player_id)
@@ -513,13 +526,13 @@ class EquipmentService:
                         "player_id": player_id,
                         "item_id": item.id,
                         "added_qty": amount_to_add,
-                        "remaining_in_inv": inv.quantity,
+                        "remaining_in_inv": remaining_qty,
                     },
                 )
                 
                 return EquipItemResult(
                     success=True,
-                    message=f"Added {amount_to_add} {item.display_name} (stack full at {max_stack}, {inv.quantity} remain in inventory)",
+                    message=f"Added {amount_to_add} {item.display_name} (stack full at {max_stack}, {remaining_qty} remain in inventory)",
                     updated_stats=updated_stats,
                 )
 
@@ -539,8 +552,10 @@ class EquipmentService:
             weapon = await EquipmentService.get_equipped_in_slot(
                 db, player_id, EquipmentSlot.WEAPON
             )
-            if weapon and weapon.item.is_two_handed:
-                items_to_unequip.append(weapon)
+            if weapon:
+                weapon_item = await ItemService.get_item_by_id(db, weapon.item_id)
+                if weapon_item and weapon_item.is_two_handed:
+                    items_to_unequip.append(weapon)
 
         # Add currently equipped item to unequip list (if different from what we're equipping)
         if current_equipped:
@@ -553,7 +568,7 @@ class EquipmentService:
 
         if slots_needed > slots_available:
             # Check for additional free slots
-            inv_count = await InventoryService.get_inventory_count(db, player_id)
+            inv_count = await InventoryService.get_inventory_count(player_id)
             max_slots = settings.INVENTORY_MAX_SLOTS
             free_slots = max_slots - inv_count
             # We get back 1 slot from removing the item we're equipping
@@ -588,30 +603,31 @@ class EquipmentService:
             equipment_slot.value, 
             item.id, 
             equip_quantity if is_stackable_ammo else 1,
-            int(inv.current_durability) if inv.current_durability is not None else None
+            float(inv.durability) if inv.durability is not None else 1.0
         )
 
         # Handle HP adjustment for health bonus changes
         health_bonus_gained = item.health_bonus if item.health_bonus else 0
         health_bonus_lost = 0
         for eq in items_to_unequip:
-            if eq.item.health_bonus:
-                health_bonus_lost += eq.item.health_bonus
+            eq_item = await ItemService.get_item_by_id(db, eq.item_id)
+            if eq_item and eq_item.health_bonus:
+                health_bonus_lost += eq_item.health_bonus
 
         net_health_change = health_bonus_gained - health_bonus_lost
         if net_health_change != 0:
-            current_hp = await state_manager.get_player_hp(player_id)
-            if current_hp is not None:
-                if net_health_change > 0:
-                    # Gained health bonus - add to current HP
-                    new_hp = current_hp + net_health_change
-                else:
-                    # Lost health bonus - reduce current HP, minimum 1
-                    stats = await EquipmentService.get_total_stats(player_id)
-                    max_hp = stats.get("max_hp", 100)
-                    new_hp = max(1, min(current_hp + net_health_change, max_hp))
-                
-                await state_manager.set_player_hp(player_id, new_hp)
+            # Import locally to avoid circular import
+            from .hp_service import HpService
+            
+            current_hp, max_hp = await HpService.get_hp(player_id)
+            if net_health_change > 0:
+                # Gained health bonus - add to current HP
+                new_hp = current_hp + net_health_change
+            else:
+                # Lost health bonus - reduce current HP, minimum 1
+                new_hp = max(1, min(current_hp + net_health_change, max_hp))
+            
+            await HpService.set_hp(player_id, new_hp)
 
         # Get updated stats for return value
         updated_stats = await EquipmentService.get_total_stats(player_id)
@@ -671,12 +687,17 @@ class EquipmentService:
                 message="Nothing equipped in that slot",
             )
 
-        item = equipped.item
+        item = await ItemService.get_item_by_id(db, equipped.item_id)
+        if not item:
+            return UnequipItemResult(
+                success=False,
+                message="Item not found",
+            )
+            
         quantity = equipped.quantity  # Preserve quantity for stackable items (ammo)
 
         # Try to add to inventory (handles stacking for stackable items)
         add_result = await InventoryService.add_item(
-            db=db,
             player_id=player_id,
             item_id=equipped.item_id,
             quantity=quantity,
@@ -692,15 +713,16 @@ class EquipmentService:
 
             # Handle HP adjustment for health_bonus loss
             if health_bonus_lost > 0:
-                current_hp = await state_manager.get_player_hp(player_id)
-                if current_hp is not None:
-                    max_hp = await EquipmentService.get_max_hp(player_id)
-                    new_hp = max(1, min(current_hp - health_bonus_lost, max_hp))
-                    await state_manager.set_player_hp(player_id, new_hp)
+                # Import locally to avoid circular import
+                from .hp_service import HpService
+                
+                current_hp, max_hp = await HpService.get_hp(player_id)
+                new_hp = max(1, min(current_hp - health_bonus_lost, max_hp))
+                await HpService.set_hp(player_id, new_hp)
 
-        updated_stats = await EquipmentService.get_total_stats(player_id)
+            updated_stats = await EquipmentService.get_total_stats(player_id)
 
-        logger.info(
+            logger.info(
                 "Unequipped item to inventory",
                 extra={
                     "player_id": player_id,
@@ -710,7 +732,7 @@ class EquipmentService:
                 },
             )
 
-        return UnequipItemResult(
+            return UnequipItemResult(
                 success=True,
                 message=f"Unequipped {item.display_name}" + (f" x{quantity}" if quantity > 1 else ""),
                 inventory_slot=add_result.slot,
@@ -740,11 +762,12 @@ class EquipmentService:
 
                 # Handle HP adjustment for health_bonus loss
                 if health_bonus_lost > 0:
-                    current_hp = await state_manager.get_player_hp(player_id)
-                    if current_hp is not None:
-                        max_hp = await EquipmentService.get_max_hp(player_id)
-                        new_hp = max(1, min(current_hp - health_bonus_lost, max_hp))
-                        await state_manager.set_player_hp(player_id, new_hp)
+                    # Import locally to avoid circular import
+                    from .hp_service import HpService
+                    
+                    current_hp, max_hp = await HpService.get_hp(player_id)
+                    new_hp = max(1, min(current_hp - health_bonus_lost, max_hp))
+                    await HpService.set_hp(player_id, new_hp)
 
                 updated_stats = await EquipmentService.get_total_stats(player_id)
 
@@ -816,7 +839,11 @@ class EquipmentService:
         if equipped.current_durability is None:
             return None  # Item has no durability
 
-        if equipped.item.is_indestructible:
+        item = await ItemService.get_item_by_id(db, equipped.item_id)
+        if not item:
+            return None
+
+        if item.is_indestructible:
             return equipped.current_durability  # Item cannot degrade
 
         amount = amount * settings.EQUIPMENT_DURABILITY_LOSS_PER_HIT
@@ -870,13 +897,14 @@ class EquipmentService:
         if equipped.current_durability is None:
             return (False, 0)  # Item has no durability
 
-        if equipped.item.max_durability is None:
+        item = await ItemService.get_item_by_id(db, equipped.item_id)
+        if not item or item.max_durability is None:
             return (False, 0)
 
         # Calculate repair cost
-        damage_percent = 1 - (equipped.current_durability / equipped.item.max_durability)
+        damage_percent = 1 - (equipped.current_durability / item.max_durability)
         repair_cost = int(
-            equipped.item.value
+            item.value
             * settings.EQUIPMENT_REPAIR_COST_MULTIPLIER
             * damage_percent
         )
@@ -887,7 +915,7 @@ class EquipmentService:
             slot.value,
             equipped.item_id,
             equipped.quantity,
-            int(equipped.item.max_durability)
+            float(item.max_durability)
         )
 
         logger.info(

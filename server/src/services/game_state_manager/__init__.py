@@ -21,7 +21,7 @@ from server.src.core.logging_config import get_logger
 
 from .state_access import GSMStateAccess
 from .batch_operations import GSMBatchOps  
-from .migration_helpers import GSMMigrationHelpers
+
 
 logger = get_logger(__name__)
 
@@ -110,7 +110,6 @@ class GameStateManager:
         # Initialize helper classes
         self.state_access = GSMStateAccess(self)
         self.batch_ops = GSMBatchOps(self)
-        self.migration = GSMMigrationHelpers(self)
         
         logger.info("GameStateManager initialized")
     
@@ -294,18 +293,6 @@ class GameStateManager:
         """Check if a player is online."""
         return player_id in self._online_players
     
-    def get_online_player_ids(self) -> Set[int]:
-        """Get set of all online player IDs."""
-        return self._online_players.copy()
-    
-    def get_online_player_id_by_username(self, username: str) -> Optional[int]:
-        """Get player ID by username (online players only)."""
-        return self._username_to_id.get(username)
-    
-    def get_username_by_player_id(self, player_id: int) -> Optional[str]:
-        """Get username by player ID."""
-        return self._id_to_username.get(player_id)
-    
     # =========================================================================
     # PLAYER POSITION & HP
     # =========================================================================
@@ -409,14 +396,14 @@ class GameStateManager:
             field_str = _decode_bytes(field)
             value_str = _decode_bytes(value)
             
-            # Convert numeric fields
-            if field_str in ["x", "y", "current_hp", "max_hp", "player_id"]:
+            # Convert numeric fields (excluding player_id which should remain as string for consistency)
+            if field_str in ["x", "y", "current_hp", "max_hp"]:
                 state[field_str] = int(value_str) if value_str.isdigit() else 0
             else:
                 state[field_str] = value_str
         
         # Add username if available
-        username = self.get_username_by_player_id(player_id)
+        username = self._id_to_username.get(player_id)
         if username:
             state["username"] = username
         

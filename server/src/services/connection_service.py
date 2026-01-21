@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.logging_config import get_logger
 from .game_state_manager import get_game_state_manager
 from .player_service import PlayerService
+from .movement_service import MovementService
 
 logger = get_logger(__name__)
 
@@ -51,8 +52,16 @@ class ConnectionService:
                 "player_id": player_id
             }
             
-            # Set position in GSM
-            await state_manager.set_player_position(player_id, x, y, map_id)
+            # Initialize position through MovementService
+            position_success = await MovementService.initialize_player_position(
+                player_id, x, y, map_id
+            )
+            
+            if not position_success:
+                logger.error(
+                    "Failed to initialize player position during connection",
+                    extra={"player_id": player_id, "position": {"x": x, "y": y, "map_id": map_id}}
+                )
 
             # Set HP data in GSM
             hp_data = {"current_hp": current_hp, "max_hp": max_hp}
@@ -296,7 +305,8 @@ class ConnectionService:
             is_online = state_manager.is_online(player_id)
             
             # Verify username matches
-            stored_username = state_manager.get_username_by_player_id(player_id)
+            from .player_service import PlayerService
+            stored_username = await PlayerService.get_username_by_player_id(player_id)
             username_matches = stored_username == username
 
             # Get position data to verify state integrity
@@ -453,3 +463,67 @@ class ConnectionService:
                 "map_id": position_data.get("map_id", "default")
             }
         }
+
+    # =========================================================================
+    # ONLINE PLAYER MANAGEMENT
+    # =========================================================================
+    
+    @staticmethod
+    def get_online_player_ids() -> set[int]:
+        """
+        Get set of all online player IDs.
+        
+        Returns:
+            Set of online player IDs
+        """
+        state_manager = get_game_state_manager()
+        return state_manager._online_players.copy()
+    
+    @staticmethod
+    def get_online_player_id_by_username(username: str) -> Optional[int]:
+        """
+        Get player ID by username for currently connected players.
+        
+        Args:
+            username: Player username to look up
+            
+        Returns:
+            Player ID if online, None otherwise
+        """
+        state_manager = get_game_state_manager()
+        return state_manager._username_to_id.get(username)
+    
+    @staticmethod 
+    def get_all_online_players() -> List[Dict[str, Any]]:
+        """
+        Get all online players with basic info for broadcasting and administration.
+        
+        Returns:
+            List of online player data with player_id and username
+        """
+        state_manager = get_game_state_manager()
+        online_players = []
+        
+        for player_id in state_manager._online_players:
+            username = state_manager._id_to_username.get(player_id)
+            if username:
+                online_players.append({
+                    "player_id": player_id,
+                    "username": username
+                })
+        
+        return online_players
+    
+    @staticmethod
+    def is_player_online(player_id: int) -> bool:
+        """
+        Check if a player is currently connected.
+        
+        Args:
+            player_id: Player ID to check
+            
+        Returns:
+            True if player is online, False otherwise
+        """
+        state_manager = get_game_state_manager()
+        return player_id in state_manager._online_players

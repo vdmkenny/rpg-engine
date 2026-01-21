@@ -37,7 +37,8 @@ class GSMStateAccess:
         if not self.valkey:
             return None
             
-        player_id = self._gsm.get_player_id_by_username(username)
+        from ..connection_service import ConnectionService
+        player_id = ConnectionService.get_online_player_id_by_username(username)
         if not player_id:
             return None
             
@@ -61,7 +62,8 @@ class GSMStateAccess:
             logger.warning("No Valkey connection for HP update", extra={"username": username})
             return
             
-        player_id = self._gsm.get_player_id_by_username(username)
+        from ..connection_service import ConnectionService
+        player_id = ConnectionService.get_online_player_id_by_username(username)
         if not player_id:
             logger.warning("Player ID not found for HP update", extra={"username": username})
             return
@@ -108,7 +110,8 @@ class GSMStateAccess:
         players_on_map = []
         
         # Check all online players for map match
-        online_players = self._gsm.get_online_player_ids()
+        from ..connection_service import ConnectionService
+        online_players = ConnectionService.get_online_player_ids()
         for player_id in online_players:
             state = await self._gsm.get_player_full_state(player_id)
             if state and state.get("map_id") == map_id:
@@ -132,7 +135,8 @@ class GSMStateAccess:
         positions = {}
         
         # Get positions for all online players on the map
-        online_players = self._gsm.get_online_player_ids()
+        from ..connection_service import ConnectionService
+        online_players = ConnectionService.get_online_player_ids()
         for player_id in online_players:
             position = await self._gsm.get_player_position(player_id)
             if position and position.get("map_id") == map_id:

@@ -312,23 +312,8 @@ class ChatService:
             List of all online player data
         """
         try:
-            state_manager = get_game_state_manager()
-            online_players = state_manager.get_online_players()
-
-            recipients = []
-            for player_id in online_players:
-                username = state_manager.get_username_by_id(player_id)
-                if username:
-                    recipients.append({
-                        "player_id": player_id,
-                        "username": username
-                    })
-
-            logger.debug(
-                "Found global chat recipients",
-                extra={"recipient_count": len(recipients)}
-            )
-
+            from .connection_service import ConnectionService
+            recipients = ConnectionService.get_all_online_players()
             return recipients
 
         except Exception as e:
@@ -360,7 +345,7 @@ class ChatService:
             Dict with result status and message details
         """
         import msgpack
-        from common.src.protocol import GameMessage, MessageType
+        from common.src.protocol import WSMessage, MessageType
         
         try:
             channel = payload.get("channel", "local").lower()
@@ -374,9 +359,11 @@ class ChatService:
             if not validation_result["valid"]:
                 # Send system error message to the sender
                 if validation_result.get("system_message"):
-                    system_msg = GameMessage(
-                        type=MessageType.NEW_CHAT_MESSAGE,
-                        payload=validation_result["system_message"]
+                    system_msg = WSMessage(
+                        id=None,  # No correlation ID for events
+                        type=MessageType.EVENT_CHAT_MESSAGE,
+                        payload=validation_result["system_message"],
+                        version="2.0"
                     )
                     packed_message = msgpack.packb(system_msg.model_dump(), use_bin_type=True)
                     await connection_manager.send_personal_message(username, packed_message)
@@ -399,14 +386,16 @@ class ChatService:
             )
             
             # Create the chat message response
-            chat_response = GameMessage(
-                type=MessageType.NEW_CHAT_MESSAGE,
+            chat_response = WSMessage(
+                id=None,  # No correlation ID for events
+                type=MessageType.EVENT_CHAT_MESSAGE,
                 payload={
                     "username": username,
                     "message": processed_message,
                     "channel": channel,
                     "timestamp": time.time()
-                }
+                },
+                version="2.0"
             )
             
             recipients = []
@@ -418,20 +407,37 @@ class ChatService:
                 recipients = ["all_players"]  # Placeholder for metrics
                 
             elif channel == "local":
-                # Get nearby players for local chat
-                nearby_players = await ChatService.get_local_chat_recipients(
-                    player_id, "current_map"  # TODO: Get actual map_id from player state
-                )
+                # Get player's current map for local chat
+                from .game_state_manager import get_game_state_manager
+                gsm = get_game_state_manager()
+                position_data = await gsm.get_player_position(player_id)
                 
-                if nearby_players:
-                    recipient_usernames = [p["username"] for p in nearby_players]
+                if position_data and position_data.get("map_id"):
+                    # Get nearby players for local chat
+                    nearby_players = await ChatService.get_local_chat_recipients(
+                        player_id, position_data["map_id"]
+                    )
+                    
+                    # Always include the sender in local chat (for message confirmation)
+                    recipient_usernames = [username]  # Start with sender
+                    if nearby_players:
+                        recipient_usernames.extend([p["username"] for p in nearby_players])
+                    
+                    # Remove duplicates while preserving order
+                    recipient_usernames = list(dict.fromkeys(recipient_usernames))
+                    
                     packed_message = msgpack.packb(chat_response.model_dump(), use_bin_type=True)
                     await connection_manager.broadcast_to_users(recipient_usernames, packed_message)
                     recipients = recipient_usernames
+                else:
+                    logger.warning(
+                        "Could not get player position for local chat",
+                        extra={"username": username, "player_id": player_id}
+                    )
                     
             elif channel == "dm":
                 # Handle direct message
-                target_username = payload.get("target")
+                target_username = payload.get("recipient")
                 if target_username:
                     recipient_data = await ChatService.get_dm_recipient(db, target_username)
                     if recipient_data:
@@ -443,9 +449,11 @@ class ChatService:
                         error_msg = ChatService.create_system_error_message(
                             f"Player '{target_username}' not found or offline."
                         )
-                        system_response = GameMessage(
-                            type=MessageType.NEW_CHAT_MESSAGE,
-                            payload=error_msg
+                        system_response = WSMessage(
+                            id=None,  # No correlation ID for events
+                            type=MessageType.EVENT_CHAT_MESSAGE,
+                            payload=error_msg,
+                            version="2.0"
                         )
                         packed_message = msgpack.packb(system_response.model_dump(), use_bin_type=True)
                         await connection_manager.send_personal_message(username, packed_message)
@@ -456,12 +464,14 @@ class ChatService:
                         }
                 else:
                     # DM system notification  
-                    dm_response = GameMessage(
-                        type=MessageType.NEW_CHAT_MESSAGE,
+                    dm_response = WSMessage(
+                        id=None,  # No correlation ID for events
+                        type=MessageType.EVENT_CHAT_MESSAGE,
                         payload=ChatService.create_system_error_message(
                             "Direct messages require a target username.",
                             "system"
-                        )
+                        ),
+                        version="2.0"
                     )
                     packed_message = msgpack.packb(dm_response.model_dump(), use_bin_type=True)
                     await connection_manager.send_personal_message(username, packed_message)

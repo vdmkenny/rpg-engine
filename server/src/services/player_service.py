@@ -14,6 +14,7 @@ from ..core.security import get_password_hash
 from ..models.player import Player
 from ..schemas.player import PlayerCreate, PlayerRole
 from ..core.logging_config import get_logger
+from .game_state_manager import get_game_state_manager
 
 if TYPE_CHECKING:
     from .game_state_manager import GameStateManager
@@ -286,8 +287,9 @@ class PlayerService:
             return []
         
         try:
-            # Get all online players on the same map
-            online_players = state_manager.get_online_players()
+            # Get all online players for proximity check
+            from .connection_service import ConnectionService
+            online_players = ConnectionService.get_online_player_ids()
             nearby_players = []
             
             for other_player_id in online_players:
@@ -306,7 +308,7 @@ class PlayerService:
                 if dx <= range_tiles and dy <= range_tiles:
                     nearby_players.append({
                         "player_id": other_player_id,
-                        "username": state_manager.get_username_by_id(other_player_id),
+                        "username": await PlayerService.get_username_by_player_id(other_player_id),
                         "x": other_position["x"],
                         "y": other_position["y"],
                         "map_id": other_position["map_id"]
@@ -467,3 +469,29 @@ class PlayerService:
             Complete Player instance if found, None otherwise
         """
         return await PlayerService.get_player_by_id(db, player_id)
+
+    # =========================================================================
+    # PLAYER IDENTITY LOOKUPS
+    # =========================================================================
+    
+    @staticmethod
+    async def get_username_by_player_id(player_id: int) -> Optional[str]:
+        """
+        Get username by player ID with automatic loading for offline players.
+        
+        Args:
+            player_id: Player ID to look up
+            
+        Returns:
+            Player username if found, None otherwise
+        """
+        state_manager = get_game_state_manager()
+        
+        # Check online players first for performance
+        username = state_manager._id_to_username.get(player_id)
+        if username:
+            return username
+        
+        # Use GSM's auto-loading capability for offline players
+        player_state = await state_manager.get_player_full_state(player_id)
+        return player_state.get("username") if player_state else None

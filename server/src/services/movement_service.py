@@ -229,9 +229,16 @@ class MovementService:
                     "collision": True
                 }
 
-            # Update position in GSM
+            # Update position using MovementService method
             current_time = time.time()
-            await state_manager.set_player_position(player_id, new_x, new_y, map_id)
+            success = await MovementService.set_player_position(player_id, new_x, new_y, map_id)
+            
+            if not success:
+                return {
+                    "success": False,
+                    "reason": "Failed to update player position",
+                    "new_position": None
+                }
             
             # Update movement timestamp (this would need to be added to GSM)
             # For now, we'll track it in the position data
@@ -321,4 +328,209 @@ class MovementService:
                 "can_move": False,
                 "cooldown_remaining": 0,
                 "movement_cooldown": MovementService.MOVEMENT_COOLDOWN
+            }
+
+    @staticmethod
+    async def set_player_position(
+        player_id: int, x: int, y: int, map_id: str
+    ) -> bool:
+        """
+        Set player position in game state.
+
+        Args:
+            player_id: Player ID
+            x: New X coordinate  
+            y: New Y coordinate
+            map_id: Map identifier
+
+        Returns:
+            True if position was updated successfully
+        """
+        state_manager = get_game_state_manager()
+        
+        try:
+            # Get current HP to preserve during position update
+            current_state = await state_manager.get_player_full_state(player_id)
+            if not current_state:
+                logger.error(
+                    "Cannot update position - player not online",
+                    extra={"player_id": player_id}
+                )
+                return False
+
+            current_hp = current_state.get("current_hp", 100)
+            max_hp = current_state.get("max_hp", 100)
+
+            # Update complete state with new position
+            await state_manager.set_player_full_state(
+                player_id, x, y, map_id, int(current_hp), int(max_hp)
+            )
+            
+            logger.debug(
+                "Player position updated successfully",
+                extra={
+                    "player_id": player_id,
+                    "position": {"x": x, "y": y, "map_id": map_id}
+                }
+            )
+            return True
+            
+        except Exception as e:
+            logger.error(
+                "Error setting player position",
+                extra={
+                    "player_id": player_id,
+                    "position": {"x": x, "y": y, "map_id": map_id},
+                    "error": str(e)
+                }
+            )
+            return False
+
+    @staticmethod
+    async def initialize_player_position(
+        player_id: int, x: int, y: int, map_id: str
+    ) -> bool:
+        """
+        Initialize player position during connection setup.
+        This is used during WebSocket connection initialization.
+
+        Args:
+            player_id: Player ID
+            x: Initial X coordinate
+            y: Initial Y coordinate  
+            map_id: Map identifier
+
+        Returns:
+            True if position was initialized successfully
+        """
+        # Use the same logic as set_player_position for now
+        # Could be enhanced with different validation rules if needed
+        return await MovementService.set_player_position(player_id, x, y, map_id)
+
+    @staticmethod
+    async def teleport_player(
+        player_id: int, x: int, y: int, map_id: str, validate_position: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Teleport player to a specific position (admin operation).
+
+        Args:
+            player_id: Player ID
+            x: Target X coordinate
+            y: Target Y coordinate
+            map_id: Target map identifier
+            validate_position: Whether to validate position (default True)
+
+        Returns:
+            Dict with teleport result
+        """
+        try:
+            # Validate position if requested
+            if validate_position:
+                validation_result = await MovementService.validate_position(map_id, x, y)
+                if not validation_result["valid"]:
+                    return {
+                        "success": False,
+                        "reason": validation_result["reason"],
+                        "new_position": None
+                    }
+
+            # Execute teleport
+            success = await MovementService.set_player_position(player_id, x, y, map_id)
+            
+            if success:
+                new_position = {
+                    "x": x,
+                    "y": y,
+                    "map_id": map_id,
+                    "player_id": player_id,
+                    "timestamp": time.time()
+                }
+                
+                logger.info(
+                    "Player teleported successfully",
+                    extra={
+                        "player_id": player_id,
+                        "destination": {"x": x, "y": y, "map_id": map_id}
+                    }
+                )
+                
+                return {
+                    "success": True,
+                    "reason": None,
+                    "new_position": new_position
+                }
+            else:
+                return {
+                    "success": False,
+                    "reason": "Failed to update player position",
+                    "new_position": None
+                }
+                
+        except Exception as e:
+            logger.error(
+                "Error during teleport operation",
+                extra={
+                    "player_id": player_id,
+                    "destination": {"x": x, "y": y, "map_id": map_id},
+                    "error": str(e)
+                }
+            )
+            return {
+                "success": False,
+                "reason": "Internal error during teleport",
+                "new_position": None
+            }
+
+    @staticmethod
+    async def validate_position(map_id: str, x: int, y: int) -> Dict[str, Any]:
+        """
+        Validate that a position is valid on the map.
+
+        Args:
+            map_id: Map identifier
+            x: X coordinate to validate
+            y: Y coordinate to validate
+
+        Returns:
+            Dict with validation result
+        """
+        map_manager = get_map_manager()
+        
+        try:
+            # Use the map manager to check if position is valid
+            # For now, we'll use a simple bounds check - could be enhanced
+            if x < 0 or y < 0:
+                return {
+                    "valid": False,
+                    "reason": "Coordinates cannot be negative"
+                }
+            
+            # Check if the position is valid (use same pattern as collision checking)
+            # We'll do a simple check - see if moving to this position would be valid
+            is_walkable = map_manager.is_valid_move(map_id, x, y, x, y)
+            
+            if not is_walkable:
+                return {
+                    "valid": False,
+                    "reason": "Position is not walkable"
+                }
+            
+            return {
+                "valid": True,
+                "reason": None
+            }
+            
+        except Exception as e:
+            logger.error(
+                "Error validating position",
+                extra={
+                    "map_id": map_id,
+                    "position": {"x": x, "y": y},
+                    "error": str(e)
+                }
+            )
+            return {
+                "valid": False,
+                "reason": "Internal error during position validation"
             }
