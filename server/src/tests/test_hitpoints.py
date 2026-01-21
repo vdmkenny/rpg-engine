@@ -501,11 +501,13 @@ class TestWebSocketHpIntegration:
                 assert "player" in response["payload"]
                 player_data = response["payload"]["player"]
                 
-                # Check HP fields are present
-                assert "current_hp" in player_data
-                assert "max_hp" in player_data
-                assert player_data["current_hp"] == HITPOINTS_START_LEVEL
-                assert player_data["max_hp"] == HITPOINTS_START_LEVEL
+                # Check HP fields are present in nested hp object
+                assert "hp" in player_data
+                hp_data = player_data["hp"]
+                assert "current_hp" in hp_data
+                assert "max_hp" in hp_data
+                assert hp_data["current_hp"] == HITPOINTS_START_LEVEL
+                assert hp_data["max_hp"] == HITPOINTS_START_LEVEL
 
 
 # =============================================================================

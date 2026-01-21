@@ -974,6 +974,7 @@ class TestStackableAmmunition:
 
         # Equip bronze arrows (quantity 100)
         await InventoryService.add_item(player.id, bronze_arrows.id, quantity=100)
+        await EquipmentService.equip_from_inventory(session, player.id, 0)
 
         # Add iron arrows
         await InventoryService.add_item(player.id, iron_arrows.id, quantity=50)

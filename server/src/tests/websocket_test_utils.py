@@ -126,7 +126,7 @@ class WebSocketTestClient:
                 capture.future.cancel()
                 
     async def _process_messages(self):
-        """Process incoming WebSocket messages"""
+        """Process incoming WebSocket messages with improved sync/async handling"""
         try:
             while self.running:
                 try:
@@ -134,10 +134,22 @@ class WebSocketTestClient:
                     if self.is_async_websocket:
                         raw_message = await self.websocket.receive_bytes()
                     else:
-                        # For sync TestClient, we need to run the sync method in an executor
-                        raw_message = await asyncio.get_event_loop().run_in_executor(
-                            None, self.websocket.receive_bytes
-                        )
+                        # For sync TestClient, use a more robust approach with timeout
+                        loop = asyncio.get_event_loop()
+                        try:
+                            # Use a short timeout to prevent indefinite blocking
+                            raw_message = await asyncio.wait_for(
+                                loop.run_in_executor(None, self.websocket.receive_bytes),
+                                timeout=0.1  # 100ms timeout
+                            )
+                        except asyncio.TimeoutError:
+                            # If no message available, continue loop
+                            await asyncio.sleep(0.01)  # Small delay to prevent busy loop
+                            continue
+                        except Exception as e:
+                            # Handle connection errors gracefully
+                            print(f"WebSocket receive error: {e}")
+                            break
                     
                     message_data = msgpack.unpackb(raw_message, raw=False)
                     message = WSMessage(**message_data)
@@ -170,8 +182,9 @@ class WebSocketTestClient:
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
-                    # Log error but continue processing
+                    # Log error and break loop for serious issues
                     print(f"Error processing WebSocket message: {e}")
+                    break
                     
         except asyncio.CancelledError:
             pass
@@ -191,10 +204,13 @@ class WebSocketTestClient:
         if self.is_async_websocket:
             await self.websocket.send_bytes(raw_message)
         else:
-            # For sync TestClient, we need to run the sync method in an executor
-            await asyncio.get_event_loop().run_in_executor(
-                None, self.websocket.send_bytes, raw_message
-            )
+            # For sync TestClient, use improved error handling
+            loop = asyncio.get_event_loop()
+            try:
+                await loop.run_in_executor(None, self.websocket.send_bytes, raw_message)
+            except Exception as e:
+                print(f"WebSocket send error: {e}")
+                raise
         
     async def _wait_for_response(self, correlation_id: str, expected_type: MessageType, timeout: float) -> WSMessage:
         """Wait for a correlated response"""

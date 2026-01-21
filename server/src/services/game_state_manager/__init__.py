@@ -305,7 +305,7 @@ class GameStateManager:
             player_id: Player's database ID
             
         Returns:
-            Dict with x, y, map_id or None if not found
+            Dict with x, y, map_id, last_movement_time or None if not found
         """
         if not self._valkey or not self.is_online(player_id):
             return None
@@ -320,7 +320,8 @@ class GameStateManager:
             return {
                 "x": int(_decode_bytes(raw.get(b"x", b"0"))),
                 "y": int(_decode_bytes(raw.get(b"y", b"0"))), 
-                "map_id": _decode_bytes(raw.get(b"map_id", b""))
+                "map_id": _decode_bytes(raw.get(b"map_id", b"")),
+                "last_movement_time": float(_decode_bytes(raw.get(b"last_move_time", b"0")))
             }
         except (ValueError, TypeError):
             return None
@@ -417,6 +418,7 @@ class GameStateManager:
         map_id: str,
         current_hp: int,
         max_hp: int,
+        update_movement_time: bool = True,
     ) -> None:
         """
         Set complete player state in Valkey.
@@ -428,10 +430,12 @@ class GameStateManager:
             map_id: Map identifier
             current_hp: Current HP
             max_hp: Maximum HP
+            update_movement_time: Whether to update last_move_time (default True)
         """
         if not self._valkey or not self.is_online(player_id):
             return
         
+        import time
         key = PLAYER_KEY.format(player_id=player_id)
         state_data = {
             "x": str(x),
@@ -442,8 +446,18 @@ class GameStateManager:
             "player_id": str(player_id),
             "facing_direction": "DOWN",
             "is_moving": "false",
-            "last_move_time": "0",
         }
+        
+        # Update movement time if requested (for actual movement, not initialization)
+        if update_movement_time:
+            state_data["last_move_time"] = str(time.time())
+        else:
+            # Preserve existing last_move_time or set to 0 if new player
+            existing_data = await self._valkey.hgetall(key)
+            if existing_data and b"last_move_time" in existing_data:
+                state_data["last_move_time"] = _decode_bytes(existing_data[b"last_move_time"])
+            else:
+                state_data["last_move_time"] = "0"
         
         await self._valkey.hset(key, state_data)
         await self._valkey.sadd(DIRTY_POSITION_KEY, [str(player_id)])

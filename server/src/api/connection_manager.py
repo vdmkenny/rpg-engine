@@ -74,15 +74,28 @@ class ConnectionManager:
             message: The message to be sent, as bytes.
         """
         # Get a snapshot of connections to avoid modification during iteration
-        connections = list(self.connections_by_map.get(map_id, {}).values())
+        connections_dict = self.connections_by_map.get(map_id, {})
+        connections_list = list(connections_dict.items())  # Get (client_id, connection) pairs
         
-        for connection in connections:
+        failed_connections = []
+        
+        for client_id, connection in connections_list:
             try:
+                # Validate connection state before sending
+                if hasattr(connection, 'client_state') and connection.client_state == 3:  # WebSocket CLOSED
+                    failed_connections.append(client_id)
+                    continue
+                    
                 await connection.send_bytes(message)
-            except Exception:
-                # Ignore errors sending to disconnected/broken connections
-                # They will be cleaned up by the disconnect handler
-                pass
+                
+            except Exception as e:
+                # Log the error for debugging and mark connection for removal
+                print(f"Failed to send message to client {client_id}: {e}")
+                failed_connections.append(client_id)
+        
+        # Clean up failed connections immediately
+        for client_id in failed_connections:
+            self.disconnect(client_id)
 
     async def broadcast_to_all(self, message: bytes):
         """
@@ -92,14 +105,7 @@ class ConnectionManager:
             message: The message to be sent, as bytes.
         """
         for map_id in list(self.connections_by_map.keys()):
-            connections = list(self.connections_by_map.get(map_id, {}).values())
-            for connection in connections:
-                try:
-                    await connection.send_bytes(message)
-                except Exception:
-                    # Ignore errors sending to disconnected/broken connections
-                    # They will be cleaned up by the disconnect handler
-                    pass
+            await self.broadcast_to_map(map_id, message)
 
     def get_all_connections(self) -> List[Dict[str, str]]:
         """
@@ -126,15 +132,26 @@ class ConnectionManager:
             message: The message to be sent, as bytes.
         """
         username_set = set(usernames)
+        failed_connections = []
+        
         for map_id in list(self.connections_by_map.keys()):
             connections = self.connections_by_map.get(map_id, {})
             for client_id, connection in connections.items():
                 if client_id in username_set:
                     try:
+                        # Validate connection state before sending
+                        if hasattr(connection, 'client_state') and connection.client_state == 3:  # WebSocket CLOSED
+                            failed_connections.append(client_id)
+                            continue
+                            
                         await connection.send_bytes(message)
-                    except Exception:
-                        # Ignore errors sending to disconnected/broken connections
-                        pass
+                    except Exception as e:
+                        print(f"Failed to send message to user {client_id}: {e}")
+                        failed_connections.append(client_id)
+        
+        # Clean up failed connections
+        for client_id in failed_connections:
+            self.disconnect(client_id)
 
     async def send_personal_message(self, username: str, message: bytes):
         """
@@ -148,10 +165,15 @@ class ConnectionManager:
         if map_id and username in self.connections_by_map[map_id]:
             connection = self.connections_by_map[map_id][username]
             try:
+                # Validate connection state before sending
+                if hasattr(connection, 'client_state') and connection.client_state == 3:  # WebSocket CLOSED
+                    self.disconnect(username)
+                    return
+                    
                 await connection.send_bytes(message)
-            except Exception:
-                # Ignore errors sending to disconnected/broken connections
-                pass
+            except Exception as e:
+                print(f"Failed to send personal message to {username}: {e}")
+                self.disconnect(username)
 
     def clear(self):
         """

@@ -135,6 +135,47 @@ cd docker && docker-compose -f docker-compose.test.yml down
 
 **IMPORTANT FOR AI AGENTS**: When running tests, ALWAYS run integration tests as well. Use the full integration test workflow above to ensure both unit tests and WebSocket integration tests pass. Never skip integration tests when verifying changes.
 
+### Testing Infrastructure Migration Status
+
+**IMPORTANT - CURRENT STATE**: The project is currently in a **migration phase** from dual testing infrastructure to PostgreSQL-only testing.
+
+**Current Infrastructure (Temporary)**:
+- **Unit Tests**: SQLite in-memory database (`conftest.py` default)
+- **Integration Tests**: PostgreSQL via Docker (`docker-compose.test.yml`)
+- **Known Issue**: Schema differences between SQLite and PostgreSQL cause some integration tests to fail with "no such table" errors
+
+**Target Infrastructure (In Progress)**:
+- **All Tests**: PostgreSQL via Docker (production parity)
+- **Benefits**: Eliminates schema mismatches, ensures production parity, unified test environment
+- **Tradeoff**: 2-3x slower test execution (acceptable for reliability gains)
+
+**Recommended Approach During Migration**:
+- **For reliable testing**: Always use Docker PostgreSQL environment
+- **For quick iteration**: Local SQLite tests work for most unit tests
+- **For integration validation**: MUST use Docker environment
+
+### Migration Progress Tracking
+
+**Phase 1: Infrastructure Documentation** ✅ COMPLETED
+- [x] Document current dual-infrastructure state
+- [x] Identify schema mismatch issues
+- [x] Establish migration roadmap
+
+**Phase 2: SQLite Dependency Removal** 📋 PLANNED  
+- [ ] Remove `aiosqlite` from pyproject.toml
+- [ ] Update conftest.py to use PostgreSQL URL
+- [ ] Validate core unit tests with PostgreSQL
+
+**Phase 3: Alembic Integration** 📋 PLANNED
+- [ ] Implement per-test schema reset using Alembic
+- [ ] Create auto-managed container lifecycle
+- [ ] Performance optimization
+
+**Phase 4: Documentation Finalization** 📋 PLANNED
+- [ ] Remove migration notices
+- [ ] Update all testing references to PostgreSQL-only
+- [ ] Add developer experience enhancements
+
 ### Running the Application
 
 ```bash
@@ -360,12 +401,29 @@ class Player(Base):
 
 ## Testing Patterns
 
+**MIGRATION IN PROGRESS**: Currently migrating to PostgreSQL-only testing for full production parity.
+
+Current patterns:
 - Use `pytest` with `pytest-asyncio` for async tests
 - Use `httpx.AsyncClient` for API testing
 - Use `starlette.testclient.TestClient` for WebSocket testing
 - Override dependencies with `app.dependency_overrides`
-- Use SQLite in-memory database for tests
+- **TRANSITIONAL**: SQLite in-memory database for unit tests (being phased out)
+- **TARGET**: PostgreSQL via Docker for all tests (production parity)
 - Use `FakeValkey` class for in-memory Valkey testing
+
+**During Migration Period**:
+```python
+# Current SQLite approach (unit tests only)
+@pytest_asyncio.fixture
+async def session():
+    # Uses SQLite in-memory for fast unit testing
+    
+# Target PostgreSQL approach (all tests)  
+@pytest_asyncio.fixture
+async def pg_session():
+    # Uses Docker PostgreSQL for production parity
+```
 
 ```python
 @pytest_asyncio.fixture
@@ -384,6 +442,43 @@ async def fake_valkey() -> FakeValkey:
     valkey = FakeValkey()
     yield valkey
     valkey.clear()
+```
+
+### Testing Troubleshooting During Migration
+
+**Common Migration-Related Issues**:
+
+1. **"no such table: items" in integration tests**:
+   - **Root Cause**: Integration tests use PostgreSQL schema while unit tests use SQLite
+   - **Immediate Fix**: Use Docker environment: `docker exec docker-server-1 pytest -v`
+   - **Permanent Solution**: Complete PostgreSQL migration (in progress)
+
+2. **Schema differences between environments**:
+   - **Symptom**: Tests pass locally but fail in Docker, or vice versa  
+   - **Cause**: SQLite and PostgreSQL handle schemas, constraints, and data types differently
+   - **Resolution**: Use consistent PostgreSQL environment for both unit and integration tests
+
+3. **Performance differences**:
+   - **SQLite**: ~0.1s per test, ~30-60s full suite
+   - **PostgreSQL**: ~0.3-0.5s per test, ~45-90s full suite  
+   - **Expected**: 2-3x slower execution is acceptable for production parity benefits
+
+**Pre-Migration Workflow (Current)**:
+```bash
+# For unit tests (fast but not production-parity)
+pytest server/src/tests/test_equipment.py -v
+
+# For integration tests (production-parity but slower)
+cd docker && docker-compose -f docker-compose.test.yml up -d --build
+docker exec docker-server-1 bash -c "cd server && alembic upgrade head"  
+docker exec docker-server-1 bash -c "RUN_INTEGRATION_TESTS=1 pytest -v"
+```
+
+**Post-Migration Workflow (Target)**:
+```bash
+# All tests use PostgreSQL (unified, production-parity)
+./scripts/run_tests.sh  # Auto-managed containers + migrations
+./scripts/run_integration_tests.sh  # WebSocket tests included
 ```
 
 ## Game Loop Architecture

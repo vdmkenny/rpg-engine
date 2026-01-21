@@ -50,7 +50,6 @@ class IItemManager(ABC):
     @abstractmethod
     async def add_item_to_inventory(
         self,
-        db: AsyncSession,
         player_id: int,
         item_id: int,
         quantity: int = 1,
@@ -62,7 +61,6 @@ class IItemManager(ABC):
     @abstractmethod
     async def remove_item_from_inventory(
         self,
-        db: AsyncSession,
         player_id: int,
         slot: int,
         quantity: int = 1,
@@ -73,7 +71,6 @@ class IItemManager(ABC):
     @abstractmethod
     async def move_item_in_inventory(
         self,
-        db: AsyncSession,
         player_id: int,
         from_slot: int,
         to_slot: int,
@@ -85,7 +82,6 @@ class IItemManager(ABC):
     @abstractmethod
     async def equip_item(
         self,
-        db: AsyncSession,
         player_id: int,
         inventory_slot: int,
     ) -> EquipItemResult:
@@ -95,7 +91,6 @@ class IItemManager(ABC):
     @abstractmethod
     async def unequip_item(
         self,
-        db: AsyncSession,
         player_id: int,
         equipment_slot: EquipmentSlot,
         map_id: Optional[str] = None,
@@ -176,7 +171,6 @@ class ItemManager(IItemManager):
 
     async def add_item_to_inventory(
         self,
-        db: AsyncSession,
         player_id: int,
         item_id: int,
         quantity: int = 1,
@@ -187,6 +181,8 @@ class ItemManager(IItemManager):
         
         Delegates to existing InventoryService for compatibility while providing
         the unified interface. Future iterations will inline the logic.
+        
+        Note: This method follows GSM architecture patterns - no database sessions.
         """
         from server.src.services.inventory_service import InventoryService
         
@@ -199,7 +195,6 @@ class ItemManager(IItemManager):
 
     async def remove_item_from_inventory(
         self,
-        db: AsyncSession,
         player_id: int,
         slot: int,
         quantity: int = 1,
@@ -215,7 +210,6 @@ class ItemManager(IItemManager):
 
     async def move_item_in_inventory(
         self,
-        db: AsyncSession,
         player_id: int,
         from_slot: int,
         to_slot: int,
@@ -231,7 +225,6 @@ class ItemManager(IItemManager):
 
     async def equip_item(
         self,
-        db: AsyncSession,
         player_id: int,
         inventory_slot: int,
     ) -> EquipItemResult:
@@ -246,20 +239,24 @@ class ItemManager(IItemManager):
         5. Update equipment stats
         
         Maintains atomicity via GSM state operations.
+        
+        Note: EquipmentService still uses legacy db parameter - needs architectural update.
         """
         from server.src.services.equipment_service import EquipmentService
         
-        # For now, delegate to existing EquipmentService
-        # Future: inline logic for better transaction control
-        return await EquipmentService.equip_from_inventory(
-            db=db,
-            player_id=player_id,
-            inventory_slot=inventory_slot,
-        )
+        # TEMP: EquipmentService still expects db parameter (architectural inconsistency)
+        # This is a structural issue that needs full service migration
+        from server.src.core.database import AsyncSessionLocal
+        
+        async with AsyncSessionLocal() as session:
+            return await EquipmentService.equip_from_inventory(
+                db=session,
+                player_id=player_id,
+                inventory_slot=inventory_slot,
+            )
 
     async def unequip_item(
         self,
-        db: AsyncSession,
         player_id: int,
         equipment_slot: EquipmentSlot,
         map_id: Optional[str] = None,
@@ -275,17 +272,23 @@ class ItemManager(IItemManager):
         3. If inventory full, drop to ground (if position provided)
         4. Adjust HP for health bonus loss
         5. Update equipment stats
+        
+        Note: EquipmentService still uses legacy db parameter - needs architectural update.
         """
         from server.src.services.equipment_service import EquipmentService
         
-        return await EquipmentService.unequip_to_inventory(
-            db=db,
-            player_id=player_id,
-            equipment_slot=equipment_slot,
-            map_id=map_id,
-            player_x=player_x,
-            player_y=player_y,
-        )
+        # TEMP: EquipmentService still expects db parameter (architectural inconsistency)
+        from server.src.core.database import AsyncSessionLocal
+        
+        async with AsyncSessionLocal() as session:
+            return await EquipmentService.unequip_to_inventory(
+                db=session,
+                player_id=player_id,
+                equipment_slot=equipment_slot,
+                map_id=map_id,
+                player_x=player_x,
+                player_y=player_y,
+            )
 
     async def drop_item(
         self,

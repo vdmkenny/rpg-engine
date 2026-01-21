@@ -195,16 +195,41 @@ class MovementService:
         Returns:
             Dict with movement result and new position
         """
-        state_manager = get_game_state_manager()
-        
         try:
+            state_manager = get_game_state_manager()
+            
+            # Validate direction first
+            if not MovementService.is_valid_direction(direction):
+                return {
+                    "success": False,
+                    "reason": "invalid_direction",
+                    "new_position": None,
+                    "current_position": None
+                }
+
+            # Check movement cooldown
+            cooldown_check = await MovementService.validate_movement_cooldown(player_id)
+            
+            if not cooldown_check["can_move"]:
+                # Get current position to include in error response
+                current_position = await state_manager.get_player_position(player_id)
+                return {
+                    "success": False,
+                    "reason": "rate_limited",
+                    "new_position": None,
+                    "current_position": current_position,
+                    "cooldown_remaining": cooldown_check["cooldown_remaining"]
+                }
+
             # Get current position
             current_position = await state_manager.get_player_position(player_id)
+            
             if not current_position:
                 return {
                     "success": False,
-                    "reason": "Player not online",
-                    "new_position": None
+                    "reason": "player_not_online",
+                    "new_position": None,
+                    "current_position": None
                 }
 
             current_x = current_position["x"]
@@ -224,8 +249,9 @@ class MovementService:
             if not collision_check["valid"]:
                 return {
                     "success": False,
-                    "reason": collision_check["reason"],
+                    "reason": "blocked",
                     "new_position": None,
+                    "current_position": current_position,
                     "collision": True
                 }
 
@@ -236,13 +262,13 @@ class MovementService:
             if not success:
                 return {
                     "success": False,
-                    "reason": "Failed to update player position",
-                    "new_position": None
+                    "reason": "position_update_failed",
+                    "new_position": None,
+                    "current_position": current_position
                 }
             
-            # Update movement timestamp (this would need to be added to GSM)
-            # For now, we'll track it in the position data
-            
+            # Update movement timestamp in GSM by updating the position data with timestamp
+            old_position = {"x": current_x, "y": current_y, "map_id": map_id}
             new_position = {
                 "x": new_x,
                 "y": new_y,
@@ -265,6 +291,7 @@ class MovementService:
                 "success": True,
                 "reason": None,
                 "new_position": new_position,
+                "old_position": old_position,
                 "collision": False
             }
 
@@ -274,13 +301,15 @@ class MovementService:
                 extra={
                     "player_id": player_id,
                     "direction": direction,
-                    "error": str(e)
+                    "error": str(e),
+                    "error_type": type(e).__name__
                 }
             )
             return {
                 "success": False,
-                "reason": "Internal error during movement execution",
-                "new_position": None
+                "reason": "internal_error",
+                "new_position": None,
+                "current_position": None
             }
 
     @staticmethod
@@ -332,7 +361,7 @@ class MovementService:
 
     @staticmethod
     async def set_player_position(
-        player_id: int, x: int, y: int, map_id: str
+        player_id: int, x: int, y: int, map_id: str, update_movement_time: bool = True
     ) -> bool:
         """
         Set player position in game state.
@@ -342,6 +371,7 @@ class MovementService:
             x: New X coordinate  
             y: New Y coordinate
             map_id: Map identifier
+            update_movement_time: Whether to update last_move_time timestamp
 
         Returns:
             True if position was updated successfully
@@ -352,25 +382,29 @@ class MovementService:
             # Get current HP to preserve during position update
             current_state = await state_manager.get_player_full_state(player_id)
             if not current_state:
-                logger.error(
-                    "Cannot update position - player not online",
-                    extra={"player_id": player_id}
+                # Player doesn't have existing state (new player) - use default HP values
+                logger.debug(
+                    "Initializing position for player without existing state",
+                    extra={"player_id": player_id, "position": {"x": x, "y": y, "map_id": map_id}}
                 )
-                return False
-
-            current_hp = current_state.get("current_hp", 100)
-            max_hp = current_state.get("max_hp", 100)
+                current_hp = 100  # Default HP for new players
+                max_hp = 100      # Default max HP for new players
+            else:
+                # Player has existing state - preserve current HP values
+                current_hp = current_state.get("current_hp", 100)
+                max_hp = current_state.get("max_hp", 100)
 
             # Update complete state with new position
             await state_manager.set_player_full_state(
-                player_id, x, y, map_id, int(current_hp), int(max_hp)
+                player_id, x, y, map_id, int(current_hp), int(max_hp), update_movement_time
             )
             
             logger.debug(
                 "Player position updated successfully",
                 extra={
                     "player_id": player_id,
-                    "position": {"x": x, "y": y, "map_id": map_id}
+                    "position": {"x": x, "y": y, "map_id": map_id},
+                    "movement_timestamp_updated": update_movement_time
                 }
             )
             return True
@@ -403,9 +437,8 @@ class MovementService:
         Returns:
             True if position was initialized successfully
         """
-        # Use the same logic as set_player_position for now
-        # Could be enhanced with different validation rules if needed
-        return await MovementService.set_player_position(player_id, x, y, map_id)
+        # Use set_player_position with update_movement_time=False for initialization
+        return await MovementService.set_player_position(player_id, x, y, map_id, update_movement_time=False)
 
     @staticmethod
     async def teleport_player(

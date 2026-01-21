@@ -273,6 +273,27 @@ class WebSocketHandler:
     async def _handle_cmd_move(self, message: WSMessage) -> None:
         """Handle CMD_MOVE - player movement with collision detection"""
         try:
+            # Early validation - ensure player is properly initialized
+            from server.src.services.game_state_manager import get_game_state_manager
+            gsm = get_game_state_manager()
+            
+            if not gsm.is_online(self.player_id):
+                logger.warning(
+                    "Player attempted movement while not online",
+                    extra={
+                        "player_id": self.player_id,
+                        "username": getattr(self, 'username', 'unknown'),
+                        "message_id": message.id
+                    }
+                )
+                await self._send_error_response(
+                    message.id,
+                    ErrorCodes.MOVE_RATE_LIMITED,
+                    "system",
+                    "Player not properly initialized - please reconnect"
+                )
+                return
+            
             payload = MovePayload(**message.payload)
             
             # Execute movement using service layer
@@ -306,24 +327,85 @@ class WebSocketHandler:
             else:
                 # Movement failed (blocked or rate limited)
                 reason = movement_result.get("reason", "unknown")
+                
+                # Map reasons to appropriate error codes
+                if reason == "rate_limited":
+                    error_code = ErrorCodes.MOVE_RATE_LIMITED
+                    error_category = "rate_limit"
+                    error_message = f"Movement cooldown active"
+                    details = {
+                        "current_position": movement_result.get("current_position"),
+                        "cooldown_remaining": movement_result.get("cooldown_remaining", 0)
+                    }
+                    suggested_action = "Wait before moving again"
+                elif reason == "blocked":
+                    error_code = ErrorCodes.MOVE_COLLISION_DETECTED  
+                    error_category = "validation"
+                    error_message = "Movement blocked by obstacle"
+                    details = {"current_position": movement_result.get("current_position")}
+                    suggested_action = None
+                elif reason == "invalid_direction":
+                    error_code = ErrorCodes.MOVE_INVALID_DIRECTION
+                    error_category = "validation"
+                    error_message = "Invalid movement direction"
+                    details = {"current_position": movement_result.get("current_position")}
+                    suggested_action = None
+                else:
+                    error_code = ErrorCodes.MOVE_RATE_LIMITED
+                    error_category = "system"
+                    error_message = f"Movement failed: {reason}"
+                    details = {"current_position": movement_result.get("current_position")}
+                    suggested_action = None
+                
                 await self._send_error_response(
                     message.id,
-                    ErrorCodes.MOVE_COLLISION_DETECTED if reason == "blocked" else ErrorCodes.MOVE_INVALID_DIRECTION,
-                    "validation" if reason == "blocked" else "rate_limit",
-                    f"Movement {reason}",
-                    details={"current_position": movement_result.get("current_position")},
-                    suggested_action="Wait before moving again" if reason == "rate_limited" else None
+                    error_code,
+                    error_category,
+                    error_message,
+                    details=details,
+                    suggested_action=suggested_action
                 )
                 
         except Exception as e:
+            import traceback
+            
             logger.error(
-                "Error handling movement command",
+                "Movement command processing failed - comprehensive diagnostic",
                 extra={
                     "username": self.username,
+                    "player_id": self.player_id,
+                    "message_payload": message.payload,
+                    "message_id": message.id,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc(),
+                    "websocket_state": getattr(self.websocket, 'client_state', 'unknown')
                 }
             )
+            
+            # Try to get current player position for additional context
+            try:
+                from server.src.services.game_state_manager import get_game_state_manager
+                gsm = get_game_state_manager()
+                current_pos = await gsm.get_player_position(self.player_id)
+                
+                logger.info(
+                    "Player position context during movement failure",
+                    extra={
+                        "username": self.username,
+                        "player_id": self.player_id,
+                        "current_position": current_pos
+                    }
+                )
+            except Exception as pos_error:
+                logger.warning(
+                    "Could not retrieve player position for movement error context",
+                    extra={
+                        "username": self.username,
+                        "error": str(pos_error)
+                    }
+                )
+            
             await self._send_error_response(
                 message.id,
                 ErrorCodes.MOVE_RATE_LIMITED,
@@ -336,6 +418,9 @@ class WebSocketHandler:
         try:
             payload = ChatSendPayload(**message.payload)
             
+            # Access the global connection manager
+            global manager
+            
             # Process chat message using service
             chat_result = await ChatService.handle_chat_message(
                 self.db, self.player_id, self.username, payload.model_dump(), manager
@@ -346,14 +431,15 @@ class WebSocketHandler:
                     message.id,
                     {
                         "channel": chat_result["channel"],
-                        "message": chat_result["message"]
+                        "message": chat_result["message_data"]["payload"]["message"] if "message_data" in chat_result else ""
                     }
                 )
                 
-                # Broadcast via protocol
-                await self._broadcast_chat_message(
-                    chat_result,
-                    {
+                # Chat broadcasting is handled by the ChatService directly
+                logger.info(
+                    "Chat message processed",
+                    extra={
+                        "username": self.username,
                         "channel": chat_result["channel"],
                         "recipient_count": len(chat_result.get("recipients", [])),
                         "message_id": chat_result.get("message_id")
@@ -397,33 +483,6 @@ class WebSocketHandler:
                 "system",
                 "Chat processing failed"
             )
-            
-            if chat_result["success"]:
-                await self._send_success_response(
-                    message.id,
-                    {
-                        "channel": chat_result["channel"],
-                        "message": chat_result["message"]
-                    }
-                )
-                
-                logger.info(
-                    "Chat message processed",
-                    extra={
-                        "username": self.username,
-                        "channel": chat_result["channel"],
-                        "recipient_count": len(chat_result.get("recipients", [])),
-                        "message_id": chat_result.get("message_id")
-                    }
-                )
-            else:
-                await self._send_error_response(
-                    message.id,
-                    ErrorCodes.CHAT_MESSAGE_TOO_LONG,
-                    "validation",
-                    chat_result.get("reason", "Chat message rejected"),
-                    details={"channel": payload.channel}
-                )
             
         except Exception as e:
             logger.error(
@@ -987,15 +1046,111 @@ class WebSocketHandler:
     async def _send_message(self, message: WSMessage) -> None:
         """Send WebSocket message with msgpack encoding"""
         try:
-            packed_message = msgpack.packb(message.model_dump(), use_bin_type=True)
-            await self.websocket.send_bytes(packed_message)
+            # Log message structure before serialization for debugging
+            logger.debug(
+                "Attempting to send WebSocket message",
+                extra={
+                    "username": self.username,
+                    "message_type": message.type,
+                    "payload_keys": list(message.payload.keys()) if message.payload else None,
+                    "correlation_id": message.id,
+                    "payload_size": len(str(message.payload)) if message.payload else 0
+                }
+            )
+            
+            # Separate serialization from sending to isolate failure point
+            try:
+                message_dump = message.model_dump()
+                packed_message = msgpack.packb(message_dump, use_bin_type=True)
+                
+                logger.debug(
+                    "Message serialization successful",
+                    extra={
+                        "username": self.username,
+                        "message_type": message.type,
+                        "serialized_size": len(packed_message),
+                        "correlation_id": message.id
+                    }
+                )
+                
+            except Exception as serialize_error:
+                logger.error(
+                    "Message serialization failed",
+                    extra={
+                        "username": self.username,
+                        "message_type": message.type,
+                        "correlation_id": message.id,
+                        "error": str(serialize_error),
+                        "error_type": type(serialize_error).__name__,
+                        "message_dump": str(message_dump)[:500]  # Truncate for logging
+                    }
+                )
+                raise
+            
+            # Attempt WebSocket sending with connection health check
+            try:
+                # Check connection state before attempting to send
+                if hasattr(self.websocket, 'client_state'):
+                    # WebSocket states: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
+                    if self.websocket.client_state == 3:  # CLOSED
+                        logger.warning(
+                            "Attempted to send message on closed WebSocket",
+                            extra={
+                                "username": self.username,
+                                "message_type": message.type,
+                                "correlation_id": message.id
+                            }
+                        )
+                        # Clean up connection from manager
+                        from server.src.api.websockets import manager
+                        manager.disconnect(self.username)
+                        raise ConnectionError("WebSocket connection is closed")
+                    elif self.websocket.client_state == 2:  # CLOSING
+                        logger.warning(
+                            "Attempted to send message on closing WebSocket",
+                            extra={
+                                "username": self.username,
+                                "message_type": message.type,
+                                "correlation_id": message.id
+                            }
+                        )
+                        raise ConnectionError("WebSocket connection is closing")
+                
+                await self.websocket.send_bytes(packed_message)
+                
+                logger.debug(
+                    "WebSocket message sent successfully",
+                    extra={
+                        "username": self.username,
+                        "message_type": message.type,
+                        "correlation_id": message.id
+                    }
+                )
+                
+            except Exception as send_error:
+                logger.error(
+                    "WebSocket sending failed",
+                    extra={
+                        "username": self.username,
+                        "message_type": message.type,
+                        "correlation_id": message.id,
+                        "error": str(send_error),
+                        "error_type": type(send_error).__name__,
+                        "websocket_state": getattr(self.websocket, 'client_state', 'unknown')
+                    }
+                )
+                
+                # Clean up connection on send failure
+                from server.src.api.websockets import manager
+                manager.disconnect(self.username)
+                raise
             
             # Track outbound message
             metrics.track_websocket_message(message.type.value, "outbound")
             
         except Exception as e:
             logger.error(
-                "Error sending WebSocket message",
+                "Error sending WebSocket message - outer catch",
                 extra={
                     "username": self.username,
                     "message_type": message.type,

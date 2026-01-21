@@ -5,6 +5,7 @@ Test fixtures and configuration for the RPG server tests.
 import pytest
 import pytest_asyncio
 import msgpack
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Callable, Awaitable, Dict, Any, Optional
 from httpx import AsyncClient, ASGITransport
@@ -15,7 +16,7 @@ from sqlalchemy import delete
 
 from server.src.main import app
 from server.src.core.database import get_db, get_valkey
-from server.src.models.base import Base
+from server.src.models import Base
 from server.src.models.player import Player
 from server.src.models.item import Item, GroundItem, PlayerInventory, PlayerEquipment
 from server.src.models.skill import Skill, PlayerSkill
@@ -26,6 +27,9 @@ from server.src.services.game_state_manager import (
     init_game_state_manager,
     reset_game_state_manager,
 )
+
+# Configure logger for test fixtures
+logger = logging.getLogger(__name__)
 
 # Use SQLite in memory for tests to avoid async connection issues
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -249,15 +253,38 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
         finally:
             # Clean up data created during the test
             # Order matters due to foreign key constraints
-            await session_obj.rollback()  # Rollback any uncommitted changes first
-            await session_obj.execute(delete(GroundItem))
-            await session_obj.execute(delete(PlayerInventory))
-            await session_obj.execute(delete(PlayerEquipment))
-            await session_obj.execute(delete(PlayerSkill))
-            await session_obj.execute(delete(Player))
-            # Don't delete Item table - it's static data synced on startup
-            await session_obj.commit()
-            await session_obj.close()
+            try:
+                # Check if session is still active before cleanup
+                if not session_obj.is_active:
+                    logger.warning("Session is not active during test cleanup")
+                else:
+                    await session_obj.rollback()  # Rollback any uncommitted changes first
+                    await session_obj.execute(delete(GroundItem))
+                    await session_obj.execute(delete(PlayerInventory))
+                    await session_obj.execute(delete(PlayerEquipment))
+                    await session_obj.execute(delete(PlayerSkill))
+                    await session_obj.execute(delete(Player))
+                    # Don't delete Item table - it's static data synced on startup
+                    await session_obj.commit()
+                
+            except Exception as cleanup_error:
+                logger.warning(
+                    f"Error during test session cleanup: {cleanup_error}",
+                    extra={"error_type": type(cleanup_error).__name__}
+                )
+                try:
+                    await session_obj.rollback()
+                except Exception:
+                    pass  # Ignore rollback errors during cleanup
+                    
+            finally:
+                try:
+                    await session_obj.close()
+                except Exception as close_error:
+                    logger.warning(
+                        f"Error closing test session: {close_error}",
+                        extra={"error_type": type(close_error).__name__}
+                    )
 
 
 @pytest_asyncio.fixture(scope="function")
