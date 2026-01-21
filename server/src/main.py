@@ -17,7 +17,7 @@ from server.src.services.game_state_manager import (
     init_game_state_manager,
     get_game_state_manager,
 )
-from common.src.protocol import MessageType, GameMessage, ServerShutdownPayload
+from common.src.protocol import MessageType, WSMessage
 
 # Initialize logging and metrics as early as possible
 setup_logging()
@@ -47,6 +47,19 @@ async def lifespan(app: FastAPI):
     # Initialize GameStateManager as the single source of truth
     gsm = init_game_state_manager(valkey, AsyncSessionLocal)
     
+    # Sync items to database and load item cache for reference data
+    try:
+        # Ensure all ItemType entries exist in database
+        async with AsyncSessionLocal() as session:
+            from server.src.services.item_service import ItemService
+            await ItemService.sync_items_to_db(session)
+        
+        # Load item metadata cache (permanent cache for reference data)
+        items_cached = await gsm.load_item_cache_from_db()
+        logger.info(f"Loaded {items_cached} items to cache")
+    except Exception as e:
+        logger.warning(f"Could not load item cache: {e}")
+    
     # Load ground items from database to Valkey via GSM
     try:
         ground_items_loaded = await gsm.load_ground_items_from_db()
@@ -67,12 +80,14 @@ async def lifespan(app: FastAPI):
     logger.info("RPG Server shutting down")
     
     # Broadcast SERVER_SHUTDOWN to all connected clients
-    shutdown_message = GameMessage(
-        type=MessageType.SERVER_SHUTDOWN,
-        payload=ServerShutdownPayload(
-            reason="Server shutting down",
-            reconnect_seconds=30,
-        ).model_dump(),
+    shutdown_message = WSMessage(
+        id=None,  # No correlation ID needed for broadcast events
+        type=MessageType.EVENT_SERVER_SHUTDOWN,
+        payload={
+            "message": "Server shutting down",
+            "countdown_seconds": 30,
+        },
+        version="2.0"
     )
     packed_shutdown = msgpack.packb(shutdown_message.model_dump(), use_bin_type=True)
     
@@ -92,7 +107,8 @@ async def lifespan(app: FastAPI):
         active_players = {}
         for map_id, map_connections in websockets.manager.connections_by_map.items():
             for username in map_connections.keys():
-                player_id = gsm.get_player_id_by_username(username)
+                from .services.connection_service import ConnectionService
+                player_id = ConnectionService.get_online_player_id_by_username(username)
                 if player_id:
                     active_players[username] = player_id
         
@@ -129,12 +145,18 @@ The main server for the 2D RPG game.
 - **Real-time Communication**: A WebSocket endpoint at `/ws` for gameplay.
 
 ### WebSocket Protocol (`/ws`)
-- **Transport**: `msgpack` for efficient serialization.
+- **Transport**: `msgpack` for efficient serialization with correlation ID support.
+- **Features**: 
+    - Unified request/response patterns with correlation IDs
+    - Structured error codes and handling
+    - Enhanced state update system with broadcasting targets
+    - Rate limiting with per-operation cooldowns
 - **Handshake**:
     1. Client connects to `/ws`.
-    2. Client sends a binary `msgpack` message containing an auth token.
-    3. Server validates the token and sends a `WELCOME` message.
-- **Communication**: All subsequent messages follow the `GameMessage` schema defined in the `common` package.
+    2. Client sends a binary `msgpack` message with `CMD_AUTHENTICATE` type.
+    3. Server responds with `RESP_SUCCESS` or `RESP_ERROR`.
+    4. Server sends `EVENT_WELCOME` on successful authentication.
+- **Communication**: All messages follow the `WSMessage` envelope with correlation ID support.
 """
 
 app = FastAPI(

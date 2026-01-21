@@ -42,12 +42,6 @@ from common.src.protocol import MessageType
 
 
 @pytest_asyncio.fixture
-async def items_synced(session: AsyncSession):
-    """Ensure items are synced to database."""
-    await ItemService.sync_items_to_db(session)
-
-
-@pytest_asyncio.fixture
 async def skills_synced(session: AsyncSession, gsm):
     """Ensure skills are synced to database."""
     await SkillService.sync_skills_to_db()
@@ -99,15 +93,9 @@ async def player_with_gsm(
         .join(Skill, PlayerSkill.skill_id == Skill.id)
         .where(PlayerSkill.player_id == player.id)
     )
-    skills = []
-    for player_skill, skill in result.all():
-        skills.append({
-            "skill_name": skill.name,
-            "skill_id": skill.id,
-            "level": player_skill.current_level,
-            "experience": player_skill.experience,
-        })
-    await gsm.load_skills_to_valkey(player.id, skills)
+    
+    # Grant all skills to player using proper server initialization method
+    await gsm.grant_all_skills_to_player_offline(player.id)
     
     return player
 
@@ -501,7 +489,7 @@ class TestWebSocketHpIntegration:
             # Connect via WebSocket and authenticate
             with client.websocket_connect("/ws") as websocket:
                 auth_message = {
-                    "type": MessageType.AUTHENTICATE.value,
+                    "type": MessageType.CMD_AUTHENTICATE,
                     "payload": {"token": token},
                 }
                 websocket.send_bytes(msgpack.packb(auth_message, use_bin_type=True))
@@ -509,7 +497,7 @@ class TestWebSocketHpIntegration:
                 response_bytes = websocket.receive_bytes()
                 response = msgpack.unpackb(response_bytes, raw=False)
                 
-                assert response["type"] == MessageType.WELCOME.value
+                assert response["type"] == MessageType.EVENT_WELCOME
                 assert "player" in response["payload"]
                 player_data = response["payload"]["player"]
                 

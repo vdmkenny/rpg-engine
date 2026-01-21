@@ -2,8 +2,9 @@
 SQLAlchemy models for skills.
 """
 
-from sqlalchemy import Column, Integer, String, BigInteger, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import relationship
+from typing import List
+from sqlalchemy import String, BigInteger, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 
@@ -18,11 +19,11 @@ class Skill(Base):
 
     __tablename__ = "skills"
 
-    id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True, nullable=False, index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)
 
-    player_skills = relationship(
-        "PlayerSkill", back_populates="skill", cascade="all, delete-orphan"
+    player_skills: Mapped[List["PlayerSkill"]] = relationship(
+        back_populates="skill", cascade="all, delete-orphan"
     )
 
     def __repr__(self):
@@ -43,15 +44,15 @@ class PlayerSkill(Base):
 
     __tablename__ = "player_skills"
 
-    id = Column(Integer, primary_key=True)
-    player_id = Column(Integer, ForeignKey("players.id"), nullable=False, index=True)
-    skill_id = Column(Integer, ForeignKey("skills.id"), nullable=False, index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    skill_id: Mapped[int] = mapped_column(ForeignKey("skills.id"), index=True)
 
-    current_level = Column(Integer, default=1, nullable=False)
-    experience = Column(BigInteger, default=0, nullable=False)
+    current_level: Mapped[int] = mapped_column(default=1)
+    experience: Mapped[int] = mapped_column(BigInteger, default=0)
 
-    player = relationship("Player", back_populates="skills")
-    skill = relationship("Skill", back_populates="player_skills")
+    player: Mapped["Player"] = relationship(back_populates="skills")
+    skill: Mapped["Skill"] = relationship(back_populates="player_skills")
 
     __table_args__ = (
         UniqueConstraint("player_id", "skill_id", name="_player_skill_uc"),

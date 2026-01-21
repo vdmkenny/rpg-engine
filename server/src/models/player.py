@@ -2,8 +2,10 @@
 SQLAlchemy models for players.
 """
 
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func, Enum as SAEnum
-from sqlalchemy.orm import relationship
+from datetime import datetime
+from typing import Optional, List
+from sqlalchemy import String, Boolean, DateTime, func, Enum as SAEnum
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 from ..schemas.player import PlayerRole
 
@@ -11,43 +13,42 @@ from ..schemas.player import PlayerRole
 class Player(Base):
     __tablename__ = "players"
 
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    username: Mapped[str] = mapped_column(String, unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String)
 
     # Permissions and Status
-    role = Column(
+    role: Mapped[PlayerRole] = mapped_column(
         SAEnum(PlayerRole, name="playerrole", create_type=False),
         default=PlayerRole.PLAYER,
-        nullable=False,
     )
-    is_banned = Column(Boolean, default=False, nullable=False)
-    timeout_until = Column(DateTime(timezone=True), nullable=True)
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
+    timeout_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
 
     # Position (will also be in Valkey for hot access)
-    x_coord = Column(Integer, nullable=False)
-    y_coord = Column(Integer, nullable=False)
-    map_id = Column(String, nullable=False)
+    x_coord: Mapped[int] = mapped_column()
+    y_coord: Mapped[int] = mapped_column()
+    map_id: Mapped[str] = mapped_column(String)
 
     # Hitpoints (current HP, persisted - max HP derived from Hitpoints skill + equipment)
-    current_hp = Column(Integer, nullable=False, default=10)
+    current_hp: Mapped[int] = mapped_column(default=10)
 
     # Relationships
-    skills = relationship(
-        "PlayerSkill", back_populates="player", cascade="all, delete-orphan"
+    skills: Mapped[List["PlayerSkill"]] = relationship(
+        back_populates="player", cascade="all, delete-orphan"
     )
-    inventory = relationship(
-        "PlayerInventory", back_populates="player", cascade="all, delete-orphan"
+    inventory: Mapped[List["PlayerInventory"]] = relationship(
+        back_populates="player", cascade="all, delete-orphan"
     )
-    equipment = relationship(
-        "PlayerEquipment", back_populates="player", cascade="all, delete-orphan"
+    equipment: Mapped[List["PlayerEquipment"]] = relationship(
+        back_populates="player", cascade="all, delete-orphan"
     )
-    dropped_items = relationship(
-        "GroundItem", back_populates="dropped_by_player", cascade="all, delete-orphan"
+    dropped_items: Mapped[List["GroundItem"]] = relationship(
+        back_populates="dropped_by_player", cascade="all, delete-orphan"
     )
 
     def __init__(self, **kwargs):

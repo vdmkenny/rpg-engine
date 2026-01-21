@@ -29,12 +29,6 @@ from server.src.services.game_state_manager import GameStateManager
 
 
 @pytest_asyncio.fixture
-async def items_synced(session: AsyncSession):
-    """Ensure items are synced to database."""
-    await ItemService.sync_items_to_db(session)
-
-
-@pytest_asyncio.fixture
 async def player_for_ground_items(
     session: AsyncSession, gsm: GameStateManager, create_test_player, items_synced
 ):

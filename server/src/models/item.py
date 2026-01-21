@@ -2,9 +2,9 @@
 SQLAlchemy models for items, inventory, equipment, and ground items.
 """
 
+from datetime import datetime
+from typing import Optional, List
 from sqlalchemy import (
-    Column,
-    Integer,
     String,
     Boolean,
     DateTime,
@@ -13,7 +13,7 @@ from sqlalchemy import (
     Index,
     func,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 
@@ -28,66 +28,66 @@ class Item(Base):
 
     __tablename__ = "items"
 
-    id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True, nullable=False, index=True)
-    display_name = Column(String, nullable=False)
-    description = Column(String, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String)
+    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Item classification
-    category = Column(String, nullable=False)  # ItemCategory value
-    rarity = Column(String, nullable=False, default="common")  # ItemRarity value
-    equipment_slot = Column(String, nullable=True)  # EquipmentSlot value
+    category: Mapped[str] = mapped_column(String)  # ItemCategory value
+    rarity: Mapped[str] = mapped_column(String, default="common")  # ItemRarity value
+    equipment_slot: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # EquipmentSlot value
 
     # Item properties
-    max_stack_size = Column(Integer, default=1, nullable=False)  # 1 = not stackable
-    is_two_handed = Column(Boolean, default=False, nullable=False)
-    max_durability = Column(Integer, nullable=True)  # NULL = no durability
-    is_indestructible = Column(Boolean, default=False, nullable=False)
-    is_tradeable = Column(Boolean, default=True, nullable=False)
+    max_stack_size: Mapped[int] = mapped_column(default=1)  # 1 = not stackable
+    is_two_handed: Mapped[bool] = mapped_column(Boolean, default=False)
+    max_durability: Mapped[Optional[int]] = mapped_column(nullable=True)  # NULL = no durability
+    is_indestructible: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_tradeable: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Requirements
-    required_skill = Column(String, nullable=True)  # RequiredSkill value
-    required_level = Column(Integer, default=1, nullable=False)
+    required_skill: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # RequiredSkill value
+    required_level: Mapped[int] = mapped_column(default=1)
 
     # Ammunition
-    ammo_type = Column(String, nullable=True)  # AmmoType value
+    ammo_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # AmmoType value
 
     # Value
-    value = Column(Integer, default=0, nullable=False)
+    value: Mapped[int] = mapped_column(default=0)
 
     # Combat stats (offensive)
-    attack_bonus = Column(Integer, default=0, nullable=False)
-    strength_bonus = Column(Integer, default=0, nullable=False)
-    ranged_attack_bonus = Column(Integer, default=0, nullable=False)
-    ranged_strength_bonus = Column(Integer, default=0, nullable=False)
-    magic_attack_bonus = Column(Integer, default=0, nullable=False)
-    magic_damage_bonus = Column(Integer, default=0, nullable=False)
+    attack_bonus: Mapped[int] = mapped_column(default=0)
+    strength_bonus: Mapped[int] = mapped_column(default=0)
+    ranged_attack_bonus: Mapped[int] = mapped_column(default=0)
+    ranged_strength_bonus: Mapped[int] = mapped_column(default=0)
+    magic_attack_bonus: Mapped[int] = mapped_column(default=0)
+    magic_damage_bonus: Mapped[int] = mapped_column(default=0)
 
     # Combat stats (defensive)
-    physical_defence_bonus = Column(Integer, default=0, nullable=False)
-    magic_defence_bonus = Column(Integer, default=0, nullable=False)
+    physical_defence_bonus: Mapped[int] = mapped_column(default=0)
+    magic_defence_bonus: Mapped[int] = mapped_column(default=0)
 
     # Other stats
-    health_bonus = Column(Integer, default=0, nullable=False)
-    speed_bonus = Column(Integer, default=0, nullable=False)
+    health_bonus: Mapped[int] = mapped_column(default=0)
+    speed_bonus: Mapped[int] = mapped_column(default=0)
 
     # Gathering stats
-    mining_bonus = Column(Integer, default=0, nullable=False)
-    woodcutting_bonus = Column(Integer, default=0, nullable=False)
-    fishing_bonus = Column(Integer, default=0, nullable=False)
+    mining_bonus: Mapped[int] = mapped_column(default=0)
+    woodcutting_bonus: Mapped[int] = mapped_column(default=0)
+    fishing_bonus: Mapped[int] = mapped_column(default=0)
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    inventory_items = relationship(
-        "PlayerInventory", back_populates="item", cascade="all, delete-orphan"
+    inventory_items: Mapped[List["PlayerInventory"]] = relationship(
+        back_populates="item", cascade="all, delete-orphan"
     )
-    equipment_items = relationship(
-        "PlayerEquipment", back_populates="item", cascade="all, delete-orphan"
+    equipment_items: Mapped[List["PlayerEquipment"]] = relationship(
+        back_populates="item", cascade="all, delete-orphan"
     )
-    ground_items = relationship(
-        "GroundItem", back_populates="item", cascade="all, delete-orphan"
+    ground_items: Mapped[List["GroundItem"]] = relationship(
+        back_populates="item", cascade="all, delete-orphan"
     )
 
     def __repr__(self):
@@ -106,17 +106,17 @@ class PlayerInventory(Base):
 
     __tablename__ = "player_inventory"
 
-    id = Column(Integer, primary_key=True)
-    player_id = Column(Integer, ForeignKey("players.id"), nullable=False, index=True)
-    item_id = Column(Integer, ForeignKey("items.id"), nullable=False, index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
 
-    slot = Column(Integer, nullable=False)  # 0-27 for 28-slot inventory
-    quantity = Column(Integer, default=1, nullable=False)
-    current_durability = Column(Integer, nullable=True)  # NULL if item has no durability
+    slot: Mapped[int] = mapped_column()  # 0-27 for 28-slot inventory
+    quantity: Mapped[int] = mapped_column(default=1)
+    current_durability: Mapped[Optional[int]] = mapped_column(nullable=True)  # NULL if item has no durability
 
     # Relationships
-    player = relationship("Player", back_populates="inventory")
-    item = relationship("Item", back_populates="inventory_items")
+    player: Mapped["Player"] = relationship(back_populates="inventory")
+    item: Mapped["Item"] = relationship(back_populates="inventory_items")
 
     __table_args__ = (
         UniqueConstraint("player_id", "slot", name="_player_inventory_slot_uc"),
@@ -138,17 +138,17 @@ class PlayerEquipment(Base):
 
     __tablename__ = "player_equipment"
 
-    id = Column(Integer, primary_key=True)
-    player_id = Column(Integer, ForeignKey("players.id"), nullable=False, index=True)
-    equipment_slot = Column(String, nullable=False)  # EquipmentSlot value
-    item_id = Column(Integer, ForeignKey("items.id"), nullable=False, index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    equipment_slot: Mapped[str] = mapped_column(String)  # EquipmentSlot value
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
 
-    quantity = Column(Integer, default=1, nullable=False)  # For stackable items (ammo)
-    current_durability = Column(Integer, nullable=True)
+    quantity: Mapped[int] = mapped_column(default=1)  # For stackable items (ammo)
+    current_durability: Mapped[Optional[int]] = mapped_column(nullable=True)
 
     # Relationships
-    player = relationship("Player", back_populates="equipment")
-    item = relationship("Item", back_populates="equipment_items")
+    player: Mapped["Player"] = relationship(back_populates="equipment")
+    item: Mapped["Item"] = relationship(back_populates="equipment_items")
 
     __table_args__ = (
         UniqueConstraint(
@@ -171,27 +171,27 @@ class GroundItem(Base):
 
     __tablename__ = "ground_items"
 
-    id = Column(Integer, primary_key=True)
-    item_id = Column(Integer, ForeignKey("items.id"), nullable=False, index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
 
     # Location
-    map_id = Column(String, nullable=False, index=True)
-    x = Column(Integer, nullable=False)
-    y = Column(Integer, nullable=False)
+    map_id: Mapped[str] = mapped_column(String, index=True)
+    x: Mapped[int] = mapped_column()
+    y: Mapped[int] = mapped_column()
 
     # Item state
-    quantity = Column(Integer, default=1, nullable=False)
-    current_durability = Column(Integer, nullable=True)
+    quantity: Mapped[int] = mapped_column(default=1)
+    current_durability: Mapped[Optional[int]] = mapped_column(nullable=True)
 
     # Ownership and timing
-    dropped_by = Column(Integer, ForeignKey("players.id"), nullable=True, index=True)
-    dropped_at = Column(DateTime(timezone=True), server_default=func.now())
-    public_at = Column(DateTime(timezone=True), nullable=False)  # When loot protection ends
-    despawn_at = Column(DateTime(timezone=True), nullable=False, index=True)  # When item disappears
+    dropped_by: Mapped[Optional[int]] = mapped_column(ForeignKey("players.id"), nullable=True, index=True)
+    dropped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    public_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # When loot protection ends
+    despawn_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)  # When item disappears
 
     # Relationships
-    item = relationship("Item", back_populates="ground_items")
-    dropped_by_player = relationship("Player", back_populates="dropped_items")
+    item: Mapped["Item"] = relationship(back_populates="ground_items")
+    dropped_by_player: Mapped[Optional["Player"]] = relationship(back_populates="dropped_items")
 
     __table_args__ = (
         Index("ix_ground_items_location", "map_id", "x", "y"),

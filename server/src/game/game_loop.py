@@ -23,12 +23,9 @@ from server.src.services.map_service import get_map_manager
 from server.src.services.game_state_manager import get_game_state_manager
 from server.src.core.database import AsyncSessionLocal
 from common.src.protocol import (
-    GameMessage,
+    WSMessage,
     MessageType,
-    GameStateUpdatePayload,
-    ChunkDataPayload,
-    ChunkData,
-    TileData,
+    GameUpdateEventPayload,
 )
 
 logger = get_logger(__name__)
@@ -225,34 +222,34 @@ async def send_chunk_update_if_needed(
             chunks = map_manager.get_chunks_for_player(map_id, x, y, radius=VISIBILITY_RADIUS)
 
             if chunks:
-                # Convert to protocol format
+                # Convert to simple chunk format for EVENT_STATE_UPDATE
                 chunk_data_list = []
                 for chunk in chunks:
-                    protocol_tiles = []
-                    for row in chunk["tiles"]:
-                        protocol_row = []
-                        for tile in row:
-                            protocol_row.append(
-                                TileData(gid=tile["gid"], properties=tile["properties"])
-                            )
-                        protocol_tiles.append(protocol_row)
+                    chunk_data_list.append({
+                        "chunk_x": chunk["chunk_x"],
+                        "chunk_y": chunk["chunk_y"], 
+                        "tiles": chunk["tiles"],  # Keep raw tile data
+                        "width": chunk["width"],
+                        "height": chunk["height"],
+                    })
 
-                    chunk_data_list.append(
-                        ChunkData(
-                            chunk_x=chunk["chunk_x"],
-                            chunk_y=chunk["chunk_y"],
-                            tiles=protocol_tiles,
-                            width=chunk["width"],
-                            height=chunk["height"],
-                        )
-                    )
-
-                # Send chunk data
-                chunk_message = GameMessage(
-                    type=MessageType.CHUNK_DATA,
-                    payload=ChunkDataPayload(
-                        map_id=map_id, chunks=chunk_data_list, player_x=x, player_y=y
-                    ).model_dump(),
+                # Send chunk data as state update event
+                chunk_message = WSMessage(
+                    id=None,  # No correlation ID for events
+                    type=MessageType.EVENT_STATE_UPDATE,
+                    payload={
+                        "update_type": "full",
+                        "target": "personal", 
+                        "systems": {
+                            "map": {
+                                "map_id": map_id,
+                                "chunks": chunk_data_list,
+                                "player_x": x,
+                                "player_y": y
+                            }
+                        }
+                    },
+                    version="2.0"
                 )
 
                 await websocket.send_bytes(
@@ -281,7 +278,8 @@ async def send_chunk_update_if_needed(
 async def send_diff_update(
     username: str, 
     websocket, 
-    diff: Dict[str, List[Dict[str, Any]]]
+    diff: Dict[str, List[Dict[str, Any]]],
+    map_id: str
 ) -> None:
     """
     Send a diff-based game state update to a specific player.
@@ -290,22 +288,25 @@ async def send_diff_update(
         username: Player's username
         websocket: Player's WebSocket connection
         diff: The entity diff (added/updated/removed)
+        map_id: The map identifier
     """
     # Only send if there are actual changes
     if not diff["added"] and not diff["updated"] and not diff["removed"]:
         return
         
     try:
-        # Combine added and updated into entities list, include removed separately
+        # Combine added and updated into entities list
         entities = diff["added"] + diff["updated"]
         
-        payload = {"entities": entities}
-        if diff["removed"]:
-            payload["removed"] = diff["removed"]
-        
-        update_message = GameMessage(
-            type=MessageType.GAME_STATE_UPDATE,
-            payload=payload,
+        update_message = WSMessage(
+            id=None,  # No correlation ID for events
+            type=MessageType.EVENT_STATE_UPDATE,
+            payload={
+                "entities": entities,
+                "removed_entities": [e.get("username") or str(e.get("id", "")) for e in diff["removed"]],
+                "map_id": map_id,
+            },
+            version="2.0"
         )
         
         packed = msgpack.packb(update_message.model_dump(), use_bin_type=True)
@@ -452,33 +453,37 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     # We need the player_id for loot protection check
                     player_key = f"player:{username}"
                     player_data = await valkey.hgetall(player_key)
-                    player_id = int(player_data.get(b"player_id", b"0")) if player_data else None
+                    player_id = int(player_data.get(b"player_id", b"0")) if player_data else 0
                     
-                    # Use GroundItemService for ground item visibility (proper architecture)
-                    from ..services.ground_item_service import GroundItemService
-                    visible_ground_items = await GroundItemService.get_visible_ground_items_raw(
-                        player_id=player_id,
-                        map_id=map_id,
-                        center_x=player_x,
-                        center_y=player_y,
-                        tile_radius=32,  # Same as visibility range
-                    )
-                    
-                    # Convert to dict keyed by ground item ID
-                    current_visible_ground_items = {}
-                    for item in visible_ground_items:
-                        current_visible_ground_items[item["id"]] = {
-                            "type": "ground_item",
-                            "id": item["id"],
-                            "item_id": item["item_id"],
-                            "item_name": item["item_name"],
-                            "display_name": item["display_name"],
-                            "rarity": item["rarity"],
-                            "x": item["x"],
-                            "y": item["y"],
-                            "quantity": item["quantity"],
-                            "is_protected": item.get("is_protected", False),
-                        }
+                    # Skip ground item processing if player_id is invalid
+                    if player_id <= 0:
+                        current_visible_ground_items = {}
+                    else:
+                        # Use GroundItemService for ground item visibility (proper architecture)
+                        from ..services.ground_item_service import GroundItemService
+                        visible_ground_items = await GroundItemService.get_visible_ground_items_raw(
+                            player_id=player_id,
+                            map_id=map_id,
+                            center_x=player_x,
+                            center_y=player_y,
+                            tile_radius=32,  # Same as visibility range
+                        )
+                        
+                        # Convert to dict keyed by ground item ID
+                        current_visible_ground_items = {}
+                        for item in visible_ground_items:
+                            current_visible_ground_items[item["id"]] = {
+                                "type": "ground_item",
+                                "id": item["id"],
+                                "item_id": item["item_id"],
+                                "item_name": item["item_name"],
+                                "display_name": item["display_name"],
+                                "rarity": item["rarity"],
+                                "x": item["x"],
+                                "y": item["y"],
+                                "quantity": item["quantity"],
+                                "is_protected": item.get("is_protected", False),
+                            }
                     
                     # Get last known visible state for this player
                     last_state = player_visible_state.get(username, {"players": {}, "ground_items": {}})
@@ -497,7 +502,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     }
                     
                     # Send diff update if there are changes
-                    await send_diff_update(username, websocket, combined_diff)
+                    await send_diff_update(username, websocket, combined_diff, map_id)
                     
                     # Update stored visible state
                     player_visible_state[username] = {
@@ -520,9 +525,15 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
             await asyncio.sleep(tick_interval)
 
         except Exception as e:
+            import traceback
             logger.error(
                 "Error in game loop",
-                extra={"error": str(e), "tick_interval": tick_interval},
+                extra={
+                    "error": str(e), 
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc(),
+                    "tick_interval": tick_interval
+                },
             )
             # Avoid rapid-fire loops on persistent errors
             await asyncio.sleep(1)

@@ -4,6 +4,7 @@ Test fixtures and configuration for the RPG server tests.
 
 import pytest
 import pytest_asyncio
+import msgpack
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Callable, Awaitable, Dict, Any, Optional
 from httpx import AsyncClient, ASGITransport
@@ -16,7 +17,8 @@ from server.src.main import app
 from server.src.core.database import get_db, get_valkey
 from server.src.models.base import Base
 from server.src.models.player import Player
-from server.src.models.item import GroundItem, PlayerInventory, PlayerEquipment
+from server.src.models.item import Item, GroundItem, PlayerInventory, PlayerEquipment
+from server.src.models.skill import Skill, PlayerSkill
 from server.src.models.skill import PlayerSkill
 from server.src.core.security import get_password_hash, create_access_token
 from server.src.services.game_state_manager import (
@@ -269,7 +271,19 @@ async def fake_valkey() -> FakeValkey:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def gsm(session: AsyncSession, fake_valkey: FakeValkey) -> AsyncGenerator[GameStateManager, None]:
+async def items_synced(session: AsyncSession) -> None:
+    """
+    Global fixture to ensure items are synced to database.
+    
+    This fixture syncs all items from the game configuration to the database,
+    making them available for tests that need item metadata.
+    """
+    from server.src.services.item_service import ItemService
+    await ItemService.sync_items_to_db(session)
+
+
+@pytest_asyncio.fixture(scope="function")
+async def gsm(session: AsyncSession, fake_valkey: FakeValkey, items_synced) -> AsyncGenerator[GameStateManager, None]:
     """
     Create a GameStateManager for tests that need GSM functionality.
     
@@ -288,11 +302,8 @@ async def gsm(session: AsyncSession, fake_valkey: FakeValkey) -> AsyncGenerator[
     gsm_instance.bind_test_session(session)
 
     # Load item cache from database for metadata lookups
-    try:
-        await gsm_instance.load_item_cache_from_db()
-    except Exception:
-        # Tests may not have items synced; caller tests should call ItemService.sync_items_to_db(session)
-        pass
+    # Items are guaranteed to be synced by the items_synced dependency
+    await gsm_instance.load_item_cache_from_db()
     
     yield gsm_instance
     
@@ -485,4 +496,120 @@ def set_player_timeout(
 
 
 # Import modern WebSocket testing framework to register fixtures
-from server.src.tests.websocket_test_utils import websocket_client_factory, test_scenarios
+from server.src.tests.websocket_test_utils import WebSocketTestClient
+
+
+@pytest_asyncio.fixture
+async def test_client(
+    session: AsyncSession, fake_valkey: FakeValkey, gsm: GameStateManager
+) -> AsyncGenerator[WebSocketTestClient, None]:
+    """
+    Create a WebSocket test client.
+    
+    Provides a pre-authenticated WebSocket connection
+    with correlation ID support and structured responses.
+    """
+    import uuid
+    from starlette.testclient import TestClient
+    
+    # Override dependencies for WebSocket endpoint
+    async def override_get_db():
+        yield session
+    
+    async def override_get_valkey():
+        return fake_valkey
+    
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_valkey] = override_get_valkey
+    
+    try:
+        # Create test player
+        from server.src.core.security import get_password_hash, create_access_token
+        
+        username = "testuser"
+        password = "testpass123"
+        hashed_password = get_password_hash(password)
+        
+        player = Player(
+            username=username,
+            hashed_password=hashed_password,
+            x_coord=10,
+            y_coord=10,
+            map_id="samplemap",
+            current_hp=100
+        )
+        
+        session.add(player)
+        await session.flush()  # Get player ID
+        
+        # Initialize skills
+        try:
+            from server.src.services.skill_service import SkillService
+            await SkillService.grant_all_skills_to_player(player.id)
+        except Exception:
+            pass  # Skills may not be available
+        
+        await session.commit()
+        
+        # Create JWT token
+        token = create_access_token(data={"sub": username})
+        
+        # Create test client and connect to WebSocket endpoint
+        with TestClient(app) as test_client:
+            with test_client.websocket_connect("/ws") as websocket:
+                
+                # Send authentication message
+                from common.src.protocol import WSMessage, MessageType, AuthenticatePayload
+                
+                auth_message = WSMessage(
+                    id=str(uuid.uuid4()),
+                    type=MessageType.CMD_AUTHENTICATE,
+                    payload=AuthenticatePayload(token=token).model_dump(),
+                    version="2.0"
+                )
+                
+                # Send auth message
+                packed_auth = msgpack.packb(auth_message.model_dump(), use_bin_type=True)
+                websocket.send_bytes(packed_auth)
+                
+                # Wait for auth response
+                auth_response_bytes = websocket.receive_bytes()
+                auth_response_data = msgpack.unpackb(auth_response_bytes, raw=False)
+                auth_response = WSMessage(**auth_response_data)
+                
+                if auth_response.type != MessageType.EVENT_WELCOME:
+                    raise Exception(f"Authentication failed: expected WELCOME but got {auth_response.type}")
+                
+                # After EVENT_WELCOME, server sends a EVENT_CHAT_MESSAGE welcome - consume it
+                chat_response_bytes = websocket.receive_bytes()
+                chat_response_data = msgpack.unpackb(chat_response_bytes, raw=False)
+                chat_response = WSMessage(**chat_response_data)
+                
+                if chat_response.type != MessageType.EVENT_CHAT_MESSAGE:
+                    raise Exception(f"Expected welcome chat message but got {chat_response.type}")
+                
+                # Create WebSocket test client wrapper
+                client = WebSocketTestClient(websocket)
+                
+                yield client
+        
+    finally:
+        # Clean up
+        app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+def create_test_token() -> Callable[[str], str]:
+    """
+    Fixture factory to create a JWT token for testing with the async client.
+    """
+    def _create_token(username: str) -> str:
+        return create_access_token(data={"sub": username})
+    
+    return _create_token
+
+
+@pytest_asyncio.fixture
+def test_item_id() -> str:
+    """Provide a test item ID for equipment tests"""
+    return "wooden_sword"  # Use an item that should exist in the test data

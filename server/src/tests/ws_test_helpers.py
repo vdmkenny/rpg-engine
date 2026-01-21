@@ -74,27 +74,37 @@ def authenticate_websocket(websocket, token: str) -> Dict[str, Any]:
     Returns the WELCOME response payload containing player info.
     """
     auth_message = {
-        "type": MessageType.AUTHENTICATE.value,
+        "type": MessageType.CMD_AUTHENTICATE.value,
         "payload": {"token": token},
     }
     websocket.send_bytes(msgpack.packb(auth_message, use_bin_type=True))
     response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
     
-    # After WELCOME, server sends a NEW_CHAT_MESSAGE welcome - consume it
-    if response["type"] == MessageType.WELCOME.value:
+    # After EVENT_WELCOME, server sends a EVENT_CHAT_MESSAGE welcome - consume it
+    if response["type"] == MessageType.EVENT_WELCOME.value:
         # Consume the welcome chat message
         chat_response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
         # Should be the welcome chat message
-        assert chat_response["type"] == MessageType.NEW_CHAT_MESSAGE.value
+        assert chat_response["type"] == MessageType.EVENT_CHAT_MESSAGE.value
     
     return response
 
 
-def send_ws_message(websocket, message_type: MessageType, payload: dict):
+def send_ws_message(websocket, message_type: MessageType, payload: dict, correlation_id: Optional[str] = None):
     """Send a WebSocket message with the given type and payload."""
+    import uuid
+    import time
+    
+    # Generate correlation ID for command/query messages if not provided
+    if correlation_id is None and (message_type.value.startswith("cmd_") or message_type.value.startswith("query_")):
+        correlation_id = str(uuid.uuid4())
+    
     message = {
+        "id": correlation_id,
         "type": message_type.value,
         "payload": payload,
+        "timestamp": int(time.time() * 1000),
+        "version": "2.0"
     }
     websocket.send_bytes(msgpack.packb(message, use_bin_type=True))
 
@@ -109,15 +119,15 @@ def receive_message_of_type(
 ) -> Dict[str, Any]:
     """Receive messages until we get one of the expected types.
     
-    The game loop may send GAME_STATE_UPDATE messages at any time, so we need
+    The game loop may send EVENT_STATE_UPDATE messages at any time, so we need
     to consume them while waiting for specific responses.
     """
     for _ in range(max_attempts):
         response = msgpack.unpackb(websocket.receive_bytes(), raw=False)
         if response["type"] in expected_types:
             return response
-        # Skip GAME_STATE_UPDATE messages from game loop
-        if response["type"] == MessageType.GAME_STATE_UPDATE.value:
+        # Skip EVENT_STATE_UPDATE messages from game loop
+        if response["type"] == MessageType.EVENT_STATE_UPDATE.value:
             continue
         # Unexpected message type - return it for test to handle
         return response
