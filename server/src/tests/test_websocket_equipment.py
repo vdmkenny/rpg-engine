@@ -1,484 +1,347 @@
 """
-WebSocket integration tests for equipment operations.
+WebSocket Equipment Tests
 
-Covers:
-- REQUEST_EQUIPMENT - Get equipment state
-- EQUIP_ITEM - Equip from inventory
-- UNEQUIP_ITEM - Unequip to inventory
-- REQUEST_STATS - Get aggregated stats
+Tests equipment operations using the WebSocket protocol with:
+- Correlation ID support for request/response pairing
+- Message patterns (QUERY_EQUIPMENT → RESP_DATA)
+- Structured error handling
+- Reliable equipment request handling
 
-These tests use the real PostgreSQL database and WebSocket handlers.
+This ensures equipment queries complete reliably without hanging.
 """
 
+import asyncio
 import pytest
+import time
+from typing import Dict, Any, Optional
 
-from common.src.protocol import MessageType
-from server.src.tests.ws_test_helpers import (
-    SKIP_WS_INTEGRATION,
-    unique_username,
-    register_and_login,
-    authenticate_websocket,
-    send_ws_message,
-    receive_message_of_type,
-    integration_client,
+from server.src.tests.websocket_test_utils import WebSocketTestClient
+from common.src.protocol import (
+    WSMessage,
+    MessageType,
+    EquipmentQueryPayload,
+    ItemEquipPayload,
+    ItemUnequipPayload,
 )
 
 
-@SKIP_WS_INTEGRATION
-class TestEquipmentRequest:
-    """Tests for REQUEST_EQUIPMENT message handler."""
-
-    def test_request_equipment_empty(self, integration_client):
-        """New player should have no equipment."""
-        client = integration_client
-        username = unique_username("equip_empty")
-        token = register_and_login(client, username)
-
-        with client.websocket_connect("/ws") as websocket:
-            welcome = authenticate_websocket(websocket, token)
-            assert welcome["type"] == MessageType.WELCOME.value
-
-            # Request equipment
-            send_ws_message(websocket, MessageType.REQUEST_EQUIPMENT, {})
-
-            # Should receive EQUIPMENT_UPDATE
-            response = receive_message_of_type(
-                websocket, [MessageType.EQUIPMENT_UPDATE.value]
-            )
-
-            assert response["type"] == MessageType.EQUIPMENT_UPDATE.value
-            payload = response["payload"]
-            assert "slots" in payload
-            assert "total_stats" in payload
-            # All slots should be present (some empty)
-            slots = payload["slots"]
-            assert isinstance(slots, list)
-            # Should have all equipment slot types represented
-            assert len(slots) > 0
-
-
-@SKIP_WS_INTEGRATION
-class TestEquipItem:
-    """Tests for EQUIP_ITEM message handler."""
-
-    def test_equip_item_empty_slot_fails(self, integration_client):
-        """Equipping from empty inventory slot should fail."""
-        client = integration_client
-        username = unique_username("equip_empty_slot")
-        token = register_and_login(client, username)
-
-        with client.websocket_connect("/ws") as websocket:
-            authenticate_websocket(websocket, token)
-
-            # Try to equip from empty inventory slot
-            send_ws_message(
-                websocket,
-                MessageType.EQUIP_ITEM,
-                {"inventory_slot": 0},
-            )
-
-            # Should receive OPERATION_RESULT with failure
-            response = receive_message_of_type(
-                websocket, [MessageType.OPERATION_RESULT.value]
-            )
-
-            assert response["type"] == MessageType.OPERATION_RESULT.value
-            assert response["payload"]["operation"] == "equip_item"
-            assert response["payload"]["success"] is False
-
-    def test_equip_item_invalid_slot_fails(self, integration_client):
-        """Equipping from invalid inventory slot should fail."""
-        client = integration_client
-        username = unique_username("equip_invalid_slot")
-        token = register_and_login(client, username)
-
-        with client.websocket_connect("/ws") as websocket:
-            authenticate_websocket(websocket, token)
-
-            # Try to equip from invalid slot
-            send_ws_message(
-                websocket,
-                MessageType.EQUIP_ITEM,
-                {"inventory_slot": 999},
-            )
-
-            # Should receive OPERATION_RESULT with failure
-            response = receive_message_of_type(
-                websocket, [MessageType.OPERATION_RESULT.value]
-            )
-
-            assert response["type"] == MessageType.OPERATION_RESULT.value
-            assert response["payload"]["operation"] == "equip_item"
-            assert response["payload"]["success"] is False
-
-
-@SKIP_WS_INTEGRATION
-class TestUnequipItem:
-    """Tests for UNEQUIP_ITEM message handler."""
-
-    def test_unequip_empty_slot_fails(self, integration_client):
-        """Unequipping from empty equipment slot should fail."""
-        client = integration_client
-        username = unique_username("unequip_empty")
-        token = register_and_login(client, username)
-
-        with client.websocket_connect("/ws") as websocket:
-            authenticate_websocket(websocket, token)
-
-            # Try to unequip from empty weapon slot
-            send_ws_message(
-                websocket,
-                MessageType.UNEQUIP_ITEM,
-                {"equipment_slot": "weapon"},
-            )
-
-            # Should receive OPERATION_RESULT with failure
-            response = receive_message_of_type(
-                websocket, [MessageType.OPERATION_RESULT.value]
-            )
-
-            assert response["type"] == MessageType.OPERATION_RESULT.value
-            assert response["payload"]["operation"] == "unequip_item"
-            assert response["payload"]["success"] is False
-
-    def test_unequip_invalid_slot_fails(self, integration_client):
-        """Unequipping from invalid equipment slot should fail."""
-        client = integration_client
-        username = unique_username("unequip_invalid")
-        token = register_and_login(client, username)
-
-        with client.websocket_connect("/ws") as websocket:
-            authenticate_websocket(websocket, token)
-
-            # Try to unequip from invalid slot
-            send_ws_message(
-                websocket,
-                MessageType.UNEQUIP_ITEM,
-                {"equipment_slot": "invalid_slot_name"},
-            )
-
-            # Should receive OPERATION_RESULT with failure
-            response = receive_message_of_type(
-                websocket, [MessageType.OPERATION_RESULT.value]
-            )
-
-            assert response["type"] == MessageType.OPERATION_RESULT.value
-            assert response["payload"]["operation"] == "unequip_item"
-            assert response["payload"]["success"] is False
-
-
-@SKIP_WS_INTEGRATION
-class TestRequestStats:
-    """Tests for REQUEST_STATS message handler."""
-
-    def test_request_stats_base(self, integration_client):
-        """New player should have base stats."""
-        client = integration_client
-        username = unique_username("stats_base")
-        token = register_and_login(client, username)
-
-        with client.websocket_connect("/ws") as websocket:
-            welcome = authenticate_websocket(websocket, token)
-            assert welcome["type"] == MessageType.WELCOME.value
-
-            # Request stats
-            send_ws_message(websocket, MessageType.REQUEST_STATS, {})
-
-            # Should receive STATS_UPDATE
-            response = receive_message_of_type(
-                websocket, [MessageType.STATS_UPDATE.value]
-            )
-
-            assert response["type"] == MessageType.STATS_UPDATE.value
-            payload = response["payload"]
-            
-            # Should have basic stat structure (ItemStats fields)
-            # All stats default to 0 for new player with no equipment
-            assert "attack_bonus" in payload
-            assert "strength_bonus" in payload
-            assert "physical_defence_bonus" in payload
-            assert isinstance(payload["attack_bonus"], int)
-
-
-class TestEquipUnequipWithRealItems:
-    """
-    Tests for successful equip/unequip operations with real items.
+class TestEquipmentWebSocket:
+    """Test equipment operations via WebSocket"""
     
-    These tests use a standalone database session to set up items before testing
-    the equipment service. This validates the full equip/unequip flow without
-    requiring WebSocket integration.
+    @pytest.mark.asyncio
+    async def test_equipment_query_no_hanging(self, test_client):
+        """
+        Test that equipment queries return immediately with correlation ID.
+        
+        This is the critical test that verifies the hanging issue is fixed.
+        """
+        client: WebSocketTestClient = test_client
+        
+        # Query equipment - should return immediately
+        start_time = time.time()
+        
+        response = await client.send_query(
+            MessageType.QUERY_EQUIPMENT,
+            EquipmentQueryPayload().model_dump(),
+            timeout=5.0  # Should complete in under 1 second
+        )
+        
+        elapsed_time = time.time() - start_time
+        
+        # Verify response received quickly (not hanging)
+        assert elapsed_time < 2.0, f"Equipment query took too long: {elapsed_time:.2f}s"
+        
+        # Verify correct response type
+        assert response.type == MessageType.RESP_DATA
+        assert "equipment" in response.payload
+        assert "query_type" in response.payload
+        assert response.payload["query_type"] == "equipment"
+        
+        print(f"✅ Equipment query completed in {elapsed_time:.3f}s (no hanging)")
     
-    Note: Full WebSocket integration tests for equip/unequip would require a way
-    to add items to inventory through the WebSocket protocol (not yet implemented).
+    @pytest.mark.asyncio
+    async def test_equipment_query_structure(self, test_client):
+        """Test equipment query response structure"""
+        client: WebSocketTestClient = test_client
+        
+        response = await client.send_query(
+            MessageType.QUERY_EQUIPMENT,
+            EquipmentQueryPayload().model_dump()
+        )
+        
+        # Verify response structure
+        assert response.type == MessageType.RESP_DATA
+        equipment_data = response.payload["equipment"]
+        
+        # Should have equipment structure
+        assert "slots" in equipment_data
+        assert "stats" in equipment_data
+        
+        # Equipment slots should be a dictionary
+        slots = equipment_data["slots"]
+        assert isinstance(slots, dict)
+        
+        # All slot values should be None (empty) or item data
+        for slot_name, slot_data in slots.items():
+            if slot_data is not None:
+                assert isinstance(slot_data, dict)
+                assert "item_id" in slot_data
+    
+    @pytest.mark.asyncio
+    async def test_equipment_operations_with_correlation_ids(self, test_client, test_item_id):
+        """Test equip/unequip operations with proper correlation ID tracking"""
+        client: WebSocketTestClient = test_client
+        
+        # First add an item to inventory (using old method for setup)
+        await client.add_test_item_to_inventory(test_item_id, slot=0)
+        
+        # Test equipment operation with correlation ID
+        equip_response = await client.send_command(
+            MessageType.CMD_ITEM_EQUIP,
+            ItemEquipPayload(inventory_slot=0).model_dump()
+        )
+        
+        # Should get success response
+        assert equip_response.type == MessageType.RESP_SUCCESS
+        assert equip_response.id is not None  # Has correlation ID
+        
+        # Wait for state update event
+        state_update = await client.wait_for_event(MessageType.EVENT_STATE_UPDATE, timeout=3.0)
+        assert state_update is not None
+        assert "equipment" in state_update.payload.get("systems", {})
+        assert "inventory" in state_update.payload.get("systems", {})
+        assert "stats" in state_update.payload.get("systems", {})
+        
+        # Query equipment again to verify item is equipped
+        equipment_response = await client.send_query(
+            MessageType.QUERY_EQUIPMENT,
+            EquipmentQueryPayload().model_dump()
+        )
+        
+        equipment_data = equipment_response.payload["equipment"]
+        slots = equipment_data["slots"]
+        
+        # Should find the item in one of the equipment slots
+        equipped_item_found = False
+        for slot_data in slots.values():
+            if slot_data and slot_data.get("item_id") == test_item_id:
+                equipped_item_found = True
+                break
+        
+        assert equipped_item_found, f"Item {test_item_id} not found in equipment slots"
+        
+        print("✅ Equipment operations with correlation IDs working correctly")
+    
+    @pytest.mark.asyncio
+    async def test_equipment_error_handling(self, test_client):
+        """Test equipment error handling with structured error codes"""
+        client: WebSocketTestClient = test_client
+        
+        # Try to equip from invalid inventory slot
+        error_response = await client.send_command(
+            MessageType.CMD_ITEM_EQUIP,
+            ItemEquipPayload(inventory_slot=999).model_dump()
+        )
+        
+        # Should get error response
+        assert error_response.type == MessageType.RESP_ERROR
+        assert error_response.id is not None  # Has correlation ID
+        
+        # Check error structure
+        error_payload = error_response.payload
+        assert "error_code" in error_payload
+        assert "error_category" in error_payload
+        assert "message" in error_payload
+        
+        # Should be equipment-related error
+        assert error_payload["error_code"].startswith("EQUIPMENT_") or error_payload["error_code"].startswith("INVENTORY_")
+        
+        print("✅ Equipment error handling with structured responses working correctly")
+    
+    @pytest.mark.asyncio
+    async def test_multiple_equipment_queries_no_interference(self, test_client):
+        """Test multiple rapid equipment queries don't interfere with each other"""
+        client: WebSocketTestClient = test_client
+        
+        # Send multiple queries rapidly
+        query_count = 5
+        query_tasks = []
+        
+        for i in range(query_count):
+            task = client.send_query(
+                MessageType.QUERY_EQUIPMENT,
+                EquipmentQueryPayload().model_dump(),
+                timeout=5.0
+            )
+            query_tasks.append(task)
+        
+        # Wait for all responses
+        start_time = time.time()
+        responses = await asyncio.gather(*query_tasks)
+        elapsed_time = time.time() - start_time
+        
+        # All queries should complete quickly
+        assert elapsed_time < 3.0, f"Multiple queries took too long: {elapsed_time:.2f}s"
+        
+        # All responses should be valid
+        assert len(responses) == query_count
+        for response in responses:
+            assert response.type == MessageType.RESP_DATA
+            assert "equipment" in response.payload
+            assert "query_type" in response.payload
+            assert response.payload["query_type"] == "equipment"
+        
+        print(f"✅ {query_count} equipment queries completed in {elapsed_time:.3f}s (no interference)")
+    
+    @pytest.mark.asyncio 
+    async def test_equipment_query_timeout_protection(self, test_client):
+        """Test that equipment queries have timeout protection"""
+        client: WebSocketTestClient = test_client
+        
+        # Send query with short timeout to verify it doesn't hang indefinitely
+        start_time = time.time()
+        
+        try:
+            response = await client.send_query(
+                MessageType.QUERY_EQUIPMENT,
+                EquipmentQueryPayload().model_dump(),
+                timeout=1.0  # Very short timeout
+            )
+            
+            elapsed_time = time.time() - start_time
+            
+            # Should complete within timeout
+            assert elapsed_time < 1.0, f"Query should complete quickly: {elapsed_time:.3f}s"
+            assert response.type == MessageType.RESP_DATA
+            
+        except asyncio.TimeoutError:
+            elapsed_time = time.time() - start_time
+            pytest.fail(f"Equipment query timed out after {elapsed_time:.3f}s - hanging issue not fixed!")
+        
+        print("✅ Equipment query timeout protection working correctly")
+
+
+@pytest.mark.asyncio
+async def test_protocol_equipment_integration(test_client, test_item_id):
     """
+    Integration test for complete equipment workflow.
+    
+    This test verifies the entire equipment system works with the protocol
+    without any hanging issues.
+    """
+    client: WebSocketTestClient = test_client
+    
+    print("🔧 Testing complete equipment workflow...")
+    
+    # Step 1: Query initial equipment (should be empty)
+    initial_response = await client.send_query(
+        MessageType.QUERY_EQUIPMENT,
+        EquipmentQueryPayload().model_dump()
+    )
+    
+    assert initial_response.type == MessageType.RESP_DATA
+    initial_equipment = initial_response.payload["equipment"]
+    print(f"✅ Initial equipment query: {len(initial_equipment['slots'])} slots")
+    
+    # Step 2: Add item to inventory for testing
+    await client.add_test_item_to_inventory(test_item_id, slot=0)
+    print(f"✅ Added test item {test_item_id} to inventory")
+    
+    # Step 3: Equip the item
+    equip_response = await client.send_command(
+        MessageType.CMD_ITEM_EQUIP,
+        ItemEquipPayload(inventory_slot=0).model_dump()
+    )
+    
+    assert equip_response.type == MessageType.RESP_SUCCESS
+    print("✅ Item equipped successfully")
+    
+    # Step 4: Wait for equipment state update
+    state_update = await client.wait_for_event(MessageType.EVENT_STATE_UPDATE, timeout=3.0)
+    assert state_update is not None
+    assert "equipment" in state_update.payload.get("systems", {})
+    print("✅ Equipment state update received")
+    
+    # Step 5: Query equipment again to verify
+    final_response = await client.send_query(
+        MessageType.QUERY_EQUIPMENT,
+        EquipmentQueryPayload().model_dump()
+    )
+    
+    assert final_response.type == MessageType.RESP_DATA
+    final_equipment = final_response.payload["equipment"]
+    
+    # Verify item is equipped
+    equipped_items = [
+        slot_data for slot_data in final_equipment["slots"].values()
+        if slot_data is not None
+    ]
+    assert len(equipped_items) > 0, "No items found in equipment after equipping"
+    
+    equipped_item = equipped_items[0]
+    assert equipped_item["item_id"] == test_item_id
+    print(f"✅ Item {test_item_id} verified in equipment")
+    
+    # Step 6: Test unequip
+    equipment_slot = None
+    for slot_name, slot_data in final_equipment["slots"].items():
+        if slot_data and slot_data["item_id"] == test_item_id:
+            equipment_slot = slot_name
+            break
+    
+    assert equipment_slot is not None
+    
+    unequip_response = await client.send_command(
+        MessageType.CMD_ITEM_UNEQUIP,
+        ItemUnequipPayload(equipment_slot=equipment_slot).model_dump()
+    )
+    
+    assert unequip_response.type == MessageType.RESP_SUCCESS
+    print("✅ Item unequipped successfully")
+    
+    # Step 7: Final equipment query to verify unequip
+    final_check_response = await client.send_query(
+        MessageType.QUERY_EQUIPMENT,
+        EquipmentQueryPayload().model_dump()
+    )
+    
+    assert final_check_response.type == MessageType.RESP_DATA
+    final_check_equipment = final_check_response.payload["equipment"]
+    
+    # Verify item is no longer equipped
+    remaining_items = [
+        slot_data for slot_data in final_check_equipment["slots"].values()
+        if slot_data is not None and slot_data.get("item_id") == test_item_id
+    ]
+    assert len(remaining_items) == 0, f"Item {test_item_id} still found in equipment after unequipping"
+    
+    print("✅ Complete equipment workflow successful - no hanging issues detected!")
 
-    @pytest.mark.asyncio
-    async def test_equip_item_from_inventory_success(self):
-        """Successfully equip a weapon from inventory."""
-        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-        from sqlalchemy.orm import sessionmaker
-        from server.src.models.base import Base
-        from server.src.models.player import Player
-        from server.src.core.security import get_password_hash
-        from server.src.services.inventory_service import InventoryService
-        from server.src.services.equipment_service import EquipmentService
-        from server.src.services.item_service import ItemService
-        from server.src.services.skill_service import SkillService
-        from server.src.services.game_state_manager import init_game_state_manager
-        from server.src.tests.conftest import FakeValkey
-        
-        # Set up in-memory database
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        
-        AsyncSessionLocal = sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
-        
-        async with AsyncSessionLocal() as session:
-            # Sync items and skills to database
-            await ItemService.sync_items_to_db(session)
-            
-            # Initialize GSM for SkillService
-            fake_valkey = FakeValkey()
-            init_game_state_manager(fake_valkey, AsyncSessionLocal)
-            await SkillService.sync_skills_to_db()
-            
-            # Get a weapon item
-            bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
-            if not bronze_sword:
-                await engine.dispose()
-                pytest.skip("bronze_sword not found in items")
-                return
-            
-            # Create test player
-            player = Player(
-                username="equip_test_user",
-                hashed_password=get_password_hash("test123"),
-                x_coord=10,
-                y_coord=10,
-                map_id="samplemap",
-            )
-            session.add(player)
-            await session.commit()
-            await session.refresh(player)
-            
-            # Grant skills (needed for level requirements)
-            await SkillService.grant_all_skills_to_player(player.id)
-            
-            # Add sword to inventory at slot 0
-            add_result = await InventoryService.add_item(
-                session, player.id, bronze_sword.id
-            )
-            assert add_result.success is True
-            
-            # Equip the sword
-            equip_result = await EquipmentService.equip_from_inventory(
-                session, player.id, 0
-            )
-            
-            assert equip_result.success is True
-            assert "equipped" in equip_result.message.lower()
-            
-            # Verify item is now equipped
-            equipment = await EquipmentService.get_equipment(session, player.id)
-            assert "weapon" in equipment
-            assert equipment["weapon"].item.name == "bronze_sword"
-            
-            # Verify item was removed from inventory
-            inventory = await InventoryService.get_inventory(session, player.id)
-            assert len(inventory) == 0
-        
-        await engine.dispose()
 
-    @pytest.mark.asyncio
-    async def test_unequip_item_success(self):
-        """Successfully unequip an item back to inventory."""
-        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-        from sqlalchemy.orm import sessionmaker
-        from server.src.models.base import Base
-        from server.src.models.player import Player
-        from server.src.core.security import get_password_hash
-        from server.src.core.items import EquipmentSlot
-        from server.src.services.inventory_service import InventoryService
-        from server.src.services.equipment_service import EquipmentService
-        from server.src.services.item_service import ItemService
-        from server.src.services.skill_service import SkillService
-        from server.src.services.game_state_manager import init_game_state_manager
-        from server.src.tests.conftest import FakeValkey
-        
-        # Set up in-memory database
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        
-        AsyncSessionLocal = sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
-        
-        async with AsyncSessionLocal() as session:
-            # Sync items and skills to database
-            await ItemService.sync_items_to_db(session)
-            
-            # Initialize GSM for SkillService
-            fake_valkey = FakeValkey()
-            init_game_state_manager(fake_valkey, AsyncSessionLocal)
-            await SkillService.sync_skills_to_db()
-            
-            # Get a weapon item
-            bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
-            if not bronze_sword:
-                await engine.dispose()
-                pytest.skip("bronze_sword not found in items")
-                return
-            
-            # Create test player
-            player = Player(
-                username="unequip_test_user",
-                hashed_password=get_password_hash("test123"),
-                x_coord=10,
-                y_coord=10,
-                map_id="samplemap",
-            )
-            session.add(player)
-            await session.commit()
-            await session.refresh(player)
-            
-            # Grant skills
-            await SkillService.grant_all_skills_to_player(player.id)
-            
-            # Add sword to inventory and equip it
-            await InventoryService.add_item(session, player.id, bronze_sword.id)
-            equip_result = await EquipmentService.equip_from_inventory(
-                session, player.id, 0
-            )
-            assert equip_result.success is True
-            
-            # Verify equipped
-            equipment = await EquipmentService.get_equipment(session, player.id)
-            assert len(equipment) == 1
-            
-            # Unequip the sword using EquipmentSlot enum
-            unequip_result = await EquipmentService.unequip_to_inventory(
-                session, player.id, EquipmentSlot.WEAPON
-            )
-            
-            assert unequip_result.success is True
-            assert "unequipped" in unequip_result.message.lower()
-            
-            # Verify item is back in inventory
-            inventory = await InventoryService.get_inventory(session, player.id)
-            assert len(inventory) == 1
-            assert inventory[0].item.name == "bronze_sword"
-            
-            # Verify equipment slot is empty
-            equipment = await EquipmentService.get_equipment(session, player.id)
-            assert len(equipment) == 0
-        
-        await engine.dispose()
-
-    @pytest.mark.asyncio
-    async def test_equip_swaps_existing_item(self):
-        """Equipping when slot is occupied should swap items."""
-        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-        from sqlalchemy.orm import sessionmaker
-        from server.src.models.base import Base
-        from server.src.models.player import Player
-        from server.src.core.security import get_password_hash
-        from server.src.services.inventory_service import InventoryService
-        from server.src.services.equipment_service import EquipmentService
-        from server.src.services.item_service import ItemService
-        from server.src.services.skill_service import SkillService
-        from server.src.services.game_state_manager import init_game_state_manager
-        from server.src.tests.conftest import FakeValkey
-        from server.src.models.skill import PlayerSkill, Skill
-        from sqlalchemy.future import select
-        
-        # Set up in-memory database
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        
-        AsyncSessionLocal = sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
-        
-        async with AsyncSessionLocal() as session:
-            # Sync items and skills to database
-            await ItemService.sync_items_to_db(session)
-            
-            # Initialize GSM for SkillService
-            fake_valkey = FakeValkey()
-            init_game_state_manager(fake_valkey, AsyncSessionLocal)
-            await SkillService.sync_skills_to_db()
-            
-            # Get two bronze swords (no level requirement)
-            # We'll test swap with same item type - the swap mechanism is the same
-            bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
-            
-            if not bronze_sword:
-                await engine.dispose()
-                pytest.skip("bronze_sword not found in items")
-                return
-            
-            # Create test player
-            player = Player(
-                username="swap_test_user",
-                hashed_password=get_password_hash("test123"),
-                x_coord=10,
-                y_coord=10,
-                map_id="samplemap",
-            )
-            session.add(player)
-            await session.commit()
-            await session.refresh(player)
-            
-            # Manually add Attack skill at level 1 (enough for bronze sword)
-            # Note: Skills are stored in lowercase (e.g., "attack" not "Attack")
-            attack_skill_result = await session.execute(
-                select(Skill).where(Skill.name == "attack")
-            )
-            attack_skill = attack_skill_result.scalar_one_or_none()
-            if attack_skill:
-                player_skill = PlayerSkill(
-                    player_id=player.id,
-                    skill_id=attack_skill.id,
-                    current_level=1,
-                    experience=0,
-                )
-                session.add(player_skill)
-                await session.commit()
-            
-            # Add first sword to inventory and equip it
-            await InventoryService.add_item(session, player.id, bronze_sword.id)
-            equip_result = await EquipmentService.equip_from_inventory(
-                session, player.id, 0
-            )
-            assert equip_result.success is True, f"First equip failed: {equip_result.message}"
-            
-            # Verify equipped
-            equipment = await EquipmentService.get_equipment(session, player.id)
-            assert "weapon" in equipment
-            
-            # Add second sword to inventory
-            await InventoryService.add_item(session, player.id, bronze_sword.id)
-            
-            # Equip second sword (should swap - put first back in inventory)
-            swap_result = await EquipmentService.equip_from_inventory(
-                session, player.id, 0
-            )
-            
-            assert swap_result.success is True, f"Swap equip failed: {swap_result.message}"
-            
-            # Verify sword is still equipped (same item type)
-            equipment = await EquipmentService.get_equipment(session, player.id)
-            assert "weapon" in equipment
-            assert equipment["weapon"].item.name == "bronze_sword"
-            
-            # Verify one sword is back in inventory (from the swap)
-            inventory = await InventoryService.get_inventory(session, player.id)
-            assert len(inventory) == 1
-            assert inventory[0].item.name == "bronze_sword"
-        
-        await engine.dispose()
+# Test timing benchmarks
+@pytest.mark.asyncio
+async def test_equipment_query_performance_benchmark(test_client):
+    """Benchmark equipment query performance to ensure no regression"""
+    client: WebSocketTestClient = test_client
+    
+    # Warm up
+    await client.send_query(MessageType.QUERY_EQUIPMENT, {})
+    
+    # Benchmark multiple queries
+    query_count = 10
+    start_time = time.time()
+    
+    for _ in range(query_count):
+        response = await client.send_query(MessageType.QUERY_EQUIPMENT, {})
+        assert response.type == MessageType.RESP_DATA
+    
+    total_time = time.time() - start_time
+    avg_time = total_time / query_count
+    
+    print(f"🚀 Equipment query performance: {avg_time:.3f}s avg ({query_count} queries in {total_time:.3f}s)")
+    
+    # Performance requirements
+    assert avg_time < 0.1, f"Equipment queries too slow: {avg_time:.3f}s average"
+    assert total_time < 2.0, f"Batch queries too slow: {total_time:.3f}s total"
+    
+    print("✅ Equipment query performance meets requirements")
