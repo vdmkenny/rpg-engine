@@ -11,7 +11,6 @@ from typing import Optional, TYPE_CHECKING
 from dataclasses import dataclass
 
 from sqlalchemy import select, delete, func
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..core.config import settings
@@ -24,7 +23,7 @@ from ..core.items import (
     RARITY_SORT_ORDER,
     EQUIPMENT_SLOT_SORT_ORDER,
 )
-from ..models.item import Item, PlayerInventory
+
 from ..schemas.item import (
     AddItemResult,
     RemoveItemResult,
@@ -37,7 +36,6 @@ from ..schemas.item import (
 )
 from .item_service import ItemService
 from ..core.logging_config import get_logger
-from ..core.concurrency import get_player_lock_manager, LockType
 
 if TYPE_CHECKING:
     from .game_state_manager import GameStateManager
@@ -165,7 +163,7 @@ class InventoryService:
 
         slots = []
         for inv in inventory:
-            # Use ItemService instead of direct GSM cache access
+            # Get item details for inventory display
             item = await ItemService.get_item_by_id(inv.item_id)
             if not item:
                 continue  # Skip items not found
@@ -247,7 +245,7 @@ class InventoryService:
         
         state_manager = get_game_state_manager()
         
-        # Use GSM's direct method for finding free slots
+        # Find next available inventory slot
         max_slots = settings.INVENTORY_MAX_SLOTS
         return await state_manager.get_free_inventory_slot(player_id, max_slots)
 
@@ -266,7 +264,7 @@ class InventoryService:
         
         state_manager = get_game_state_manager()
         
-        # Use GSM's direct method for counting occupied slots
+        # Count occupied inventory slots for player
         return await state_manager.get_inventory_count(player_id)
 
     @staticmethod
@@ -289,7 +287,7 @@ class InventoryService:
         # Get all inventory slots from GSM
         inventory_data = await state_manager.get_inventory(player_id)
         
-        # Use ItemService to get item metadata instead of direct cache access
+        # Get item stacking information
         item = await ItemService.get_item_by_id(item_id)
         if not item or item.max_stack_size <= 1:
             return None  # Item is not stackable
@@ -312,7 +310,7 @@ class InventoryService:
         durability: Optional[int] = None,
     ) -> AddItemResult:
         """
-        Add an item to a player's inventory with concurrency protection.
+        Add an item to a player's inventory.
 
         Handles stacking automatically for stackable items.
         If the item is stackable and an existing stack has room, adds to it.
@@ -327,26 +325,6 @@ class InventoryService:
         Returns:
             AddItemResult with success status and details
         """
-        # Use player locking to prevent race conditions
-        lock_manager = get_player_lock_manager()
-        
-        async with lock_manager.acquire_player_lock(
-            player_id, LockType.INVENTORY, "add_item"
-        ):
-            return await InventoryService._add_item_locked(
-                player_id, item_id, quantity, durability
-            )
-    
-    @staticmethod
-    async def _add_item_locked(
-        player_id: int,
-        item_id: int,
-        quantity: int = 1,
-        durability: Optional[int] = None,
-    ) -> AddItemResult:
-        """
-        Internal add_item implementation (assumes player lock is already held).
-        """
         from .game_state_manager import get_game_state_manager
         from .item_service import ItemService
         
@@ -356,8 +334,7 @@ class InventoryService:
                 success=False,
                 message="Quantity must be positive",
             )
-
-        # Use ItemService instead of direct cache access
+        # Get item information for adding to inventory
         item = await ItemService.get_item_by_id(item_id)
         if not item:
             return AddItemResult(
@@ -508,41 +485,6 @@ class InventoryService:
             removed_quantity=quantity,
         )
 
-        # Get player inventory to check current slot status
-        slot_data = await state_manager.get_inventory_slot(player_id, slot)
-        if not slot_data:
-            return RemoveItemResult(
-                success=False,
-                message="Slot is empty",
-                removed_quantity=0,
-            )
-        
-        current_qty = slot_data.get("quantity", 1)
-        if current_qty < quantity:
-            return RemoveItemResult(
-                success=False,
-                message=f"Not enough items (have {current_qty}, need {quantity})",
-                removed_quantity=0,
-            )
-        
-        new_qty = current_qty - quantity
-        if new_qty == 0:
-            # Remove the slot entirely
-            await state_manager.delete_inventory_slot(player_id, slot)
-        else:
-            # Update with new quantity
-            await state_manager.set_inventory_slot(
-                player_id, slot, slot_data["item_id"], new_qty, 
-                float(slot_data.get("current_durability", 1.0))
-            )
-        
-        return RemoveItemResult(
-            success=True,
-            message=f"Removed {quantity} items",
-            removed_quantity=quantity,
-        )
-
-    @staticmethod
     @staticmethod
     async def move_item(
         player_id: int,
@@ -596,7 +538,7 @@ class InventoryService:
                 from_data["item_id"] == to_data["item_id"]
                 and from_data.get("quantity", 1) > 1  # Assume stackable if quantity > 1
             ):
-                # Use ItemService to check max_stack_size instead of direct cache access
+                # Check if items can be stacked together
                 item = await ItemService.get_item_by_id(from_data["item_id"])
                 if item and item.max_stack_size > 1:
                     # Merge stacks
@@ -696,7 +638,7 @@ class InventoryService:
         inventory_data = await state_manager.get_inventory(player_id)
         slots_cleared = len(inventory_data)
         
-        # Use GSM's clear method
+        # Clear all items from inventory
         await state_manager.clear_inventory(player_id)
         
         return slots_cleared
@@ -728,7 +670,7 @@ class InventoryService:
             slot = int(slot_str)
             item_id = slot_data["item_id"]
             
-            # Use ItemService to check stackability instead of direct cache access
+            # Check if item can be stacked
             item = await ItemService.get_item_by_id(item_id)
             if item and item.max_stack_size > 1:
                 if item_id not in item_stacks:
@@ -742,7 +684,7 @@ class InventoryService:
             if len(stacks) <= 1:
                 continue
 
-            # Use ItemService to get max stack size
+            # Get maximum stack size for this item type
             item = await ItemService.get_item_by_id(item_id)
             if not item:
                 continue
