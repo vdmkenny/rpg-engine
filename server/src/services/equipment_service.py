@@ -2,18 +2,12 @@
 Service for managing player equipment.
 """
 
-from typing import Optional, TYPE_CHECKING
-
-from sqlalchemy import select, delete
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from typing import Optional, TYPE_CHECKING, Dict, Any
+from dataclasses import dataclass
 
 from ..core.config import settings
 from ..core.items import EquipmentSlot, ItemCategory
 from ..core.logging_config import get_logger
-from ..models.item import Item, PlayerEquipment, PlayerInventory
-from ..models.player import Player
-from ..models.skill import PlayerSkill, Skill
 from ..schemas.item import (
     ItemStats,
     EquipItemResult,
@@ -29,18 +23,45 @@ from .game_state_manager import get_game_state_manager
 
 if TYPE_CHECKING:
     from .hp_service import HpService
-
-if TYPE_CHECKING:
     from .game_state_manager import GameStateManager
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class EquipmentItem:
+    """Pure data structure for equipped items (replaces PlayerEquipment ORM model)."""
+    player_id: int
+    equipment_slot: str
+    item_id: int
+    quantity: int
+    current_durability: Optional[int]
+    item_data: Dict[str, Any]  # Item metadata from ItemService
+    
+    def get_stats(self) -> ItemStats:
+        """Get item stats for this equipment piece."""
+        return ItemStats(
+            attack_bonus=self.item_data.get("attack_bonus", 0),
+            strength_bonus=self.item_data.get("strength_bonus", 0),
+            physical_defence_bonus=self.item_data.get("physical_defence_bonus", 0),
+            ranged_attack_bonus=self.item_data.get("ranged_attack_bonus", 0),
+            ranged_strength_bonus=self.item_data.get("ranged_strength_bonus", 0),
+            magic_attack_bonus=self.item_data.get("magic_attack_bonus", 0),
+            magic_damage_bonus=self.item_data.get("magic_damage_bonus", 0),
+            magic_defence_bonus=self.item_data.get("magic_defence_bonus", 0),
+            health_bonus=self.item_data.get("health_bonus", 0),
+            speed_bonus=self.item_data.get("speed_bonus", 0),
+            mining_bonus=self.item_data.get("mining_bonus", 0),
+            woodcutting_bonus=self.item_data.get("woodcutting_bonus", 0),
+            fishing_bonus=self.item_data.get("fishing_bonus", 0),
+        )
 
 
 class EquipmentService:
     """Service for managing player equipment."""
 
     @staticmethod
-    async def get_equipment(player_id: int) -> dict[str, PlayerEquipment]:
+    async def get_equipment(player_id: int) -> dict[str, EquipmentItem]:
         """
         Get all equipped items for a player.
 
@@ -48,32 +69,32 @@ class EquipmentService:
             player_id: Player ID
 
         Returns:
-            Dictionary mapping slot name to PlayerEquipment
+            Dictionary mapping slot name to EquipmentItem
         """
-        # Use GameStateManager for all equipment access (online/offline transparent)
+        # Get all equipment data for player
         state_manager = get_game_state_manager()
         equipment_data = await state_manager.get_equipment(player_id)
         
         if not equipment_data:
             return {}
             
-        # Convert GSM data to PlayerEquipment objects with item data
+        # Convert raw data to structured equipment objects with metadata
         equipment = {}
         for slot, slot_data in equipment_data.items():
             item_id = slot_data["item_id"]
             
-            # Use ItemService for item data (service-first architecture)
-            item = await ItemService.get_item_by_id(item_id)
-            if item:
-                # Create PlayerEquipment object
-                eq = PlayerEquipment(
+            # Get item metadata for equipped item
+            item_data = await ItemService.get_item_by_id(item_id)
+            if item_data:
+                # Create structured equipment business object
+                eq = EquipmentItem(
                     player_id=player_id,
                     equipment_slot=slot,
                     item_id=item_id,
                     quantity=slot_data.get("quantity", 1),
                     current_durability=slot_data.get("current_durability"),
+                    item_data=item_data  # Item metadata from ItemService
                 )
-                eq.item = item  # Attach item data for easy access
                 equipment[slot] = eq
                 
         return equipment
@@ -97,7 +118,7 @@ class EquipmentService:
         for slot in EquipmentSlot:
             eq = equipment.get(slot.value)
             if eq:
-                item_info = ItemService.item_to_info(eq.item)
+                item_info = ItemService.item_to_info(ItemService._dict_to_item_model(eq.item_data))
                 slots.append(
                     EquipmentSlotInfo(
                         slot=slot.value,
@@ -114,7 +135,7 @@ class EquipmentService:
     @staticmethod
     async def get_equipped_in_slot(
         player_id: int, slot: EquipmentSlot
-    ) -> Optional[PlayerEquipment]:
+    ) -> Optional[EquipmentItem]:
         """
         Get the item equipped in a specific slot.
 
@@ -123,7 +144,7 @@ class EquipmentService:
             slot: Equipment slot
 
         Returns:
-            PlayerEquipment if slot is occupied, None if empty
+            EquipmentItem if slot is occupied, None if empty
         """
         # Use GameStateManager for all equipment access (online/offline transparent)
         state_manager = get_game_state_manager()
@@ -132,21 +153,21 @@ class EquipmentService:
         if not slot_data:
             return None
             
-        # Use ItemService for item data (service-first architecture)
-        item = await ItemService.get_item_by_id(slot_data["item_id"])
-        if not item:
-            return None
-            
-        # Create PlayerEquipment object
-        eq = PlayerEquipment(
-            player_id=player_id,
-            equipment_slot=slot.value,
-            item_id=slot_data["item_id"],
-            quantity=slot_data.get("quantity", 1),
-            current_durability=slot_data.get("current_durability"),
-        )
-        eq.item = item  # Attach item data for easy access
-        return eq
+            # Get item metadata for equipped item
+            item_data = await ItemService.get_item_by_id(slot_data["item_id"])
+            if not item_data:
+                return None
+                
+            # Create structured equipment business object
+            eq = EquipmentItem(
+                player_id=player_id,
+                equipment_slot=slot.value,
+                item_id=slot_data["item_id"],
+                quantity=slot_data.get("quantity", 1),
+                current_durability=slot_data.get("current_durability"),
+                item_data=item_data  # Item metadata from service
+            )
+            return eq
 
     @staticmethod
     async def get_total_stats(player_id: int) -> ItemStats:
@@ -162,18 +183,18 @@ class EquipmentService:
         Returns:
             ItemStats with aggregated values
         """
-        # Get all equipment from GSM
+        # Get all equipment data for stat calculation
         state_manager = get_game_state_manager()
         equipment_data = await state_manager.get_equipment(player_id)
         if not equipment_data:
             return ItemStats()
         
-        # Get item data for stat calculation
+        # Calculate total stats from equipped items
         item_ids = [slot_data["item_id"] for slot_data in equipment_data.values()]
         if not item_ids:
             return ItemStats()
         
-        # Get item stats for calculation
+        # Get item statistics for calculation
         items_stats = {}
         for item_id in item_ids:
             item_info = state_manager.get_cached_item_meta(item_id)
@@ -227,17 +248,17 @@ class EquipmentService:
         else:
             base_hp = HITPOINTS_START_LEVEL
 
-        # Get equipment from GSM and calculate total health bonus
+        # Calculate equipment health bonuses for HP calculation
         equipment = await gsm.get_equipment(player_id)
         if not equipment:
             return base_hp
 
-        # Get item metadata from GSM cache (NO database session creation)
+        # Get item metadata for health bonus calculation
         health_bonus = 0
         item_ids = [slot_data["item_id"] for slot_data in equipment.values()]
 
         if item_ids:
-            # Use GSM's item metadata cache instead of direct database query
+            # Get item metadata for equipped items
             items_meta = await gsm.get_items_meta(item_ids)
             
             for slot_data in equipment.values():
@@ -266,7 +287,7 @@ class EquipmentService:
 
         gsm = get_game_state_manager()
         
-        # Get current HP through GSM
+        # Get current HP for player
         hp_data = await gsm.get_player_hp(player_id)
         if not hp_data:
             return -1
@@ -274,7 +295,7 @@ class EquipmentService:
         current_hp = hp_data.get("current_hp", 0)
         new_hp = current_hp + health_bonus
         
-        # Update HP through GSM (handles both cache and database)
+        # Update player's current HP
         await gsm.update_player_hp(player_id, new_hp)
 
         logger.info(
@@ -333,18 +354,18 @@ class EquipmentService:
         return new_current_hp
 
     @staticmethod
-    async def can_equip(player_id: int, item: Item) -> CanEquipResult:
+    async def can_equip(player_id: int, item_data: Dict[str, Any]) -> CanEquipResult:
         """
         Check if player meets skill requirements to equip an item.
 
         Args:
             player_id: Player ID
-            item: Item to check
+            item_data: Item data dict from ItemService
 
         Returns:
             CanEquipResult with status and reason
         """
-        if not item.equipment_slot:
+        if not item_data.get("equipment_slot"):
             return CanEquipResult(can_equip=False, reason="Item is not equipable")
 
         if not item.required_skill:
@@ -584,7 +605,6 @@ class EquipmentService:
 
         net_health_change = health_bonus_gained - health_bonus_lost
         if net_health_change != 0:
-            # Import locally to avoid circular import
             from .hp_service import HpService
             
             current_hp, max_hp = await HpService.get_hp(player_id)
@@ -679,7 +699,6 @@ class EquipmentService:
 
             # Handle HP adjustment for health_bonus loss
             if health_bonus_lost > 0:
-                # Import locally to avoid circular import
                 from .hp_service import HpService
                 
                 current_hp, max_hp = await HpService.get_hp(player_id)
@@ -728,7 +747,6 @@ class EquipmentService:
 
                 # Handle HP adjustment for health_bonus loss
                 if health_bonus_lost > 0:
-                    # Import locally to avoid circular import
                     from .hp_service import HpService
                     
                     current_hp, max_hp = await HpService.get_hp(player_id)
@@ -982,7 +1000,7 @@ class EquipmentService:
         return item_count
 
     @staticmethod
-    async def get_all_equipped_items(player_id: int) -> list[tuple[PlayerEquipment, Item]]:
+    async def get_all_equipped_items(player_id: int) -> list[EquipmentItem]:
         """
         Get all equipped items with their item data.
 
@@ -990,7 +1008,7 @@ class EquipmentService:
             player_id: Player ID
 
         Returns:
-            List of (PlayerEquipment, Item) tuples
+            List of EquipmentItem objects
         """
         state_manager = get_game_state_manager()
         equipment_data = await state_manager.get_equipment(player_id)
@@ -998,23 +1016,23 @@ class EquipmentService:
         if not equipment_data:
             return []
         
-        # Build list of (PlayerEquipment, Item) tuples using ItemService
+        # Build list of EquipmentItem objects using ItemService
         equipped_items = []
         for slot, slot_data in equipment_data.items():
             item_id = slot_data["item_id"]
             
             # Use ItemService for item data (service-first architecture)
-            item = await ItemService.get_item_by_id(item_id)
-            if item:
-                # Create PlayerEquipment object
-                eq = PlayerEquipment(
+            item_data = await ItemService.get_item_by_id(item_id)
+            if item_data:
+                # Create EquipmentItem business object
+                eq = EquipmentItem(
                     player_id=player_id,
                     equipment_slot=slot,
                     item_id=item_id,
                     quantity=slot_data.get("quantity", 1),
                     current_durability=slot_data.get("current_durability"),
+                    item_data=item_data  # Pure dict data from ItemService
                 )
-                eq.item = item  # Attach item data
-                equipped_items.append((eq, item))
+                equipped_items.append(eq)
                 
         return equipped_items
