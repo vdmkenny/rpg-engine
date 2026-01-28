@@ -17,6 +17,7 @@ from server.src.services.game_state_manager import (
     init_game_state_manager,
     get_game_state_manager,
 )
+from server.src.core.concurrency import initialize_concurrency_infrastructure
 from common.src.protocol import MessageType, WSMessage
 
 # Initialize logging and metrics as early as possible
@@ -46,6 +47,9 @@ async def lifespan(app: FastAPI):
     
     # Initialize GameStateManager as the single source of truth
     gsm = init_game_state_manager(valkey, AsyncSessionLocal)
+    
+    # Initialize concurrency infrastructure with Valkey client
+    initialize_concurrency_infrastructure(valkey)
     
     # Sync items to database and load item cache for reference data
     try:

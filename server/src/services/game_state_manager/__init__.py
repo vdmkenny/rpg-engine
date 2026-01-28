@@ -21,6 +21,7 @@ from server.src.core.logging_config import get_logger
 
 from .state_access import GSMStateAccess
 from .batch_operations import GSMBatchOps  
+from .atomic_operations import GSMAtomicOperations  
 
 
 logger = get_logger(__name__)
@@ -110,6 +111,7 @@ class GameStateManager:
         # Initialize helper classes
         self.state_access = GSMStateAccess(self)
         self.batch_ops = GSMBatchOps(self)
+        self.atomic_ops = GSMAtomicOperations(self)
         
         logger.info("GameStateManager initialized")
     
