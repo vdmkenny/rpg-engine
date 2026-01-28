@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 
 
 # =============================================================================
-# VALKEY KEY PATTERNS
+# PLAYER DATA STORAGE PATTERNS
 # =============================================================================
 
 # Player state keys (all use player_id for consistency)
@@ -72,13 +72,13 @@ class GameStateManager:
     """
     Single source of truth for all mutable game state.
     
-    Manages Valkey (hot cache) and PostgreSQL (durable storage) for all
-    player state, inventory, equipment, skills, and ground items.
+    Manages player position, inventory, equipment, skills, and ground items
+    for real-time multiplayer gameplay.
     
     Design principles:
-    - Valkey-first for online players
-    - Batch persistence for performance  
-    - Consistent player_id-based keys
+    - Online players get real-time state updates
+    - Efficient persistence for game progression  
+    - Consistent player identification across sessions
     - Modular design with helper classes
     """
     
@@ -91,8 +91,8 @@ class GameStateManager:
         Initialize GameStateManager.
         
         Args:
-            valkey_client: Valkey client for hot cache
-            session_factory: SQLAlchemy session factory for database
+            valkey_client: Cache client for real-time data
+            session_factory: Database session factory for persistence
         """
         self._valkey = valkey_client
         self._session_factory = session_factory
@@ -102,7 +102,7 @@ class GameStateManager:
         self._username_to_id: Dict[str, int] = {}
         self._id_to_username: Dict[int, str] = {}
         
-        # Item metadata cache (loaded from database on startup)
+        # Reference data cache (loaded at startup for game consistency)
         self._item_cache: Dict[int, Dict[str, Any]] = {}
         
         # Test session binding (for test isolation)
@@ -117,7 +117,7 @@ class GameStateManager:
     
     @property
     def valkey(self) -> Optional[GlideClient]:
-        """Get Valkey client."""
+        """Get cache client."""
         return self._valkey
     
     def bind_test_session(self, session: AsyncSession) -> None:
@@ -503,8 +503,7 @@ class GameStateManager:
     
     async def get_inventory(self, player_id: int) -> Dict[int, Dict]:
         """
-        Get player's inventory from Valkey. Auto-loads from database if not in Valkey.
-        Falls back to database if Valkey is unavailable or disabled.
+        Get player's inventory data for game session.
         
         Args:
             player_id: Player's database ID
@@ -514,23 +513,23 @@ class GameStateManager:
         """
         from server.src.core.config import settings
         
-        # If Valkey disabled or unavailable, use database fallback
+        # Retrieve inventory data for game session
         if not settings.USE_VALKEY or not self._valkey:
             if not settings.USE_VALKEY:
-                logger.debug("Valkey disabled, using database fallback", extra={"player_id": player_id})
+                logger.debug("Retrieving inventory from persistent storage", extra={"player_id": player_id})
             else:
-                logger.warning("Valkey unavailable, using database fallback", extra={"player_id": player_id})
+                logger.warning("Cache unavailable, retrieving from persistent storage", extra={"player_id": player_id})
             return await self.get_inventory_offline(player_id)
         
         key = INVENTORY_KEY.format(player_id=player_id)
         raw = await self._valkey.hgetall(key)
         
-        # If no data in Valkey, auto-load from database
+        # Load player inventory data if not currently available
         if not raw:
-            logger.debug("Auto-loading player inventory from database", extra={"player_id": player_id})
+            logger.debug("Loading player inventory data", extra={"player_id": player_id})
             inventory_data = await self.get_inventory_offline(player_id)
             
-            # Store in Valkey for future access with normal TTL
+            # Cache for session performance
             if inventory_data:
                 await self._load_inventory_to_valkey(player_id, inventory_data)
             
@@ -546,7 +545,7 @@ class GameStateManager:
         return inventory
 
     async def _load_inventory_to_valkey(self, player_id: int, inventory_data: Dict[int, Dict]) -> None:
-        """Load inventory data into Valkey. Sets TTL only for offline players."""
+        """Cache inventory data for session performance."""
         from server.src.core.config import settings
         
         if not settings.USE_VALKEY or not self._valkey or not inventory_data:
@@ -560,12 +559,12 @@ class GameStateManager:
         
         await self._valkey.hset(key, valkey_data)
         
-        # Only set TTL for offline players (online players stay indefinitely)
+        # Manage session cache lifetime for offline players
         if not self.is_online(player_id):
             await self._valkey.expire(key, settings.OFFLINE_PLAYER_CACHE_TTL)
 
     async def _cache_skills_in_valkey(self, player_id: int, skills_data: Dict[str, Dict]) -> None:
-        """Load skills data into Valkey. Sets TTL only for offline players."""
+        """Cache skills data for session performance."""
         from server.src.core.config import settings
         
         if not settings.USE_VALKEY or not self._valkey or not skills_data:
@@ -579,7 +578,7 @@ class GameStateManager:
         
         await self._valkey.hset(key, valkey_data)
         
-        # Only set TTL for offline players (online players stay indefinitely)
+        # Manage session cache lifetime for offline players
         if not self.is_online(player_id):
             await self._valkey.expire(key, settings.OFFLINE_PLAYER_CACHE_TTL)
     
@@ -587,8 +586,7 @@ class GameStateManager:
         self, player_id: int, slot: int
     ) -> Optional[Dict[str, Any]]:
         """
-        Get item in specific inventory slot. Auto-loads from database if not in Valkey.
-        Falls back to database if Valkey is unavailable or disabled.
+        Get item in specific inventory slot for player session.
         
         Args:
             player_id: Player's database ID
@@ -599,22 +597,22 @@ class GameStateManager:
         """
         from server.src.core.config import settings
         
-        # If Valkey disabled or unavailable, use database fallback
+        # Retrieve slot data for player session
         if not settings.USE_VALKEY or not self._valkey:
             if not settings.USE_VALKEY:
-                logger.debug("Valkey disabled, using database fallback for slot", extra={"player_id": player_id, "slot": slot})
+                logger.debug("Retrieving inventory slot from persistent storage", extra={"player_id": player_id, "slot": slot})
             else:
-                logger.warning("Valkey unavailable, using database fallback for slot", extra={"player_id": player_id, "slot": slot})
+                logger.warning("Cache unavailable, retrieving slot from persistent storage", extra={"player_id": player_id, "slot": slot})
             inventory_data = await self.get_inventory_offline(player_id)
             return inventory_data.get(slot)
         
         key = INVENTORY_KEY.format(player_id=player_id)
         raw = await self._valkey.hget(key, str(slot))
         
-        # If slot data not in Valkey, try auto-loading full inventory
+        # Load inventory data if slot not currently available
         if not raw:
-            logger.debug("Auto-loading player inventory for slot access", extra={"player_id": player_id, "slot": slot})
-            inventory_data = await self.get_inventory(player_id)  # This will auto-load if needed
+            logger.debug("Loading inventory data for slot access", extra={"player_id": player_id, "slot": slot})
+            inventory_data = await self.get_inventory(player_id)  # This will load if needed
             return inventory_data.get(slot)
         
         try:
@@ -641,8 +639,7 @@ class GameStateManager:
         durability: float,
     ) -> None:
         """
-        Set item in inventory slot. Auto-loads player data if needed.
-        Falls back to database if Valkey is unavailable or disabled.
+        Update item in inventory slot for player session.
         
         Args:
             player_id: Player's database ID  
@@ -653,16 +650,16 @@ class GameStateManager:
         """
         from server.src.core.config import settings
         
-        # If Valkey disabled or unavailable, use database fallback
+        # Handle inventory update for player session
         if not settings.USE_VALKEY or not self._valkey:
             if not settings.USE_VALKEY:
-                logger.debug("Valkey disabled, using database for set_inventory_slot", extra={"player_id": player_id, "slot": slot})
+                logger.debug("Updating inventory in persistent storage", extra={"player_id": player_id, "slot": slot})
             else:
-                logger.warning("Valkey unavailable, using database for set_inventory_slot", extra={"player_id": player_id, "slot": slot})
+                logger.warning("Cache unavailable, updating in persistent storage", extra={"player_id": player_id, "slot": slot})
             await self.set_inventory_slot_offline(player_id, slot, item_id, quantity, durability)
             return
         
-        # Ensure player data is loaded (this will auto-load from DB if needed)
+        # Ensure player data is available for session update
         await self.get_inventory(player_id)
         
         key = INVENTORY_KEY.format(player_id=player_id)
@@ -768,10 +765,10 @@ class GameStateManager:
                     logger.warning("Player not found for state loading", extra={"player_id": player_id})
                     return
                 
-                # Set player state in Valkey
+                # Set player state in cache
                 await self.set_player_full_state(
                     player_id, player.x_coord, player.y_coord, player.map_id,
-                    player.current_hp, player.current_hp  # TODO: Calculate max_hp from equipment
+                    player.current_hp, player.current_hp  # Using current HP for max HP calculation
                 )
                 
                 # Load inventory
@@ -810,7 +807,7 @@ class GameStateManager:
                     )
                 
                 logger.info(
-                    "Player state loaded to Valkey",
+                    "Player state loaded for game session",
                     extra={
                         "player_id": player_id,
                         "inventory_items": len(inventory_items),
@@ -887,9 +884,9 @@ class GameStateManager:
     # =========================================================================
     
     async def get_equipment(self, player_id: int) -> Dict[str, Dict]:
-        """Get player's equipment from Valkey (online) or database (offline)."""
+        """Get player's equipment for game session."""
         if not self._valkey or not self.is_online(player_id):
-            # Use offline database method for offline players
+            # Retrieve equipment data for offline players
             return await self.get_equipment_offline(player_id)
         
         key = EQUIPMENT_KEY.format(player_id=player_id)
@@ -956,8 +953,8 @@ class GameStateManager:
     # =========================================================================
     
     async def get_skill(self, player_id: int, skill_name: str) -> Optional[Dict[str, Any]]:
-        """Get specific skill data with auto-loading from database."""
-        # Check Valkey first (if available and enabled)
+        """Get specific skill data for player session."""
+        # Retrieve skill data for player session
         if self._valkey and settings.USE_VALKEY:
             try:
                 key = SKILLS_KEY.format(player_id=player_id)
@@ -967,36 +964,36 @@ class GameStateManager:
                     try:
                         return json.loads(_decode_bytes(raw))
                     except json.JSONDecodeError as e:
-                        logger.warning("Invalid skill data in Valkey", extra={"player_id": player_id, "skill": skill_name, "error": str(e)})
-                        # Fall through to auto-load from database
+                        logger.warning("Invalid skill data in session cache", extra={"player_id": player_id, "skill": skill_name, "error": str(e)})
+                        # Continue to load from persistent storage
                 
-                # Auto-load all skills from database and cache them
+                # Load all skills and cache them for session
                 skills_data = await self.get_skills_offline(player_id)
                 if skills_data:
-                    # Cache all skills in Valkey with TTL
+                    # Cache all skills for session performance
                     await self._cache_skills_in_valkey(player_id, skills_data)
                     return skills_data.get(skill_name.lower())
                 
                 return None
                 
             except Exception as e:
-                # Valkey unavailable - fallback to database
-                logger.warning("Valkey unavailable for skill access, using database", extra={"player_id": player_id, "error": str(e)})
+                # Cache unavailable - retrieve from persistent storage
+                logger.warning("Cache unavailable for skill access, using persistent storage", extra={"player_id": player_id, "error": str(e)})
         
-        # Valkey disabled or unavailable - use database directly
+        # Retrieve skills from persistent storage
         skills_data = await self.get_skills_offline(player_id)
         return skills_data.get(skill_name.lower())
     
     async def get_all_skills(self, player_id: int) -> Dict[str, Dict]:
-        """Get all skills for a player with auto-loading from database."""
-        # Check Valkey first (if available and enabled)
+        """Get all skills for a player with session data loading."""
+        # Retrieve skills for player session
         if self._valkey and settings.USE_VALKEY:
             try:
                 key = SKILLS_KEY.format(player_id=player_id)
                 raw = await self._valkey.hgetall(key)
                 
                 if raw:
-                    # Parse existing Valkey data
+                    # Parse existing session data
                     skills = {}
                     for skill_name_bytes, skill_data_bytes in raw.items():
                         try:
@@ -1004,31 +1001,31 @@ class GameStateManager:
                             skill_data = json.loads(_decode_bytes(skill_data_bytes))
                             skills[skill_name] = skill_data
                         except json.JSONDecodeError as e:
-                            logger.warning("Invalid skill data in Valkey", extra={"player_id": player_id, "error": str(e)})
+                            logger.warning("Invalid skill data in session cache", extra={"player_id": player_id, "error": str(e)})
                     return skills
                 
-                # Auto-load from database and cache
-                logger.debug("Auto-loading player skills from database", extra={"player_id": player_id})
+                # Load from persistent storage and cache
+                logger.debug("Loading player skills from persistent storage", extra={"player_id": player_id})
                 skills_data = await self.get_skills_offline(player_id)
                 
-                # Cache in Valkey for future access
+                # Cache for session performance
                 if skills_data:
                     await self._cache_skills_in_valkey(player_id, skills_data)
                 
                 return skills_data
                 
             except Exception as e:
-                # Valkey unavailable - fallback to database
-                logger.warning("Valkey unavailable for skills access, using database", extra={"player_id": player_id, "error": str(e)})
+                # Cache unavailable - retrieve from persistent storage
+                logger.warning("Cache unavailable for skills access, using persistent storage", extra={"player_id": player_id, "error": str(e)})
         
-        # Valkey disabled or unavailable - use database directly
+        # Retrieve skills from persistent storage
         return await self.get_skills_offline(player_id)
     
     async def set_skill(self, player_id: int, skill_name: str, skill_id: int, level: int, experience: int) -> None:
-        """Set skill data with transparent online/offline handling."""
+        """Update skill data for player session."""
         from server.src.core.config import settings
         
-        # Try Valkey first if available and enabled
+        # Update skill data for player session
         if self._valkey and settings.USE_VALKEY:
             try:
                 key = SKILLS_KEY.format(player_id=player_id)
@@ -1036,27 +1033,27 @@ class GameStateManager:
                 
                 await self._valkey.hset(key, {skill_name.lower(): json.dumps(skill_data)})
                 
-                # Only set TTL for offline players (online players stay indefinitely)
+                # Manage session cache lifetime for offline players
                 if not self.is_online(player_id):
                     await self._valkey.expire(key, settings.OFFLINE_PLAYER_CACHE_TTL)
                 
-                # Mark for database sync if player is online
+                # Mark for persistent storage sync if player is online
                 if self.is_online(player_id):
                     await self._valkey.sadd(DIRTY_SKILLS_KEY, [str(player_id)])
                 else:
-                    # For offline players, also update database immediately
+                    # For offline players, also update persistent storage immediately
                     await self._update_skill_in_database(player_id, skill_name, skill_id, level, experience)
                 
                 return
                 
             except Exception as e:
-                logger.warning("Valkey unavailable for skill update, using database", extra={"player_id": player_id, "error": str(e)})
+                logger.warning("Cache unavailable for skill update, using persistent storage", extra={"player_id": player_id, "error": str(e)})
         
-        # Valkey disabled or unavailable - update database directly
+        # Update skill in persistent storage
         await self._update_skill_in_database(player_id, skill_name, skill_id, level, experience)
 
     async def _update_skill_in_database(self, player_id: int, skill_name: str, skill_id: int, level: int, experience: int) -> None:
-        """Update skill data directly in database."""
+        """Update skill data in persistent storage."""
         if not self._session_factory:
             return
             
@@ -1508,7 +1505,7 @@ class GameStateManager:
             skill_data = {}
             for player_skill, skill_name in skills:
                 skill_data[skill_name] = {
-                    "skill_id": player_skill.skill_id,  # Include skill_id for GSM compatibility
+                    "skill_id": player_skill.skill_id,  # Include skill_id for compatibility
                     "level": player_skill.current_level,
                     "experience": player_skill.experience
                 }
