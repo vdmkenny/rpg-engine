@@ -51,14 +51,14 @@ class TestUnifiedItemManager:
                 slot=0,
             )
 
-            # Test the new GSM-compliant interface (no db parameter passed)
+            # Test adding item to player inventory
             result = await item_manager.add_item_to_inventory(
                 player_id=1,
                 item_id=sample_item.id,
                 quantity=1,
             )
 
-            # Verify delegation occurred (db parameter NOT passed to InventoryService)
+            # Verify service method was called with correct parameters
             mock_add.assert_called_once_with(
                 player_id=1,
                 item_id=sample_item.id,
@@ -83,14 +83,14 @@ class TestUnifiedItemManager:
                 message="Item equipped",
             )
 
-            # Test the GSM-compliant interface (no db parameter)
+            # Test equipping item from inventory
             result = await item_manager.equip_item(
                 player_id=1,
                 inventory_slot=0,
             )
 
-            # Note: ItemManager now uses temporary db session internally
-            # The mock should expect the call from EquipmentService, not verify db parameter
+            # Verify equipment service was called
+            # Service handles database operations internally
             mock_equip.assert_called_once()
 
             # Verify result
@@ -195,7 +195,7 @@ class TestUnifiedItemManager:
                 message="Item unequipped and dropped",
             )
 
-            # Test the GSM-compliant interface (no db parameter)
+            # Test unequipping item to inventory with ground drop fallback
             result = await item_manager.unequip_item(
                 player_id=1,
                 equipment_slot=EquipmentSlot.WEAPON,
@@ -204,8 +204,8 @@ class TestUnifiedItemManager:
                 player_y=10,
             )
 
-            # Note: ItemManager now uses temporary db session internally
-            # The mock should expect the call from EquipmentService, not verify db parameter  
+            # Verify equipment service was called
+            # Service handles database operations internally
             mock_unequip.assert_called_once()
 
             assert result.success is True

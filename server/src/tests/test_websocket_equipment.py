@@ -75,7 +75,7 @@ class TestEquipmentWebSocket:
         
         # Should have equipment structure
         assert "slots" in equipment_data
-        assert "total_stats" in equipment_data  # Changed from "stats" to "total_stats"
+        assert "total_stats" in equipment_data  # Equipment stats aggregated for player
         
         # Equipment slots should be a list
         slots = equipment_data["slots"]
