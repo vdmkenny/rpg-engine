@@ -1,7 +1,7 @@
 """
 Concurrency control infrastructure for RPG Engine.
 
-Provides player-level locking and Redis atomic operations to prevent race conditions
+Provides player-level locking and Valkey atomic operations to prevent race conditions
 and ensure data consistency in multiplayer scenarios.
 """
 
@@ -34,9 +34,9 @@ PLAYER_LOCK_HOLD_TIME = Histogram(
     "player_lock_hold_seconds", 
     "Time player locks are held"
 )
-REDIS_TRANSACTION_DURATION = Histogram(
-    "redis_transaction_seconds", 
-    "Duration of Redis atomic transactions"
+VALKEY_TRANSACTION_DURATION = Histogram(
+    "valkey_transaction_seconds", 
+    "Duration of Valkey atomic transactions"
 )
 LOCK_CONTENTIONS = Counter(
     "lock_contentions_total", 
@@ -49,6 +49,23 @@ ACTIVE_PLAYER_LOCKS = Gauge(
 DEADLOCK_DETECTIONS = Counter(
     "deadlock_detections_total", 
     "Number of potential deadlocks detected and avoided"
+)
+
+# Atomic Operation Metrics
+ATOMIC_OPERATIONS_TOTAL = Counter(
+    "atomic_operations_total",
+    "Total number of atomic operations attempted",
+    ["operation_type", "status"]  # status: success, failure, fallback
+)
+ATOMIC_OPERATION_DURATION = Histogram(
+    "atomic_operation_seconds",
+    "Duration of atomic operations",
+    ["operation_type"]
+)
+ATOMIC_FALLBACK_RATE = Counter(
+    "atomic_fallbacks_total",
+    "Number of times atomic operations fell back to direct operations",
+    ["operation_type", "reason"]
 )
 
 
@@ -303,64 +320,110 @@ class PlayerLockManager:
         }
 
 
-class RedisAtomicOperations:
+class ValkeyAtomicOperations:
     """
-    Provides atomic Redis operations using transactions to ensure consistency.
+    Provides atomic Valkey operations using transactions to ensure consistency.
+    Includes retry logic and timeout handling for improved robustness.
     """
     
-    def __init__(self, valkey_client: GlideClient):
+    def __init__(self, valkey_client: GlideClient, max_retries: int = 3, base_retry_delay: float = 0.01):
         self.valkey = valkey_client
+        self.max_retries = max_retries
+        self.base_retry_delay = base_retry_delay  # Base delay for exponential backoff
     
     @asynccontextmanager
-    async def transaction(self, description: str = "redis_transaction") -> AsyncGenerator[GlideClient, None]:
+    async def transaction(self, description: str = "valkey_transaction") -> AsyncGenerator[GlideClient, None]:
         """
-        Execute Redis operations within a transaction (MULTI/EXEC).
+        Execute Valkey operations within a transaction (MULTI/EXEC) with retry logic.
         
         Args:
             description: Description for monitoring purposes
             
         Yields:
-            Redis client configured for transaction mode
+            Valkey client configured for transaction mode
         """
         start_time = time.time()
+        last_error = None
         
-        try:
-            # Start Redis transaction
-            transaction_client = self.valkey.multi()
-            
-            logger.debug(
-                "Redis transaction started",
-                extra={"description": description}
-            )
-            
-            yield transaction_client
-            
-            # Execute transaction
-            results = await transaction_client.exec()
-            
-            duration = time.time() - start_time
-            REDIS_TRANSACTION_DURATION.observe(duration)
-            
-            logger.debug(
-                "Redis transaction completed",
-                extra={
-                    "description": description,
-                    "duration": duration,
-                    "operations_count": len(results) if results else 0
-                }
-            )
-            
-        except Exception as e:
-            duration = time.time() - start_time
-            logger.error(
-                "Redis transaction failed",
-                extra={
-                    "description": description,
-                    "duration": duration,
-                    "error": str(e)
-                }
-            )
-            raise
+        for attempt in range(self.max_retries + 1):
+            try:
+                # Add delay for retries (exponential backoff)
+                if attempt > 0:
+                    delay = self.base_retry_delay * (2 ** (attempt - 1))
+                    await asyncio.sleep(delay)
+                    logger.debug(
+                        "Retrying Valkey transaction",
+                        extra={
+                            "description": description,
+                            "attempt": attempt + 1,
+                            "delay": delay
+                        }
+                    )
+                
+                # Start Valkey transaction
+                transaction_client = self.valkey.multi()
+                
+                logger.debug(
+                    "Valkey transaction started",
+                    extra={
+                        "description": description,
+                        "attempt": attempt + 1
+                    }
+                )
+                
+                yield transaction_client
+                
+                # Execute transaction
+                results = await transaction_client.exec()
+                
+                duration = time.time() - start_time
+                VALKEY_TRANSACTION_DURATION.observe(duration)
+                
+                logger.debug(
+                    "Valkey transaction completed",
+                    extra={
+                        "description": description,
+                        "duration": duration,
+                        "operations_count": len(results) if results else 0,
+                        "attempts": attempt + 1
+                    }
+                )
+                
+                # Success - exit retry loop
+                return
+                
+            except Exception as e:
+                last_error = e
+                duration = time.time() - start_time
+                
+                if attempt < self.max_retries:
+                    logger.warning(
+                        "Valkey transaction failed, retrying",
+                        extra={
+                            "description": description,
+                            "duration": duration,
+                            "error": str(e),
+                            "attempt": attempt + 1,
+                            "max_retries": self.max_retries
+                        }
+                    )
+                    continue
+                else:
+                    # Final attempt failed
+                    logger.error(
+                        "Valkey transaction failed after all retries",
+                        extra={
+                            "description": description,
+                            "duration": duration,
+                            "error": str(e),
+                            "total_attempts": attempt + 1
+                        }
+                    )
+                    raise
+        
+        # This should never be reached due to the raise above, but just in case
+        if last_error:
+            raise last_error
     
     async def atomic_player_update(
         self, 
@@ -389,19 +452,29 @@ class RedisAtomicOperations:
 
 # Singleton instances (initialized by application startup)
 _player_lock_manager: Optional[PlayerLockManager] = None
-_redis_atomic_operations: Optional[RedisAtomicOperations] = None
+_valkey_atomic_operations: Optional[ValkeyAtomicOperations] = None
 
 
-def initialize_concurrency_infrastructure(valkey_client: GlideClient) -> None:
+def initialize_concurrency_infrastructure(valkey_client: GlideClient, 
+                                         transaction_max_retries: int = 3, 
+                                         transaction_retry_delay: float = 0.01) -> None:
     """Initialize the concurrency infrastructure. Called during app startup."""
-    global _player_lock_manager, _redis_atomic_operations
+    global _player_lock_manager, _valkey_atomic_operations
     
     _player_lock_manager = PlayerLockManager()
-    _redis_atomic_operations = RedisAtomicOperations(valkey_client)
+    _valkey_atomic_operations = ValkeyAtomicOperations(
+        valkey_client, 
+        max_retries=transaction_max_retries,
+        base_retry_delay=transaction_retry_delay
+    )
     
     logger.info(
         "Concurrency infrastructure initialized",
-        extra={"features": ["player_locking", "redis_transactions"]}
+        extra={
+            "features": ["player_locking", "valkey_transactions"], 
+            "transaction_max_retries": transaction_max_retries,
+            "transaction_retry_delay": transaction_retry_delay
+        }
     )
 
 
@@ -412,39 +485,8 @@ def get_player_lock_manager() -> PlayerLockManager:
     return _player_lock_manager
 
 
-def get_redis_atomic_operations() -> RedisAtomicOperations:
-    """Get the global Redis atomic operations instance.""" 
-    if _redis_atomic_operations is None:
+def get_valkey_atomic_operations() -> ValkeyAtomicOperations:
+    """Get the global Valkey atomic operations instance.""" 
+    if _valkey_atomic_operations is None:
         raise RuntimeError("Concurrency infrastructure not initialized. Call initialize_concurrency_infrastructure() first.")
-    return _redis_atomic_operations
-
-
-# Convenience decorators for common patterns
-def with_player_lock(lock_type: LockType, operation_name: Optional[str] = None):
-    """Decorator to automatically acquire player lock for service methods."""
-    def decorator(func):
-        async def wrapper(*args, **kwargs):
-            # Extract player_id from first argument or keyword arguments
-            player_id = None
-            if args and isinstance(args[0], int):
-                player_id = args[0]
-            elif 'player_id' in kwargs:
-                player_id = kwargs['player_id']
-            else:
-                # Try to find player_id in first few arguments
-                for arg in args[:3]:
-                    if isinstance(arg, int) and arg > 0:
-                        player_id = arg
-                        break
-                        
-            if player_id is None:
-                raise ValueError(f"Could not determine player_id for {func.__name__}")
-            
-            op_name = operation_name or func.__name__
-            lock_manager = get_player_lock_manager()
-            
-            async with lock_manager.acquire_player_lock(player_id, lock_type, op_name):
-                return await func(*args, **kwargs)
-                
-        return wrapper
-    return decorator
+    return _valkey_atomic_operations

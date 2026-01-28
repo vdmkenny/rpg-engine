@@ -19,8 +19,6 @@ from server.src.game.game_loop import (
     compute_entity_diff,
     is_in_visible_range,
     cleanup_disconnected_player,
-    player_visible_state,
-    player_chunk_positions,
 )
 from common.src.protocol import MessageType
 from server.src.tests.conftest import FakeValkey
@@ -277,22 +275,26 @@ class TestVisibilitySystem:
 
     def test_cleanup_disconnected_player(self):
         """Cleanup should remove all traces of a player."""
+        from server.src.game.game_loop import _game_loop_state
+        
         # Set up some state with the new nested structure
-        player_visible_state["testuser"] = {
+        _game_loop_state.set_player_visible_state("testuser", {
             "players": {"other": {"x": 1, "y": 1}},
             "ground_items": {}
-        }
-        player_visible_state["observer"] = {
+        })
+        _game_loop_state.set_player_visible_state("observer", {
             "players": {"testuser": {"x": 2, "y": 2}},
             "ground_items": {}
-        }
-        player_chunk_positions["testuser"] = (0, 0)
+        })
+        _game_loop_state.set_player_chunk_position("testuser", (0, 0))
         
         cleanup_disconnected_player("testuser")
         
-        assert "testuser" not in player_visible_state
-        assert "testuser" not in player_chunk_positions
-        assert "testuser" not in player_visible_state.get("observer", {}).get("players", {})
+        # Verify testuser is removed from all states
+        assert _game_loop_state.get_player_visible_state("testuser") == {"players": {}, "ground_items": {}}
+        assert _game_loop_state.get_player_chunk_position("testuser") is None
+        observer_state = _game_loop_state.get_player_visible_state("observer")
+        assert "testuser" not in observer_state.get("players", {})
 
 
 class TestFakeValkey:
