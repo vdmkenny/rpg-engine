@@ -171,7 +171,7 @@ class TestDeathSequence:
             map_id="samplemap"
         )
         
-        player_result = await TestDataService.create_test_player_with_items(session, player_config)
+        player_result = await TestDataService.create_test_player_with_items(player_config)
         assert player_result.success, f"Failed to create test player: {player_result.message}"
         assert player_result.data is not None, "Player data should not be None"
         player = player_result.data
@@ -217,7 +217,7 @@ class TestDeathSequence:
             map_id="samplemap"
         )
         
-        player_result = await TestDataService.create_test_player_with_items(session, player_config)
+        player_result = await TestDataService.create_test_player_with_items(player_config)
         assert player_result.success, f"Failed to create test player: {player_result.message}"
         assert player_result.data is not None, "Player data should not be None"
         player = player_result.data

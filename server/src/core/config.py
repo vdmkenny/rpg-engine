@@ -147,6 +147,14 @@ class Settings(BaseSettings):
         game_config.get("game", {}).get("ground_items", {}).get("cleanup_interval", 30)
     )
 
+    # Cache TTL settings from config.yml
+    OFFLINE_PLAYER_CACHE_TTL: int = int(
+        os.getenv(
+            "OFFLINE_PLAYER_CACHE_TTL", 
+            str(game_config.get("cache", {}).get("offline_player_ttl_seconds", 1800))
+        )
+    )
+
     # Security settings from config.yml
     CHAT_MAX_MESSAGE_LENGTH: int = int(
         os.getenv(

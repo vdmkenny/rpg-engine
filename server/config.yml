@@ -131,6 +131,13 @@ game:
     # How often the cleanup task runs to remove expired items (seconds)
     cleanup_interval: 30
 
+# Cache configuration
+cache:
+  # TTL for offline player data when auto-loaded (seconds)
+  # Online players stay in cache indefinitely with no TTL
+  # Offline players are removed from cache immediately on logout/timeout
+  offline_player_ttl_seconds: 1800 # 30 minutes - only for auto-loaded offline players
+
 # Server infrastructure settings
 server:
   # Valkey (Redis-compatible) connection settings

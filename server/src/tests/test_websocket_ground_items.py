@@ -113,7 +113,7 @@ class TestGroundItemsInGameStateUpdate:
             map_id="samplemap"
         )
         
-        player_result = await TestDataService.create_test_player_with_items(session, player_config)
+        player_result = await TestDataService.create_test_player_with_items(player_config)
         assert player_result.success, f"Failed to create test player: {player_result.message}"
         assert player_result.data is not None, "Player data should not be None"
         
@@ -168,7 +168,7 @@ class TestPickupItemWithRealItems:
         
         # Create test player using service layer
         player_config = PlayerConfig(username_prefix="pickup_success", x=10, y=10)
-        player_result = await TestDataService.create_test_player_with_items(session, player_config)
+        player_result = await TestDataService.create_test_player_with_items(player_config)
         assert player_result.success
         assert player_result.data is not None, "Player data should not be None"
         player = player_result.data
@@ -226,7 +226,7 @@ class TestPickupItemWithRealItems:
         
         # Create test player at (10, 10)
         player_config = PlayerConfig(username_prefix="pickup_wrongtile", x=10, y=10)
-        player_result = await TestDataService.create_test_player_with_items(session, player_config)
+        player_result = await TestDataService.create_test_player_with_items(player_config)
         assert player_result.success
         assert player_result.data is not None, "Player data should not be None"
         player = player_result.data
@@ -287,7 +287,7 @@ class TestPickupStackableItem:
             y=10
         )
         
-        player_result = await TestDataService.create_test_player_with_items(session, player_config)
+        player_result = await TestDataService.create_test_player_with_items(player_config)
         assert player_result.success
         assert player_result.data is not None, "Player data should not be None"
         player = player_result.data

@@ -5,7 +5,7 @@ Handles JWT validation, player authentication, and session management.
 """
 
 from typing import Dict, Optional, Any
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timezone
 
 from ..core.security import verify_token
 from ..core.logging_config import get_logger
@@ -38,7 +38,7 @@ class AuthenticationService:
                 return None
 
             # Extract username from token
-            username = token_data.get("sub")
+            username = token_data.username
             if not username:
                 logger.debug("JWT token validation failed - missing username")
                 return None
@@ -62,13 +62,12 @@ class AuthenticationService:
 
     @staticmethod
     async def authenticate_websocket_connection(
-        db: AsyncSession, token: str
+        token: str
     ) -> Optional[Player]:
         """
         Authenticate a WebSocket connection and return player data.
 
         Args:
-            db: Database session
             token: JWT authentication token
 
         Returns:
@@ -82,7 +81,7 @@ class AuthenticationService:
 
             username = token_validation["username"]
 
-            # Use PlayerService without db parameter (service-first architecture)
+            # Use PlayerService to get player data
             player = await PlayerService.get_player_by_username(username)
             if not player:
                 logger.warning(
@@ -91,7 +90,7 @@ class AuthenticationService:
                 )
                 return None
 
-            # Check if player is banned or timed out
+            # Check if player is banned
             if player.is_banned:
                 logger.warning(
                     "WebSocket authentication failed - player banned",
@@ -99,7 +98,8 @@ class AuthenticationService:
                 )
                 return None
 
-            if player.timeout_until and player.timeout_until > db.bind.engine.pool._recycle:
+            # Check if player is timed out (timeout_until is a datetime)
+            if player.timeout_until and player.timeout_until > datetime.now(timezone.utc):
                 logger.warning(
                     "WebSocket authentication failed - player timed out",
                     extra={"username": username, "player_id": player.id}
@@ -122,20 +122,19 @@ class AuthenticationService:
 
     @staticmethod
     async def load_player_for_session(
-        db: AsyncSession, player: Player
+        player: Player
     ) -> Dict[str, Any]:
         """
         Load complete player data for WebSocket session initialization.
 
         Args:
-            db: Database session
             player: Authenticated player
 
         Returns:
             Dict with complete player session data
         """
         try:
-            # Register player as online and load state (service-first architecture)
+            # Register player as online and load state
             await PlayerService.login_player(player)
 
             # Get initial position data

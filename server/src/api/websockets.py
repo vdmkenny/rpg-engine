@@ -424,7 +424,7 @@ class WebSocketHandler:
             
             # Process chat message using service
             chat_result = await ChatService.handle_chat_message(
-                self.db, self.player_id, self.username, payload.model_dump(), manager
+                self.player_id, self.username, payload.model_dump(), manager
             )
             
             if chat_result["success"]:
@@ -1511,7 +1511,7 @@ async def _initialize_player_connection(username: str, player_id: int, db: Async
         # Initialize player in service layer and GSM
         await PlayerService.login_player(player)
         await ConnectionService.initialize_player_connection(
-            db, player.id, username, validated_x, validated_y, validated_map, current_hp, max_hp
+            player.id, username, validated_x, validated_y, validated_map, current_hp, max_hp
         )
         
     except Exception as e:
@@ -1603,7 +1603,7 @@ async def _handle_player_join_broadcast(websocket: WebSocket, username: str, pla
         
         # Get existing players on this map
         existing_players_data = await ConnectionService.get_existing_players_on_map(
-            db, map_id, username
+            map_id, username
         )
         
         if existing_players_data:
@@ -1678,7 +1678,7 @@ async def _handle_player_disconnect(username: str, player_id: Optional[int], db:
             
             # Use ConnectionService to handle disconnection
             await ConnectionService.handle_player_disconnect(
-                db, username, player_map, manager, rate_limiter
+                username, player_map, manager, rate_limiter
             )
             
             # Broadcast player left event to remaining players

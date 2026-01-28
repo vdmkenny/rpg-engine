@@ -5,9 +5,7 @@ Handles player creation, login/logout, and core player state management.
 """
 
 from typing import Optional, TYPE_CHECKING, Dict, Any, List
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import IntegrityError
+from fastapi import HTTPException, status
 
 from ..core.config import settings
 from ..core.security import get_password_hash
@@ -30,7 +28,7 @@ class PlayerService:
         player_data: PlayerCreate, 
     ) -> Player:
         """
-        Create a new player with proper initialization using GSM singleton.
+        Create a new player with proper initialization using GSM.
         
         Creates player record and initializes all skills with default values.
 
@@ -43,69 +41,42 @@ class PlayerService:
         Raises:
             HTTPException: If username already exists
         """
-        from server.src.services.game_state_manager import get_game_state_manager
-        
         gsm = get_game_state_manager()
         
         try:
-            # Use GSM's session management for player creation
-            async with gsm._db_session() as db:
-                # Create player record
-                hashed_password = get_password_hash(player_data.password)
-                player = Player(
-                    username=player_data.username,
-                    hashed_password=hashed_password,
-                    x_coord=getattr(player_data, 'x', 10),
-                    y_coord=getattr(player_data, 'y', 10),
-                    map_id=getattr(player_data, 'map_id', "samplemap"),
-                )
+            # Create player using GSM's complete creation method
+            hashed_password = get_password_hash(player_data.password)
+            player_complete_data = await gsm.create_player_complete(
+                username=player_data.username,
+                hashed_password=hashed_password,
+                x=getattr(player_data, 'x', 10),
+                y=getattr(player_data, 'y', 10),
+                map_id=getattr(player_data, 'map_id', "samplemap"),
+            )
+            
+            # Convert GSM data back to Player model
+            player = Player()
+            player.id = player_complete_data["id"]
+            player.username = player_complete_data["username"]
+            player.hashed_password = player_complete_data["hashed_password"]
+            player.x_coord = player_complete_data.get("x_coord", 10)
+            player.y_coord = player_complete_data.get("y_coord", 10)  
+            player.map_id = player_complete_data.get("map_id", "samplemap")
+            player.role = player_complete_data.get("role", "player")
+            player.is_banned = player_complete_data.get("is_banned", False)
+            player.timeout_until = player_complete_data.get("timeout_until")
+            player.current_hp = player_complete_data.get("current_hp", 100)
+            
+            logger.info("Player created", extra={"username": player.username, "player_id": player.id})
+            return player
                 
-                db.add(player)
-                await db.flush()  # Get player ID
-                
-                # Initialize player skills with default values
-                from .skill_service import SkillService
-                await SkillService.grant_all_skills_to_player(player.id)
-                
-                await db.commit()
-                await db.refresh(player)
-                
-                logger.info("Player created", extra={"username": player.username, "player_id": player.id})
-                return player
-                
-        except IntegrityError:
-            logger.warning("Player creation failed", extra={"username": player_data.username})
+        except Exception as e:
+            # GSM will raise IntegrityError for duplicate username, convert to HTTP error
+            logger.warning("Player creation failed", extra={"username": player_data.username, "error": str(e)})
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="A player with this username already exists.",
             )
-            
-            db.add(player)
-            await db.flush()  # Get player ID
-            
-            # Initialize player skills with default values
-            from .skill_service import SkillService
-            await SkillService.grant_all_skills_to_player(player.id)
-            
-            await db.commit()
-            
-            logger.info(
-                "Player created successfully",
-                extra={
-                    "player_id": player.id,
-                    "username": player.username,
-                }
-            )
-            
-            return player
-            
-        except IntegrityError:
-            await db.rollback()
-            logger.warning(
-                "Player creation failed - username exists",
-                extra={"username": player_data.username}
-            )
-            raise
 
     @staticmethod
     async def login_player(
@@ -139,7 +110,6 @@ class PlayerService:
 
     @staticmethod
     async def logout_player(
-        db: AsyncSession,
         player_id: int,
         username: str,
     ) -> None:
@@ -149,23 +119,15 @@ class PlayerService:
         Saves all player progress and cleans up active session.
 
         Args:
-            db: Database session
             player_id: Player ID
             username: Player username
-        """
-        from .game_state_manager import get_game_state_manager
-        
-        state_manager = get_game_state_manager()
-        
+        """        
         try:
-            # Save all player progress to database
-            await state_manager.sync_player_to_db(player_id, username)
+            # Get the GameStateManager
+            state_manager = get_game_state_manager()
             
-            # Clean up active session data
-            await state_manager.cleanup_player_state(player_id)
-            
-            # Mark player as offline
-            state_manager.unregister_online_player(player_id)
+            # Unregister player - this handles immediate sync to DB and cache cleanup
+            await state_manager.unregister_online_player(player_id)
             
             logger.info(
                 "Player logged out",
@@ -224,22 +186,38 @@ class PlayerService:
 
     @staticmethod
     async def get_player_by_id(
-        db: AsyncSession, player_id: int
+        player_id: int
     ) -> Optional[Player]:
         """
-        Get player by ID.
+        Get player by ID using GSM.
 
         Args:
-            db: Database session
             player_id: Player ID
 
         Returns:
             Player if found, None otherwise
         """
-        result = await db.execute(
-            select(Player).where(Player.id == player_id)
-        )
-        return result.scalar_one_or_none()
+        gsm = get_game_state_manager()
+        
+        # Use GSM to get complete player data
+        player_data = await gsm.get_player_complete(player_id)
+        if not player_data:
+            return None
+        
+        # Convert GSM data back to Player model
+        player = Player()
+        player.id = player_data["id"]
+        player.username = player_data["username"]
+        player.hashed_password = player_data["hashed_password"]
+        player.x_coord = player_data.get("x_coord", 10)
+        player.y_coord = player_data.get("y_coord", 10)  
+        player.map_id = player_data.get("map_id", "samplemap")
+        player.role = player_data.get("role", "user")
+        player.is_banned = player_data.get("is_banned", False)
+        player.timeout_until = player_data.get("timeout_until")
+        player.current_hp = player_data.get("current_hp", 100)
+        
+        return player
 
     @staticmethod
     def is_player_online(player_id: int) -> bool:
@@ -280,27 +258,8 @@ class PlayerService:
             )
             return None
         
-        try:
-            # Get position data from GSM
-            position_data = await state_manager.get_player_position(player_id)
-            if position_data:
-                return {
-                    "x": position_data["x"],
-                    "y": position_data["y"], 
-                    "map_id": position_data["map_id"],
-                    "player_id": player_id
-                }
-            return None
-            
-        except Exception as e:
-            logger.error(
-                "Error getting player position",
-                extra={
-                    "player_id": player_id,
-                    "error": str(e),
-                }
-            )
-            return None
+        # Get player position from GSM
+        return await state_manager.get_player_position(player_id)
 
     @staticmethod
     async def get_nearby_players(
@@ -427,22 +386,29 @@ class PlayerService:
 
     @staticmethod
     async def get_player_role(
-        db: AsyncSession, player_id: int
+        player_id: int
     ) -> Optional[PlayerRole]:
         """
-        Get player's role from database.
+        Get player's role using GSM.
 
         Args:
-            db: Database session
             player_id: Player ID
 
         Returns:
             PlayerRole if player found, None otherwise
         """
         try:
-            player = await PlayerService.get_player_by_id(db, player_id)
-            if player:
-                return player.role
+            gsm = get_game_state_manager()
+            permissions = await gsm.get_player_permissions(player_id)
+            if permissions and permissions.get("role"):
+                # Convert string role to PlayerRole enum
+                role_str = permissions["role"]
+                if role_str == "admin":
+                    return PlayerRole.ADMIN
+                elif role_str == "moderator":
+                    return PlayerRole.MODERATOR
+                else:
+                    return PlayerRole.PLAYER
             return None
             
         except Exception as e:
@@ -457,13 +423,12 @@ class PlayerService:
 
     @staticmethod
     async def check_global_chat_permission(
-        db: AsyncSession, player_id: int
+        player_id: int
     ) -> bool:
         """
-        Check if player has permission to send global chat messages.
+        Check if player has permission to send global chat messages using GSM.
 
         Args:
-            db: Database session
             player_id: Player ID
 
         Returns:
@@ -474,8 +439,8 @@ class PlayerService:
             if not settings.CHAT_GLOBAL_ENABLED:
                 return False
             
-            # Get player role
-            player_role = await PlayerService.get_player_role(db, player_id)
+            # Get player role using GSM
+            player_role = await PlayerService.get_player_role(player_id)
             if not player_role:
                 return False
             
@@ -495,19 +460,18 @@ class PlayerService:
 
     @staticmethod
     async def get_player_data_by_id(
-        db: AsyncSession, player_id: int
+        player_id: int
     ) -> Optional[Player]:
         """
-        Get complete player data including role (alias for get_player_by_id with explicit naming).
+        Get complete player data including role using GSM (alias for get_player_by_id with explicit naming).
 
         Args:
-            db: Database session
             player_id: Player ID
 
         Returns:
             Complete Player instance if found, None otherwise
         """
-        return await PlayerService.get_player_by_id(db, player_id)
+        return await PlayerService.get_player_by_id(player_id)
 
     # =========================================================================
     # PLAYER IDENTITY LOOKUPS

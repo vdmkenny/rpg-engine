@@ -273,21 +273,54 @@ class GameStateManager:
             extra={"player_id": player_id, "username": username}
         )
     
-    def unregister_online_player(self, player_id: int) -> None:
+    async def unregister_online_player(self, player_id: int) -> None:
         """
         Unregister a player from online status.
+        Immediately syncs player data to database and removes from cache.
         
         Args:
             player_id: Player's ID
         """
+        # Get username before removing from registry
+        username = self._id_to_username.get(player_id, f"player_{player_id}")
+        
+        # Remove from online status first
         self._online_players.discard(player_id)
         
-        username = self._id_to_username.pop(player_id, None)
-        if username:
+        # Remove from username mappings
+        if username and username != f"player_{player_id}":
             self._username_to_id.pop(username, None)
+        self._id_to_username.pop(player_id, None)
+        
+        # Immediately sync all player data to database
+        try:
+            await self.sync_player_to_db(player_id, username)
+            logger.debug(
+                "Player data synced to database on logout",
+                extra={"player_id": player_id, "username": username}
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to sync player data on logout", 
+                extra={"player_id": player_id, "username": username, "error": str(e)}
+            )
+            # Continue with cleanup even if sync fails
+        
+        # Remove all player data from cache immediately
+        try:
+            await self.cleanup_player_state(player_id)
+            logger.debug(
+                "Player cache cleaned up on logout",
+                extra={"player_id": player_id, "username": username}
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to cleanup player cache on logout",
+                extra={"player_id": player_id, "username": username, "error": str(e)}
+            )
         
         logger.debug(
-            "Player unregistered from online",
+            "Player unregistered from online with immediate sync and cleanup",
             extra={"player_id": player_id, "username": username}
         )
     
@@ -513,7 +546,7 @@ class GameStateManager:
         return inventory
 
     async def _load_inventory_to_valkey(self, player_id: int, inventory_data: Dict[int, Dict]) -> None:
-        """Load inventory data into Valkey with configured TTL."""
+        """Load inventory data into Valkey. Sets TTL only for offline players."""
         from server.src.core.config import settings
         
         if not settings.USE_VALKEY or not self._valkey or not inventory_data:
@@ -527,12 +560,12 @@ class GameStateManager:
         
         await self._valkey.hset(key, valkey_data)
         
-        # Set standard TTL (same for all player data regardless of online/offline status)
-        # TODO: Make TTL configurable via settings
-        await self._valkey.expire(key, 3600)  # 1 hour default, should be configurable
+        # Only set TTL for offline players (online players stay indefinitely)
+        if not self.is_online(player_id):
+            await self._valkey.expire(key, settings.OFFLINE_PLAYER_CACHE_TTL)
 
     async def _cache_skills_in_valkey(self, player_id: int, skills_data: Dict[str, Dict]) -> None:
-        """Load skills data into Valkey with configured TTL."""
+        """Load skills data into Valkey. Sets TTL only for offline players."""
         from server.src.core.config import settings
         
         if not settings.USE_VALKEY or not self._valkey or not skills_data:
@@ -546,9 +579,9 @@ class GameStateManager:
         
         await self._valkey.hset(key, valkey_data)
         
-        # Set standard TTL (same for all player data regardless of online/offline status)
-        # TODO: Make TTL configurable via settings
-        await self._valkey.expire(key, 3600)  # 1 hour default, should be configurable
+        # Only set TTL for offline players (online players stay indefinitely)
+        if not self.is_online(player_id):
+            await self._valkey.expire(key, settings.OFFLINE_PLAYER_CACHE_TTL)
     
     async def get_inventory_slot(
         self, player_id: int, slot: int
@@ -1003,8 +1036,9 @@ class GameStateManager:
                 
                 await self._valkey.hset(key, {skill_name.lower(): json.dumps(skill_data)})
                 
-                # Set TTL to keep data fresh
-                await self._valkey.expire(key, 3600)
+                # Only set TTL for offline players (online players stay indefinitely)
+                if not self.is_online(player_id):
+                    await self._valkey.expire(key, settings.OFFLINE_PLAYER_CACHE_TTL)
                 
                 # Mark for database sync if player is online
                 if self.is_online(player_id):
@@ -1970,6 +2004,175 @@ class GameStateManager:
             "Preloaded item cache",
             extra={"item_count": len(getattr(self, '_item_cache', {}))}
         )
+
+    # =========================================================================
+    # COMPLETE PLAYER DATA MANAGEMENT
+    # =========================================================================
+    
+    async def create_player_complete(
+        self, username: str, hashed_password: str, 
+        x: int = 10, y: int = 10, map_id: str = "samplemap"
+    ) -> Dict[str, Any]:
+        """
+        Create player in database and immediately load into cache.
+        
+        Creates player record, initializes skills, and loads complete state.
+        
+        Args:
+            username: Player username
+            hashed_password: Pre-hashed password
+            x: Initial X coordinate
+            y: Initial Y coordinate  
+            map_id: Initial map ID
+            
+        Returns:
+            Complete player data dict
+            
+        Raises:
+            IntegrityError: If username already exists
+        """
+        if not self._session_factory:
+            raise RuntimeError("Database session factory not available")
+            
+        async with self._db_session() as db:
+            from server.src.models.player import Player
+            from server.src.services.skill_service import SkillService
+            
+            # Create player record
+            player = Player(
+                username=username,
+                hashed_password=hashed_password,
+                x_coord=x,
+                y_coord=y,
+                map_id=map_id,
+            )
+            
+            db.add(player)
+            await db.flush()  # Get player ID
+            
+            # Initialize player skills with default values
+            await SkillService.grant_all_skills_to_player(player.id)
+            
+            await db.commit()
+            await db.refresh(player)
+            
+            # Load player into cache immediately
+            await self.load_player_state(player.id)
+            
+            # Return complete player data
+            return await self.get_player_complete(player.id)
+    
+    async def get_player_complete(self, player_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get complete player data by ID with auto-cache for offline players.
+        
+        Includes all player attributes plus derived/computed values.
+        
+        Args:
+            player_id: Player ID
+            
+        Returns:
+            Complete player data dict or None if not found
+        """
+        # Try to get from hot cache first
+        player_state = await self.get_player_full_state(player_id)
+        if player_state:
+            return player_state
+            
+        # Auto-load from database if not in cache
+        if not self._session_factory:
+            return None
+            
+        async with self._db_session() as db:
+            from server.src.models.player import Player
+            
+            result = await db.execute(
+                select(Player).where(Player.id == player_id)
+            )
+            player = result.scalar_one_or_none()
+            if not player:
+                return None
+            
+            # Load into cache with TTL (offline player)
+            await self.load_player_state(player_id)
+            
+            # Return the cached data
+            return await self.get_player_full_state(player_id)
+    
+    async def get_player_by_username_complete(self, username: str) -> Optional[Dict[str, Any]]:
+        """
+        Get complete player data by username with auto-cache for offline players.
+        
+        Args:
+            username: Player username
+            
+        Returns:
+            Complete player data dict or None if not found
+        """
+        # First try the username cache
+        player_id = self._username_to_id.get(username)
+        if player_id:
+            return await self.get_player_complete(player_id)
+            
+        # Auto-load from database if not cached
+        if not self._session_factory:
+            return None
+            
+        async with self._db_session() as db:
+            from server.src.models.player import Player
+            
+            result = await db.execute(
+                select(Player).where(Player.username == username)
+            )
+            player = result.scalar_one_or_none()
+            if not player:
+                return None
+            
+            # Load into cache with TTL (offline player)
+            await self.load_player_state(player.id)
+            
+            # Return the cached data
+            return await self.get_player_full_state(player.id)
+    
+    async def get_player_permissions(self, player_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get player permissions including role, admin status, ban status, timeout info.
+        
+        Args:
+            player_id: Player ID
+            
+        Returns:
+            Dict with permission data or None if player not found
+        """
+        player_data = await self.get_player_complete(player_id)
+        if not player_data:
+            return None
+            
+        return {
+            "role": player_data.get("role"),
+            "is_admin": player_data.get("role") == "admin",
+            "is_banned": player_data.get("is_banned", False),
+            "timeout_until": player_data.get("timeout_until"),
+        }
+    
+    async def get_player_id_by_username_autoload(self, username: str) -> Optional[int]:
+        """
+        Username to ID lookup with offline player auto-loading.
+        
+        Args:
+            username: Player username to look up
+            
+        Returns:
+            Player ID if found, None otherwise
+        """
+        # Check online players first for performance
+        player_id = self._username_to_id.get(username)
+        if player_id:
+            return player_id
+            
+        # Use complete player lookup which handles auto-loading
+        player_data = await self.get_player_by_username_complete(username)
+        return player_data.get("id") if player_data else None
 
 
 # =============================================================================

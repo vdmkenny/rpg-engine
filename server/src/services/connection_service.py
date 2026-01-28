@@ -5,7 +5,6 @@ Handles player connection initialization, disconnection cleanup, and broadcastin
 """
 
 from typing import Dict, List, Optional, Any
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.logging_config import get_logger
 from .game_state_manager import get_game_state_manager
@@ -20,7 +19,7 @@ class ConnectionService:
 
     @staticmethod
     async def initialize_player_connection(
-        db: AsyncSession, player_id: int, username: str, x: int, y: int, 
+        player_id: int, username: str, x: int, y: int, 
         map_id: str, current_hp: int, max_hp: int
     ) -> Dict[str, Any]:
         """
@@ -29,7 +28,6 @@ class ConnectionService:
         Sets up all necessary game state for a newly connected player.
 
         Args:
-            db: Database session
             player_id: Player ID
             username: Player username
             x: Player's X coordinate
@@ -153,7 +151,7 @@ class ConnectionService:
 
     @staticmethod
     async def handle_player_disconnect(
-        db: AsyncSession, username: str, player_map: Optional[str] = None, 
+        username: str, player_map: Optional[str] = None, 
         manager = None, operation_rate_limiter = None
     ) -> Dict[str, Any]:
         """
@@ -162,7 +160,6 @@ class ConnectionService:
         Saves player state, notifies nearby players, and cleans up resources.
 
         Args:
-            db: Database session
             username: Disconnecting player username
             player_map: Player's current map (optional)
             manager: Connection manager instance (optional)
@@ -173,7 +170,7 @@ class ConnectionService:
         """
         try:
             # Get player_id from username
-            player = await PlayerService.get_player_by_username(db, username)
+            player = await PlayerService.get_player_by_username(username)
             if not player:
                 logger.warning(
                     "Player not found during disconnect",
@@ -195,7 +192,7 @@ class ConnectionService:
             )
 
             # Save player state and logout
-            await PlayerService.logout_player(db, player_id, username)
+            await PlayerService.logout_player(player_id, username)
 
             # Cleanup any additional connection-specific resources
             await ConnectionService._cleanup_connection_resources(player_id)
@@ -222,7 +219,7 @@ class ConnectionService:
             # Try to get player_id for logging if possible
             player_id = None
             try:
-                player = await PlayerService.get_player_by_username(db, username)
+                player = await PlayerService.get_player_by_username(username)
                 if player:
                     player_id = player.id
             except:
@@ -349,13 +346,12 @@ class ConnectionService:
 
     @staticmethod
     async def get_existing_players_on_map(
-        db: AsyncSession, map_id: str, exclude_username: str
+        map_id: str, exclude_username: str
     ) -> List[Dict[str, Any]]:
         """
         Get data for existing players on a specific map, excluding one player.
         
         Args:
-            db: Database session
             map_id: Map to get players for
             exclude_username: Username to exclude from results
             
@@ -386,7 +382,7 @@ class ConnectionService:
                     # Get position using PlayerService
                     try:
                         # First get player ID for this username - use PlayerService to avoid direct DB access
-                        player = await PlayerService.get_player_by_username(db, other_username)
+                        player = await PlayerService.get_player_by_username(other_username)
                         
                         if player and PlayerService.is_player_online(player.id):
                             position_data = await PlayerService.get_player_position(player.id)

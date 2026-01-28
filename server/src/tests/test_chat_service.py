@@ -28,7 +28,7 @@ class TestMessageValidation:
     async def test_validate_message_local_success(self, db_session):
         """Valid local message should pass validation."""
         message = "Hello world!"
-        result = await ChatService.validate_message(message, "local", db_session, 1)
+        result = await ChatService.validate_message(message, "local", 1)
         
         assert result["valid"] is True
         assert result["message"] == "Hello world!"
@@ -38,7 +38,7 @@ class TestMessageValidation:
     @pytest.mark.asyncio
     async def test_validate_message_empty_message(self, db_session):
         """Empty message should be rejected."""
-        result = await ChatService.validate_message("", "local", db_session, 1)
+        result = await ChatService.validate_message("", "local", 1)
         
         assert result["valid"] is False
         assert result["reason"] == "Message too short"
@@ -48,7 +48,7 @@ class TestMessageValidation:
     @pytest.mark.asyncio
     async def test_validate_message_whitespace_only(self, db_session):
         """Whitespace-only message should be rejected after stripping."""
-        result = await ChatService.validate_message("   ", "local", db_session, 1)
+        result = await ChatService.validate_message("   ", "local", 1)
         
         assert result["valid"] is False
         assert result["reason"] == "Message empty after processing"
@@ -59,7 +59,7 @@ class TestMessageValidation:
         """Local message should be truncated at 280 characters."""
         # Create a message longer than local limit (280 chars)
         long_message = "A" * 300
-        result = await ChatService.validate_message(long_message, "local", db_session, 1)
+        result = await ChatService.validate_message(long_message, "local", 1)
         
         assert result["valid"] is True
         assert len(result["message"]) == settings.CHAT_MAX_MESSAGE_LENGTH_LOCAL
@@ -74,7 +74,7 @@ class TestMessageValidation:
         with patch('server.src.services.chat_service.ChatService.validate_global_chat_permission') as mock_validate:
             mock_validate.return_value = {"valid": True}
             
-            result = await ChatService.validate_message(long_message, "global", db_session, 1)
+            result = await ChatService.validate_message(long_message, "global", 1)
             
             assert result["valid"] is True
             assert len(result["message"]) == settings.CHAT_MAX_MESSAGE_LENGTH_GLOBAL
@@ -85,7 +85,7 @@ class TestMessageValidation:
         """DM message should be truncated at 500 characters."""
         # Create a message longer than DM limit (500 chars)
         long_message = "C" * 600
-        result = await ChatService.validate_message(long_message, "dm", db_session, 1)
+        result = await ChatService.validate_message(long_message, "dm", 1)
         
         assert result["valid"] is True
         assert len(result["message"]) == settings.CHAT_MAX_MESSAGE_LENGTH_DM
@@ -96,7 +96,7 @@ class TestMessageValidation:
         """Message exactly at limit should not be truncated."""
         # Test local chat limit
         message = "D" * settings.CHAT_MAX_MESSAGE_LENGTH_LOCAL
-        result = await ChatService.validate_message(message, "local", db_session, 1)
+        result = await ChatService.validate_message(message, "local", 1)
         
         assert result["valid"] is True
         assert len(result["message"]) == settings.CHAT_MAX_MESSAGE_LENGTH_LOCAL
@@ -112,12 +112,12 @@ class TestPermissionSystem:
         with patch('server.src.services.chat_service.PlayerService.check_global_chat_permission') as mock_check:
             mock_check.return_value = True
             
-            result = await ChatService.validate_global_chat_permission(db_session, 1)
+            result = await ChatService.validate_global_chat_permission(1)
             
             assert result["valid"] is True
             assert "error_message" not in result
             assert "system_message" not in result
-            mock_check.assert_called_once_with(db_session, 1)
+            mock_check.assert_called_once_with(1)
 
     @pytest.mark.asyncio
     async def test_validate_global_chat_permission_player_denied(self, db_session):
@@ -125,7 +125,7 @@ class TestPermissionSystem:
         with patch('server.src.services.chat_service.PlayerService.check_global_chat_permission') as mock_check:
             mock_check.return_value = False
             
-            result = await ChatService.validate_global_chat_permission(db_session, 1)
+            result = await ChatService.validate_global_chat_permission(1)
             
             assert result["valid"] is False
             assert "don't have permission" in result["error_message"]
@@ -136,7 +136,7 @@ class TestPermissionSystem:
     async def test_validate_global_chat_permission_global_disabled(self, db_session):
         """Global chat disabled should deny all players."""
         with patch('server.src.core.config.settings.CHAT_GLOBAL_ENABLED', False):
-            result = await ChatService.validate_global_chat_permission(db_session, 1)
+            result = await ChatService.validate_global_chat_permission(1)
             
             assert result["valid"] is False
             assert "currently disabled" in result["error_message"]
@@ -149,11 +149,11 @@ class TestPermissionSystem:
             mock_validate.return_value = {"valid": True}
             
             result = await ChatService.validate_message(
-                "Global message", "global", db_session, 1
+                "Global message", "global", 1
             )
             
             assert result["valid"] is True
-            mock_validate.assert_called_once_with(db_session, 1)
+            mock_validate.assert_called_once_with(1)
 
     @pytest.mark.asyncio
     async def test_validate_message_global_permission_denied(self, db_session):
@@ -166,7 +166,7 @@ class TestPermissionSystem:
             }
             
             result = await ChatService.validate_message(
-                "Global message", "global", db_session, 1
+                "Global message", "global", 1
             )
             
             assert result["valid"] is False
@@ -260,7 +260,7 @@ class TestRecipientResolution:
             mock_get_player.return_value = mock_player
             mock_is_online.return_value = True
             
-            result = await ChatService.get_dm_recipient(db_session, "target_player")
+            result = await ChatService.get_dm_recipient("target_player")
             
             assert result is not None
             assert result["player_id"] == 2
@@ -272,7 +272,7 @@ class TestRecipientResolution:
         with patch('server.src.services.chat_service.PlayerService.get_player_by_username') as mock_get_player:
             mock_get_player.return_value = None
             
-            result = await ChatService.get_dm_recipient(db_session, "nonexistent")
+            result = await ChatService.get_dm_recipient("nonexistent")
             
             assert result is None
 
@@ -287,7 +287,7 @@ class TestRecipientResolution:
             mock_get_player.return_value = mock_player
             mock_is_online.return_value = False
             
-            result = await ChatService.get_dm_recipient(db_session, "offline_player")
+            result = await ChatService.get_dm_recipient("offline_player")
             
             assert result is None
 

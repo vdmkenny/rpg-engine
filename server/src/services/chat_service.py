@@ -5,7 +5,6 @@ Handles chat message validation, channel routing, permission checking, and broad
 """
 
 from typing import Dict, List, Optional, Any
-from sqlalchemy.ext.asyncio import AsyncSession
 import time
 
 from ..core.logging_config import get_logger
@@ -62,13 +61,12 @@ class ChatService:
 
     @staticmethod
     async def validate_global_chat_permission(
-        db: AsyncSession, player_id: int
+        player_id: int
     ) -> Dict[str, Any]:
         """
         Validate if player has permission to send global chat messages.
         
         Args:
-            db: Database session
             player_id: Player ID to check
             
         Returns:
@@ -85,8 +83,8 @@ class ChatService:
                     )
                 }
             
-            # Check player's role permission
-            has_permission = await PlayerService.check_global_chat_permission(db, player_id)
+            # Check player's role permission using migrated PlayerService
+            has_permission = await PlayerService.check_global_chat_permission(player_id)
             if not has_permission:
                 return {
                     "valid": False,
@@ -116,7 +114,7 @@ class ChatService:
 
     @staticmethod
     async def validate_message(
-        message: str, channel: str, db: AsyncSession, player_id: int
+        message: str, channel: str, player_id: int
     ) -> Dict[str, Any]:
         """
         Validate a chat message with channel-specific limits and permissions.
@@ -124,7 +122,6 @@ class ChatService:
         Args:
             message: Message content
             channel: Channel type (local, global, dm)
-            db: Database session (required for permission checking)
             player_id: Player ID (required for permission checking)
             
         Returns:
@@ -182,7 +179,7 @@ class ChatService:
         # Channel-specific validation
         if channel == "global":
             # Check global chat permissions
-            permission_result = await ChatService.validate_global_chat_permission(db, player_id)
+            permission_result = await ChatService.validate_global_chat_permission(player_id)
             if not permission_result["valid"]:
                 validation_result.update({
                     "valid": False,
@@ -258,21 +255,20 @@ class ChatService:
 
     @staticmethod
     async def get_dm_recipient(
-        db: AsyncSession, recipient_username: str
+        recipient_username: str
     ) -> Optional[Dict[str, Any]]:
         """
         Get recipient information for direct message.
 
         Args:
-            db: Database session
             recipient_username: Target username for DM
 
         Returns:
             Recipient data or None if not found/not online
         """
         try:
-            # Get player from database
-            recipient = await PlayerService.get_player_by_username(db, recipient_username)
+            # Get player using migrated PlayerService
+            recipient = await PlayerService.get_player_by_username(recipient_username)
             if not recipient:
                 logger.debug(
                     "DM recipient not found",
@@ -325,7 +321,6 @@ class ChatService:
 
     @staticmethod
     async def handle_chat_message(
-        db: AsyncSession, 
         player_id: int, 
         username: str, 
         payload: Dict[str, Any],
@@ -335,7 +330,6 @@ class ChatService:
         Handle a complete chat message from a player.
         
         Args:
-            db: Database session
             player_id: Sender's player ID
             username: Sender's username
             payload: Chat message payload
@@ -353,7 +347,7 @@ class ChatService:
             
             # Validate message using enhanced service with permission checking
             validation_result = await ChatService.validate_message(
-                message, channel, db, player_id
+                message, channel, player_id
             )
             
             if not validation_result["valid"]:
@@ -439,7 +433,7 @@ class ChatService:
                 # Handle direct message
                 target_username = payload.get("recipient")
                 if target_username:
-                    recipient_data = await ChatService.get_dm_recipient(db, target_username)
+                    recipient_data = await ChatService.get_dm_recipient(target_username)
                     if recipient_data:
                         packed_message = msgpack.packb(chat_response.model_dump(), use_bin_type=True)
                         await connection_manager.send_personal_message(target_username, packed_message)
