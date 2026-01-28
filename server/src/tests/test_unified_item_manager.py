@@ -31,7 +31,7 @@ class TestUnifiedItemManager:
         from server.src.services.item_service import ItemService
         
         # Sync items to ensure we have test items
-        items = await ItemService.sync_items_to_db(session)
+        items = await ItemService.sync_items_to_db()
         
         # Return first item for testing
         return items[0] if items else None

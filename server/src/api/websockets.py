@@ -56,6 +56,7 @@ from common.src.protocol import (
     WSMessage,
     MessageType,
     ErrorCodes,
+    PROTOCOL_VERSION,
     AuthenticatePayload,
     MovePayload,
     ChatSendPayload,
@@ -506,7 +507,7 @@ class WebSocketHandler:
             payload = InventoryMovePayload(**message.payload)
             
             result = await InventoryService.move_item(
-                self.db, self.player_id, payload.from_slot, payload.to_slot
+                self.player_id, payload.from_slot, payload.to_slot
             )
             
             if result.success:
@@ -678,7 +679,7 @@ class WebSocketHandler:
             
             result = await GroundItemService.pickup_item(
                 player_id=self.player_id,
-                ground_item_id=payload.ground_item_id,
+                ground_item_id=int(payload.ground_item_id),
                 player_x=position["x"],
                 player_y=position["y"],
                 player_map_id=position["map_id"],
@@ -723,7 +724,7 @@ class WebSocketHandler:
             payload = ItemEquipPayload(**message.payload)
             
             result = await EquipmentService.equip_from_inventory(
-                self.db, self.player_id, payload.inventory_slot
+                self.player_id, payload.inventory_slot
             )
             
             if result.success:
@@ -777,7 +778,7 @@ class WebSocketHandler:
                 return
             
             result = await EquipmentService.unequip_to_inventory(
-                self.db, self.player_id, slot
+                self.player_id, slot
             )
             
             if result.success:
@@ -854,7 +855,7 @@ class WebSocketHandler:
         Uses RESP_DATA with proper correlation ID tracking for request/response pairing.
         """
         try:
-            equipment_data = await EquipmentService.get_equipment_response(self.db, self.player_id)
+            equipment_data = await EquipmentService.get_equipment_response(self.player_id)
             
             await self._send_data_response(
                 message.id,
@@ -893,7 +894,7 @@ class WebSocketHandler:
     async def _handle_query_stats(self, message: WSMessage) -> None:
         """Handle QUERY_STATS - retrieve aggregated player stats"""
         try:
-            stats_data = await EquipmentService.get_total_stats(self.db, self.player_id)
+            stats_data = await EquipmentService.get_total_stats(self.player_id)
             
             await self._send_data_response(
                 message.id,
@@ -1003,7 +1004,8 @@ class WebSocketHandler:
         response = WSMessage(
             id=correlation_id,
             type=MessageType.RESP_SUCCESS,
-            payload=data or {}
+            payload=data or {},
+            version=PROTOCOL_VERSION
         )
         await self._send_message(response)
     
@@ -1030,7 +1032,8 @@ class WebSocketHandler:
         response = WSMessage(
             id=correlation_id,
             type=MessageType.RESP_ERROR,
-            payload=error_payload.model_dump()
+            payload=error_payload.model_dump(),
+            version=PROTOCOL_VERSION
         )
         await self._send_message(response)
     
@@ -1039,12 +1042,15 @@ class WebSocketHandler:
         response = WSMessage(
             id=correlation_id,
             type=MessageType.RESP_DATA,
-            payload=data
+            payload=data,
+            version=PROTOCOL_VERSION
         )
         await self._send_message(response)
     
     async def _send_message(self, message: WSMessage) -> None:
-        """Send WebSocket message with msgpack encoding"""
+        """
+        Send message with comprehensive error handling
+        """
         try:
             # Log message structure before serialization for debugging
             logger.debug(
@@ -1102,7 +1108,6 @@ class WebSocketHandler:
                             }
                         )
                         # Clean up connection from manager
-                        from server.src.api.websockets import manager
                         manager.disconnect(self.username)
                         raise ConnectionError("WebSocket connection is closed")
                     elif self.websocket.client_state == 2:  # CLOSING
@@ -1141,12 +1146,12 @@ class WebSocketHandler:
                 )
                 
                 # Clean up connection on send failure
-                from server.src.api.websockets import manager
                 manager.disconnect(self.username)
                 raise
             
             # Track outbound message
-            metrics.track_websocket_message(message.type.value, "outbound")
+            # message.type is already a string value, not an enum
+            metrics.track_websocket_message(str(message.type), "outbound")
             
         except Exception as e:
             logger.error(
@@ -1170,6 +1175,7 @@ class WebSocketHandler:
             inventory_data = await InventoryService.get_inventory_response(self.player_id)
             
             state_update = WSMessage(
+                id=None,
                 type=MessageType.EVENT_STATE_UPDATE,
                 payload={
                     "update_type": "full",
@@ -1177,7 +1183,8 @@ class WebSocketHandler:
                     "systems": {
                         "inventory": inventory_data.model_dump()
                     }
-                }
+                },
+                version=PROTOCOL_VERSION
             )
             await self._send_message(state_update)
             
@@ -1196,11 +1203,12 @@ class WebSocketHandler:
         try:
             # Get all related data
             inventory_data = await InventoryService.get_inventory_response(self.player_id)
-            equipment_data = await EquipmentService.get_equipment_response(self.db, self.player_id)
-            stats_data = await EquipmentService.get_total_stats(self.db, self.player_id)
+            equipment_data = await EquipmentService.get_equipment_response(self.player_id)
+            stats_data = await EquipmentService.get_total_stats(self.player_id)
             
             # Send consolidated state update
             state_update = WSMessage(
+                id=None,
                 type=MessageType.EVENT_STATE_UPDATE,
                 payload={
                     "update_type": "full",
@@ -1210,7 +1218,8 @@ class WebSocketHandler:
                         "equipment": equipment_data.model_dump(),
                         "stats": stats_data.model_dump()
                     }
-                }
+                },
+                version=PROTOCOL_VERSION
             )
             await self._send_message(state_update)
             
@@ -1500,7 +1509,7 @@ async def _initialize_player_connection(username: str, player_id: int, db: Async
             await db.commit()
         
         # Initialize player in service layer and GSM
-        await PlayerService.login_player(db, player)
+        await PlayerService.login_player(player)
         await ConnectionService.initialize_player_connection(
             db, player.id, username, validated_x, validated_y, validated_map, current_hp, max_hp
         )
@@ -1530,6 +1539,7 @@ async def _send_welcome_message(websocket: WebSocket, username: str, player_id: 
         hp_data = await gsm.get_player_hp(player_id)
         
         welcome_event = WSMessage(
+            id=None,
             type=MessageType.EVENT_WELCOME,
             payload={
                 "message": f"Welcome to RPG Engine, {username}!",
@@ -1543,9 +1553,10 @@ async def _send_welcome_message(websocket: WebSocket, username: str, player_id: 
                 "config": {
                     "move_cooldown": settings.MOVE_COOLDOWN,
                     "animation_duration": settings.ANIMATION_DURATION,
-                    "protocol_version": "2.0"
+                    "protocol_version": PROTOCOL_VERSION
                 }
-            }
+            },
+            version=PROTOCOL_VERSION
         )
         
         packed_message = msgpack.packb(welcome_event.model_dump(), use_bin_type=True)
@@ -1553,13 +1564,15 @@ async def _send_welcome_message(websocket: WebSocket, username: str, player_id: 
         
         # Send welcome chat message
         welcome_chat = WSMessage(
+            id=None,
             type=MessageType.EVENT_CHAT_MESSAGE,
             payload={
                 "sender": "Server",
                 "message": f"Welcome, {username}! Protocol unified is now active. You can chat by typing in the chat window.",
                 "channel": "system",
                 "sender_position": None
-            }
+            },
+            version=PROTOCOL_VERSION
         )
         
         packed_chat = msgpack.packb(welcome_chat.model_dump(), use_bin_type=True)
@@ -1596,12 +1609,14 @@ async def _handle_player_join_broadcast(websocket: WebSocket, username: str, pla
         if existing_players_data:
             # Send existing players to new player
             game_update = WSMessage(
+                id=None,
                 type=MessageType.EVENT_STATE_UPDATE,
                 payload={
                     "entities": existing_players_data,
                     "removed_entities": [],
                     "map_id": map_id
-                }
+                },
+                version=PROTOCOL_VERSION
             )
             
             packed_update = msgpack.packb(game_update.model_dump(), use_bin_type=True)
@@ -1609,6 +1624,7 @@ async def _handle_player_join_broadcast(websocket: WebSocket, username: str, pla
         
         # Broadcast new player join to existing players
         player_joined = WSMessage(
+            id=None,
             type=MessageType.EVENT_PLAYER_JOINED,
             payload={
                 "player": {
@@ -1616,7 +1632,8 @@ async def _handle_player_join_broadcast(websocket: WebSocket, username: str, pla
                     "position": position,
                     "type": "player"
                 }
-            }
+            },
+            version=PROTOCOL_VERSION
         )
         
         packed_join = msgpack.packb(player_joined.model_dump(), use_bin_type=True)
@@ -1667,11 +1684,13 @@ async def _handle_player_disconnect(username: str, player_id: Optional[int], db:
             # Broadcast player left event to remaining players
             if player_map:
                 player_left = WSMessage(
+                    id=None,
                     type=MessageType.EVENT_PLAYER_LEFT,
                     payload={
                         "username": username,
                         "reason": "Disconnected"
-                    }
+                    },
+                    version=PROTOCOL_VERSION
                 )
                 
                 packed_left = msgpack.packb(player_left.model_dump(), use_bin_type=True)

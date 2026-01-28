@@ -27,16 +27,14 @@ class PlayerService:
 
     @staticmethod
     async def create_player(
-        db: AsyncSession, 
         player_data: PlayerCreate, 
     ) -> Player:
         """
-        Create a new player with proper initialization.
+        Create a new player with proper initialization using GSM singleton.
         
         Creates player record and initializes all skills with default values.
 
         Args:
-            db: Database session
             player_data: Player creation data
 
         Returns:
@@ -45,15 +43,41 @@ class PlayerService:
         Raises:
             HTTPException: If username already exists
         """
+        from server.src.services.game_state_manager import get_game_state_manager
+        
+        gsm = get_game_state_manager()
+        
         try:
-            # Create player record
-            hashed_password = get_password_hash(player_data.password)
-            player = Player(
-                username=player_data.username,
-                hashed_password=hashed_password,
-                x_coord=getattr(player_data, 'x', 10),
-                y_coord=getattr(player_data, 'y', 10),
-                map_id=getattr(player_data, 'map_id', "samplemap"),
+            # Use GSM's session management for player creation
+            async with gsm._db_session() as db:
+                # Create player record
+                hashed_password = get_password_hash(player_data.password)
+                player = Player(
+                    username=player_data.username,
+                    hashed_password=hashed_password,
+                    x_coord=getattr(player_data, 'x', 10),
+                    y_coord=getattr(player_data, 'y', 10),
+                    map_id=getattr(player_data, 'map_id', "samplemap"),
+                )
+                
+                db.add(player)
+                await db.flush()  # Get player ID
+                
+                # Initialize player skills with default values
+                from .skill_service import SkillService
+                await SkillService.grant_all_skills_to_player(player.id)
+                
+                await db.commit()
+                await db.refresh(player)
+                
+                logger.info("Player created", extra={"username": player.username, "player_id": player.id})
+                return player
+                
+        except IntegrityError:
+            logger.warning("Player creation failed", extra={"username": player_data.username})
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A player with this username already exists.",
             )
             
             db.add(player)
@@ -85,7 +109,6 @@ class PlayerService:
 
     @staticmethod
     async def login_player(
-        db: AsyncSession,
         player: Player,
     ) -> None:
         """
@@ -94,7 +117,6 @@ class PlayerService:
         Registers player as online and loads complete game state.
 
         Args:
-            db: Database session
             player: Player instance
         """
         from .game_state_manager import get_game_state_manager
@@ -166,22 +188,39 @@ class PlayerService:
 
     @staticmethod
     async def get_player_by_username(
-        db: AsyncSession, username: str
+        username: str
     ) -> Optional[Player]:
         """
-        Get player by username.
+        Get player by username using GSM.
 
         Args:
-            db: Database session
             username: Player username
 
         Returns:
             Player if found, None otherwise
         """
-        result = await db.execute(
-            select(Player).where(Player.username == username)
-        )
-        return result.scalar_one_or_none()
+        from .game_state_manager import get_game_state_manager
+        
+        gsm = get_game_state_manager()
+        
+        # Use GSM to get player by username
+        player_data = await gsm.get_player_by_username(username)
+        if not player_data:
+            return None
+        
+        # Convert GSM data back to Player model
+        player = Player()
+        player.id = player_data["id"]
+        player.username = player_data["username"]
+        player.hashed_password = player_data["hashed_password"]
+        player.x_coord = player_data.get("x_coord", 10)
+        player.y_coord = player_data.get("y_coord", 10)  
+        player.map_id = player_data.get("map_id", "samplemap")
+        player.is_banned = player_data.get("is_banned", False)
+        player.timeout_until = player_data.get("timeout_until")
+        player.current_hp = player_data.get("current_hp", 100)
+        
+        return player
 
     @staticmethod
     async def get_player_by_id(

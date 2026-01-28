@@ -29,29 +29,20 @@ class TestSkillsAutoLoadingCore:
     """Test core skills auto-loading functionality."""
 
     @pytest_asyncio.fixture
-    async def gsm_with_offline_skills(self, session, fake_valkey: FakeValkey, gsm: GameStateManager):
+    async def gsm_with_offline_skills(self, session, fake_valkey: FakeValkey, gsm: GameStateManager, create_player_with_skills):
         """Create GSM with offline player skills in database only."""
         # Ensure skills exist in database
         await SkillService.sync_skills_to_db()
         
-        # Add player skills directly to database (simulating offline player)
+        # Create player with skills using proper fixture (satisfies foreign key constraints)
         player_id = 100
-        skill_id_map = await SkillService.get_skill_id_map()
+        skills_data = {
+            'attack': {'level': 5, 'xp': 388},
+            'hitpoints': {'level': 15, 'xp': 2411}
+        }
         
-        skill1 = PlayerSkill(
-            player_id=player_id,
-            skill_id=skill_id_map['attack'], 
-            current_level=5,
-            experience=388
-        )
-        skill2 = PlayerSkill(
-            player_id=player_id,
-            skill_id=skill_id_map['hitpoints'],
-            current_level=15,
-            experience=2411
-        )
-        session.add(skill1)
-        session.add(skill2)
+        # Create player with skills in database (offline player)
+        await create_player_with_skills(player_id, skills_data, username=f"offline_player_{player_id}")
         await session.commit()
         
         # Ensure player is NOT registered as online
@@ -158,24 +149,30 @@ class TestSkillsServiceTransparency:
     """Test that SkillService sees no difference between online/offline players."""
 
     @pytest_asyncio.fixture
-    async def gsm_with_mixed_skill_players(self, session, gsm: GameStateManager):
+    async def gsm_with_mixed_skill_players(self, session, gsm: GameStateManager, create_offline_player):
         """Create GSM with both online and offline players with skills."""
         await SkillService.sync_skills_to_db()
         
-        # Player 400: Online with skills in Valkey
-        online_player = 400
-        gsm.register_online_player(online_player, "online_player")
-        await SkillService.grant_all_skills_to_player(online_player)
+        # Player 400: Create player first, then make online with skills in Valkey
+        online_player_id = 400
+        await create_offline_player(online_player_id, username="online_player")
+        await session.commit()  # Ensure player exists in DB before GSM operations
+        
+        gsm.register_online_player(online_player_id, "online_player")
+        await SkillService.grant_all_skills_to_player(online_player_id)
         
         # Use SkillService to add XP to online player (proper architecture)
-        await SkillService.add_experience(online_player, SkillType.ATTACK, 388)  # Should reach level 5
+        await SkillService.add_experience(online_player_id, SkillType.ATTACK, 388)  # Should reach level 5
         
-        # Player 500: Offline with skills only in database
-        offline_player = 500
-        await SkillService.grant_all_skills_to_player(offline_player)
+        # Player 500: Create player first, then handle as offline player with skills only in database
+        offline_player_id = 500
+        await create_offline_player(offline_player_id, username="offline_player")
+        await session.commit()  # Ensure player exists in DB before SkillService operations
+        
+        await SkillService.grant_all_skills_to_player(offline_player_id)
         
         # Use SkillService to add same XP to offline player (proper architecture)
-        await SkillService.add_experience(offline_player, SkillType.ATTACK, 388)  # Same XP as online player
+        await SkillService.add_experience(offline_player_id, SkillType.ATTACK, 388)  # Same XP as online player
         
         return gsm
 
@@ -240,12 +237,16 @@ class TestSkillsServiceTransparency:
 class TestSkillsValkeyFallback:
     """Test skills behavior when Valkey is unavailable or disabled."""
 
-    async def test_skills_valkey_unavailable_fallback(self, session, gsm: GameStateManager):
+    async def test_skills_valkey_unavailable_fallback(self, session, gsm: GameStateManager, create_offline_player):
         """Test database fallback when Valkey is unavailable for skills."""
         await SkillService.sync_skills_to_db()
         
-        # Add test skills to database
+        # Create player first to satisfy foreign key constraints
         player_id = 200
+        await create_offline_player(player_id, username=f"fallback_player_{player_id}")
+        await session.commit()  # Ensure player exists before SkillService operations
+        
+        # Add test skills to database
         await SkillService.grant_all_skills_to_player(player_id)
         
         # Simulate Valkey being unavailable
@@ -266,11 +267,15 @@ class TestSkillsValkeyFallback:
             gsm._valkey = original_valkey
 
     @patch('server.src.core.config.settings.USE_VALKEY', False)
-    async def test_skills_valkey_disabled_uses_database(self, session, gsm: GameStateManager):
+    async def test_skills_valkey_disabled_uses_database(self, session, gsm: GameStateManager, create_offline_player):
         """Test that USE_VALKEY=False uses database even when Valkey available for skills."""
         await SkillService.sync_skills_to_db()
         
+        # Create player first to satisfy foreign key constraints
         player_id = 300
+        await create_offline_player(player_id, username=f"valkey_disabled_player_{player_id}")
+        await session.commit()  # Ensure player exists before SkillService operations
+        
         await SkillService.grant_all_skills_to_player(player_id)
         
         # Verify Valkey is available but should be bypassed

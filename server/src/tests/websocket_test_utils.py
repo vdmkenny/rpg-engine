@@ -134,17 +134,17 @@ class WebSocketTestClient:
                     if self.is_async_websocket:
                         raw_message = await self.websocket.receive_bytes()
                     else:
-                        # For sync TestClient, use a more robust approach with timeout
+                        # For sync TestClient, use executor with reasonable timeout
                         loop = asyncio.get_event_loop()
                         try:
-                            # Use a short timeout to prevent indefinite blocking
+                            # Use a single timeout attempt that should be sufficient
                             raw_message = await asyncio.wait_for(
                                 loop.run_in_executor(None, self.websocket.receive_bytes),
-                                timeout=0.1  # 100ms timeout
+                                timeout=1.0  # Generous 1 second timeout
                             )
                         except asyncio.TimeoutError:
                             # If no message available, continue loop
-                            await asyncio.sleep(0.01)  # Small delay to prevent busy loop
+                            await asyncio.sleep(0.05)  # Longer pause between attempts
                             continue
                         except Exception as e:
                             # Handle connection errors gracefully
@@ -260,10 +260,10 @@ class WebSocketTestClient:
         command_type: MessageType, 
         payload: Dict[str, Any], 
         timeout: Optional[float] = None
-    ) -> Dict[str, Any]:
+    ) -> WSMessage:
         """
         Send a command and wait for success response.
-        Returns the success payload data.
+        Returns the full WSMessage with RESP_SUCCESS or RESP_ERROR.
         """
         if command_type not in COMMAND_TYPES:
             raise ValueError(f"{command_type} is not a command type")
@@ -274,42 +274,42 @@ class WebSocketTestClient:
         await self._send_message(command_type, payload, correlation_id)
         response = await self._wait_for_response(correlation_id, MessageType.RESP_SUCCESS, timeout)
         
-        return response.payload
+        return response
         
     # Command convenience methods
-    async def authenticate(self, token: str) -> Dict[str, Any]:
+    async def authenticate(self, token: str) -> WSMessage:
         """Authenticate with JWT token"""
         return await self.send_command(MessageType.CMD_AUTHENTICATE, {"token": token})
         
-    async def move_player(self, direction: str) -> Dict[str, Any]:
+    async def move_player(self, direction: str) -> WSMessage:
         """Move player in specified direction"""
         return await self.send_command(MessageType.CMD_MOVE, {"direction": direction})
         
-    async def send_chat(self, message: str, channel: str = "local") -> Dict[str, Any]:
+    async def send_chat(self, message: str, channel: str = "local") -> WSMessage:
         """Send chat message"""
         return await self.send_command(MessageType.CMD_CHAT_SEND, {"message": message, "channel": channel})
         
-    async def move_inventory_item(self, from_slot: int, to_slot: int) -> Dict[str, Any]:
+    async def move_inventory_item(self, from_slot: int, to_slot: int) -> WSMessage:
         """Move item between inventory slots"""
         return await self.send_command(MessageType.CMD_INVENTORY_MOVE, {"from_slot": from_slot, "to_slot": to_slot})
         
-    async def sort_inventory(self, sort_by: str = "category") -> Dict[str, Any]:
+    async def sort_inventory(self, sort_by: str = "category") -> WSMessage:
         """Sort inventory by criteria"""
         return await self.send_command(MessageType.CMD_INVENTORY_SORT, {"sort_by": sort_by})
         
-    async def drop_item(self, inventory_slot: int, quantity: int = 1) -> Dict[str, Any]:
+    async def drop_item(self, inventory_slot: int, quantity: int = 1) -> WSMessage:
         """Drop item from inventory"""
         return await self.send_command(MessageType.CMD_ITEM_DROP, {"inventory_slot": inventory_slot, "quantity": quantity})
         
-    async def pickup_item(self, ground_item_id: str) -> Dict[str, Any]:
+    async def pickup_item(self, ground_item_id: str) -> WSMessage:
         """Pick up ground item"""
         return await self.send_command(MessageType.CMD_ITEM_PICKUP, {"ground_item_id": ground_item_id})
         
-    async def equip_item(self, inventory_slot: int) -> Dict[str, Any]:
+    async def equip_item(self, inventory_slot: int) -> WSMessage:
         """Equip item from inventory"""
         return await self.send_command(MessageType.CMD_ITEM_EQUIP, {"inventory_slot": inventory_slot})
         
-    async def unequip_item(self, equipment_slot: str) -> Dict[str, Any]:
+    async def unequip_item(self, equipment_slot: str) -> WSMessage:
         """Unequip item to inventory"""
         return await self.send_command(MessageType.CMD_ITEM_UNEQUIP, {"equipment_slot": equipment_slot})
         
@@ -322,10 +322,10 @@ class WebSocketTestClient:
         query_type: MessageType, 
         payload: Dict[str, Any], 
         timeout: Optional[float] = None
-    ) -> Dict[str, Any]:
+    ) -> WSMessage:
         """
         Send a query and wait for data response.
-        Returns the response data.
+        Returns the full WSMessage with RESP_DATA or RESP_ERROR.
         """
         if query_type not in QUERY_TYPES:
             raise ValueError(f"{query_type} is not a query type")
@@ -336,18 +336,18 @@ class WebSocketTestClient:
         await self._send_message(query_type, payload, correlation_id)
         response = await self._wait_for_response(correlation_id, MessageType.RESP_DATA, timeout)
         
-        return response.payload
+        return response
         
     # Query convenience methods
-    async def get_inventory(self) -> Dict[str, Any]:
+    async def get_inventory(self) -> WSMessage:
         """Get current inventory state"""
         return await self.send_query(MessageType.QUERY_INVENTORY, {})
         
-    async def get_equipment(self) -> Dict[str, Any]:
+    async def get_equipment(self) -> WSMessage:
         """Get current equipment state"""
         return await self.send_query(MessageType.QUERY_EQUIPMENT, {})
         
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> WSMessage:
         """Get aggregated equipment stats"""
         return await self.send_query(MessageType.QUERY_STATS, {})
         
@@ -357,7 +357,7 @@ class WebSocketTestClient:
         center_x: int, 
         center_y: int, 
         radius: int = 1
-    ) -> Dict[str, Any]:
+    ) -> WSMessage:
         """Get map chunk data"""
         return await self.send_query(
             MessageType.QUERY_MAP_CHUNKS,
@@ -378,11 +378,10 @@ class WebSocketTestClient:
         event_type: MessageType, 
         timeout: Optional[float] = None,
         filter_func: Optional[Callable[[Dict[str, Any]], bool]] = None
-    ) -> Dict[str, Any]:
+    ) -> WSMessage:
         """
-        Wait for a specific event type.
+        Wait for a specific event type and return the full WSMessage.
         Optionally filter events with a function.
-        Returns the event payload.
         """
         if event_type not in EVENT_TYPES:
             raise ValueError(f"{event_type} is not an event type")
@@ -402,7 +401,7 @@ class WebSocketTestClient:
         
         try:
             event = await future
-            return event.payload
+            return event  # Return full WSMessage, not just payload
         except asyncio.TimeoutError:
             raise ResponseTimeoutError(f"Event timeout for {event_type}")
         finally:
@@ -416,7 +415,7 @@ class WebSocketTestClient:
             future.set_exception(asyncio.TimeoutError())
             
     # Event convenience methods
-    async def expect_welcome(self) -> Dict[str, Any]:
+    async def expect_welcome(self) -> WSMessage:
         """Expect welcome event after authentication"""
         return await self.expect_event(MessageType.EVENT_WELCOME)
         
@@ -424,7 +423,7 @@ class WebSocketTestClient:
         self,
         target: Optional[str] = None,
         system: Optional[str] = None
-    ) -> Dict[str, Any]:
+    ) -> WSMessage:
         """Expect state update event with optional filtering"""
         def filter_func(payload: Dict[str, Any]) -> bool:
             if target and payload.get("target") != target:
@@ -436,7 +435,7 @@ class WebSocketTestClient:
         filter_func = filter_func if (target or system) else None
         return await self.expect_event(MessageType.EVENT_STATE_UPDATE, filter_func=filter_func)
         
-    async def expect_game_update(self, map_id: Optional[str] = None) -> Dict[str, Any]:
+    async def expect_game_update(self, map_id: Optional[str] = None) -> WSMessage:
         """Expect game entity update"""
         def filter_func(payload: Dict[str, Any]) -> bool:
             if map_id and payload.get("map_id") != map_id:
@@ -450,7 +449,7 @@ class WebSocketTestClient:
         self, 
         sender: Optional[str] = None, 
         channel: Optional[str] = None
-    ) -> Dict[str, Any]:
+    ) -> WSMessage:
         """Expect chat message with optional filtering"""
         def filter_func(payload: Dict[str, Any]) -> bool:
             if sender and payload.get("sender") != sender:
@@ -484,7 +483,7 @@ class WebSocketTestClient:
             raise WebSocketTestError(f"Unexpected events received: {new_messages}")
 
     # =========================================================================
-    # Legacy Compatibility Methods (for existing equipment tests)
+    # Test Utilities
     # =========================================================================
     
     async def wait_for_event(
@@ -527,61 +526,7 @@ class WebSocketTestClient:
             if capture in self.event_captures:
                 self.event_captures.remove(capture)
                 
-    async def add_test_item_to_inventory(self, item_name: str, slot: int) -> None:
-        """
-        Helper method to add test item to inventory for testing purposes.
-        
-        This is a test-only utility method that bypasses normal game mechanics
-        to directly add items to inventory for test setup.
-        
-        Args:
-            item_name: The name/ID of the item to add (e.g., "wooden_sword")  
-            slot: The inventory slot to add the item to
-        """
-        try:
-            # Import here to avoid circular dependencies
-            from server.src.services.game_state_manager import get_game_state_manager
-            from server.src.services.inventory_service import InventoryService
-            
-            gsm = get_game_state_manager()
-            
-            # For now, use a simple approach - find the test user
-            # In the test environment, there should only be one online player
-            # This is the "testuser" created in the test fixture
-            from server.src.services.connection_service import ConnectionService
-            online_players = ConnectionService.get_online_player_ids()
-            
-            if not online_players:
-                raise WebSocketTestError("No online players found for test item setup")
-                
-            # Use the first (and likely only) online player in tests
-            player_id = online_players[0] 
-            
-            # For the simple approach, we'll use a hardcoded item ID mapping
-            # In a real implementation, this would look up the item in the database
-            item_id_map = {
-                "wooden_sword": 1,  # Assuming wooden_sword has ID 1 in test data
-                "iron_sword": 2,
-                "bronze_arrows": 10,
-                "iron_arrows": 11,
-            }
-            
-            item_id = item_id_map.get(item_name)
-            if not item_id:
-                # Fallback: try to use the name as an ID if it's numeric
-                try:
-                    item_id = int(item_name)
-                except ValueError:
-                    raise WebSocketTestError(f"Unknown test item: {item_name}")
-            
-            # Add the item directly to inventory
-            result = await InventoryService.add_item(player_id, item_id, quantity=1)
-            
-            if not result.success:
-                raise WebSocketTestError(f"Failed to add test item {item_name}: {result.message}")
-                
-        except Exception as e:
-            raise WebSocketTestError(f"Failed to add test item to inventory: {str(e)}")
+
 
 
 # =============================================================================
@@ -613,286 +558,36 @@ async def create_test_player(websocket_client: WebSocketTestClient, username: st
 
 
 # =============================================================================
-# Test Scenarios
+# Test Fixtures and Helpers
 # =============================================================================
 
-class TestScenarios:
-    """
-    Pre-configured test scenarios to eliminate setup duplication.
-    
-    Provides common test setups like players with items, multiplayer scenarios,
-    and ground item configurations.
-    """
-    
-    @staticmethod
-    async def player_with_items(
-        integration_client: TestClient, 
-        items: List[str],
-        username_prefix: str = "itemtest",
-        db_session=None
-    ) -> WebSocketTestClient:
-        """
-        Create a player with specific inventory items.
-        
-        Args:
-            integration_client: FastAPI test client
-            items: List of item names to add to inventory
-            username_prefix: Prefix for generated username
-            db_session: Database session for TestDataService
-        
-        Returns:
-            Connected and authenticated WebSocketTestClient
-        """
-        # Ensure test data exists
-        if db_session:
-            await TestDataService.ensure_game_data_synced(db_session)
-        
-        # Create player with items
-        client = await WebSocketTestClient.create_player(
-            integration_client, 
-            username_prefix,
-            db_session=db_session,
-            inventory_items=items
-        )
-        
-        await client.connect_and_authenticate()
-        return client
-    
-    @staticmethod
-    async def player_with_equipment(
-        integration_client: TestClient,
-        equipment: Dict[str, str],
-        username_prefix: str = "equiptest",
-        db_session=None
-    ) -> WebSocketTestClient:
-        """
-        Create a player with specific equipment.
-        
-        Args:
-            integration_client: FastAPI test client  
-            equipment: Dict of {slot: item_name}
-            username_prefix: Prefix for generated username
-            db_session: Database session for TestDataService
-        
-        Returns:
-            Connected and authenticated WebSocketTestClient
-        """
-        # Ensure test data exists
-        if db_session:
-            await TestDataService.ensure_game_data_synced(db_session)
-        
-        # Create player with equipment
-        client = await WebSocketTestClient.create_player(
-            integration_client,
-            username_prefix,
-            db_session=db_session,
-            equipment=equipment
-        )
-        
-        await client.connect_and_authenticate()
-        return client
-    
-    @staticmethod
-    async def multiplayer_same_map(
-        integration_client: TestClient, 
-        count: int = 2,
-        map_id: str = "samplemap",
-        db_session=None
-    ) -> List[WebSocketTestClient]:
-        """
-        Create multiple players on the same map.
-        
-        Args:
-            integration_client: FastAPI test client
-            count: Number of players to create
-            map_id: Map to place players on
-            db_session: Database session for TestDataService
-        
-        Returns:
-            List of connected WebSocketTestClient instances
-        """
-        # Ensure test data exists
-        if db_session:
-            await TestDataService.ensure_game_data_synced(db_session)
-        
-        clients = []
-        for i in range(count):
-            client = await WebSocketTestClient.create_player(
-                integration_client,
-                f"multi{i}",
-                db_session=db_session,
-                map_id=map_id,
-                x=10 + i,  # Spread players out slightly
-                y=10 + i
-            )
-            await client.connect_and_authenticate()
-            clients.append(client)
-        
-        return clients
-    
-    @staticmethod
-    async def ground_items_scenario(
-        integration_client: TestClient,
-        ground_items: List[GroundItemConfig],
-        username_prefix: str = "groundtest",
-        db_session=None
-    ) -> WebSocketTestClient:
-        """
-        Create a player with ground items nearby.
-        
-        Args:
-            integration_client: FastAPI test client
-            ground_items: List of GroundItemConfig objects
-            username_prefix: Prefix for generated username
-            db_session: Database session for TestDataService
-        
-        Returns:
-            WebSocketTestClient with scenario_data containing ground item info
-        """
-        # Ensure test data exists
-        if db_session:
-            await TestDataService.ensure_game_data_synced(db_session)
-        
-        # Create player first
-        client = await WebSocketTestClient.create_player(
-            integration_client,
-            username_prefix,
-            db_session=db_session,
-            x=5, 
-            y=5
-        )
-        
-        # Create scenario using TestDataService
-        if db_session:
-            player_configs = [PlayerConfig(
-                username_prefix=f"{username_prefix}_main",
-                x=5,
-                y=5
-            )]
-            
-            scenario_result = await TestDataService.create_multiplayer_scenario(
-                db=db_session,
-                player_configs=player_configs,
-                ground_items=ground_items
-            )
-            
-            if scenario_result.success:
-                # Store scenario data for test use
-                client.scenario_data = TestScenarioData(
-                    players=[{"username": client.username, "id": client.player_id}],
-                    ground_items=scenario_result.data.ground_items,
-                    inventory_items={},
-                    equipment_items={}
-                )
-        
-        await client.connect_and_authenticate()
-        return client
+@pytest.fixture
+async def websocket_client(authenticated_websocket):
+    """Create a WebSocket test client"""
+    async with WebSocketTestClient(authenticated_websocket) as client:
+        yield client
 
 
-class WebSocketAssertions:
-    """
-    Standardized assertion helpers for WebSocket test responses.
+async def create_test_player(websocket_client: WebSocketTestClient, username: str = None) -> Dict[str, Any]:
+    """Create and authenticate a test player"""
+    from server.src.tests.conftest import create_test_token
     
-    Provides consistent validation patterns across all WebSocket tests.
-    """
+    if not username:
+        username = f"test_player_{int(time.time() * 1000)}"
+        
+    token = await create_test_token(username)
+    auth_result = await websocket_client.authenticate(token)
     
-    @staticmethod
-    def operation_success(
-        response: WebSocketResponse, 
-        operation: str, 
-        message_contains: Optional[str] = None
-    ):
-        """
-        Assert that a WebSocket operation succeeded.
-        
-        Args:
-            response: WebSocketResponse object
-            operation: Expected operation name
-            message_contains: Optional substring to expect in message
-        """
-        assert response.success, f"Operation {operation} failed: {response.message}"
-        
-        if message_contains:
-            assert message_contains in response.message, (
-                f"Expected message to contain '{message_contains}', "
-                f"got: {response.message}"
-            )
-    
-    @staticmethod
-    def operation_failure(
-        response: WebSocketResponse, 
-        operation: str, 
-        error_code: Optional[str] = None,
-        message_contains: Optional[str] = None
-    ):
-        """
-        Assert that a WebSocket operation failed as expected.
-        
-        Args:
-            response: WebSocketResponse object
-            operation: Expected operation name
-            error_code: Optional error code to expect
-            message_contains: Optional substring to expect in error message
-        """
-        assert not response.success, f"Operation {operation} should have failed but succeeded: {response.message}"
-        
-        if error_code:
-            # This will be used when we implement structured error codes
-            pass
-        
-        if message_contains:
-            assert message_contains in response.message, (
-                f"Expected error message to contain '{message_contains}', "
-                f"got: {response.message}"
-            )
-    
-    @staticmethod
-    def message_received(messages: List[Dict], message_type: str) -> Dict:
-        """
-        Assert that a specific message type was received.
-        
-        Args:
-            messages: List of received messages
-            message_type: Expected message type
-        
-        Returns:
-            The matching message
-        """
-        for msg in reversed(messages):  # Check most recent first
-            if msg.get("type") == message_type:
-                return msg
-        
-        received_types = [msg.get("type") for msg in messages]
-        raise AssertionError(
-            f"Expected {message_type} message not received. "
-            f"Got messages: {received_types}"
-        )
-    
-    @staticmethod
-    def no_message_received(messages: List[Dict], message_type: str):
-        """
-        Assert that a specific message type was NOT received.
-        
-        Args:
-            messages: List of received messages
-            message_type: Message type that should not be present
-        """
-        for msg in messages:
-            if msg.get("type") == message_type:
-                raise AssertionError(f"Unexpected {message_type} message received: {msg}")
+    return {
+        "username": username,
+        "token": token,
+        "auth_result": auth_result
+    }
 
 
 # =============================================================================
-# Test Decorators and Markers
+# Test Decorators
 # =============================================================================
-
-def requires_integration():
-    """Mark test as requiring integration test environment"""
-    return pytest.mark.skipif(
-        not pytest.get_integration_test_flag(),
-        reason="Integration tests require RUN_INTEGRATION_TESTS=1"
-    )
-
 
 def protocol_test(func):
     """Decorator for protocol tests"""

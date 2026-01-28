@@ -48,7 +48,7 @@ async def player_with_equipment(
     
     # Login player to register with GSM (GSM singleton is already initialized by gsm fixture)
     from server.src.services.player_service import PlayerService
-    await PlayerService.login_player(session, player)
+    await PlayerService.login_player(player)
     
     return player
 
@@ -84,7 +84,7 @@ class TestGetEquipment:
         """Empty equipment should return empty dict."""
         player = player_with_equipment
 
-        equipment = await EquipmentService.get_equipment(session, player.id)
+        equipment = await EquipmentService.get_equipment(player.id)
 
         assert equipment == {}
 
@@ -94,14 +94,14 @@ class TestGetEquipment:
     ):
         """Equipment with items should return dict of slots."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         
         # Get test item
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         
         # Login player with proper state loading (GSM singleton is already initialized by gsm fixture)
         from server.src.services.player_service import PlayerService
-        await PlayerService.login_player(session, player)
+        await PlayerService.login_player(player)
 
         # Add item to inventory and equip
         print(f"Player online status: {gsm.is_online(player.id)}")
@@ -124,10 +124,10 @@ class TestGetEquipment:
         slot_0_data = await gsm.get_inventory_slot(player.id, 0)
         print(f"Slot 0 data: {slot_0_data}")
         
-        equip_result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        equip_result = await EquipmentService.equip_from_inventory(player.id, 0)
         print(f"Equip result: success={equip_result.success}, message={equip_result.message}")
 
-        equipment = await EquipmentService.get_equipment(session, player.id)
+        equipment = await EquipmentService.get_equipment(player.id)
         print(f"Equipment after equip: {equipment}")
 
         assert EquipmentSlot.WEAPON.value in equipment
@@ -140,7 +140,7 @@ class TestGetEquipment:
         """Equipment response should have all slots."""
         player = player_with_equipment
 
-        response = await EquipmentService.get_equipment_response(session, player.id)
+        response = await EquipmentService.get_equipment_response(player.id)
 
         # Should have one slot per EquipmentSlot
         assert len(response.slots) == len(EquipmentSlot)
@@ -165,7 +165,7 @@ class TestCanEquip:
         """Item with no requirements should be equippable."""
         player = player_with_equipment
         # Bronze arrows have no skill requirements
-        item = await ItemService.get_item_by_name(session, "bronze_arrows")
+        item = await ItemService.get_item_by_name("bronze_arrows")
 
         result = await EquipmentService.can_equip(player.id, item)
 
@@ -179,10 +179,10 @@ class TestCanEquip:
         player = player_with_equipment
         # Login player to load skills (GSM singleton is already initialized by gsm fixture)
         from server.src.services.player_service import PlayerService
-        await PlayerService.login_player(session, player)
+        await PlayerService.login_player(player)
         
         # Bronze sword requires attack level 1 (default)
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         
         result = await EquipmentService.can_equip(player.id, item)
         
@@ -196,7 +196,7 @@ class TestCanEquip:
         """Should fail if skill level is too low."""
         player = player_with_equipment
         # Iron sword requires attack level 10
-        item = await ItemService.get_item_by_name(session, "iron_sword")
+        item = await ItemService.get_item_by_name("iron_sword")
 
         # Give player attack level 5 (not enough)
         await give_player_skill_level(session, player.id, "attack", 5)
@@ -214,7 +214,7 @@ class TestCanEquip:
         """Should succeed if requirements are met."""
         player = player_with_equipment
         # Iron sword requires attack level 10
-        item = await ItemService.get_item_by_name(session, "iron_sword")
+        item = await ItemService.get_item_by_name("iron_sword")
 
         # Give player attack level 10 (exactly enough)
         await give_player_skill_level(session, player.id, "attack", 10)
@@ -230,7 +230,7 @@ class TestCanEquip:
         """Non-equipable items should fail."""
         player = player_with_equipment
         # Copper ore cannot be equipped
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
 
         result = await EquipmentService.can_equip(player.id, item)
 
@@ -252,7 +252,7 @@ class TestEquipFromInventory:
     ):
         """Basic equip should work."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         # Give required skill
         await give_player_skill_level(session, player.id, "attack", 1)
@@ -261,14 +261,13 @@ class TestEquipFromInventory:
         await InventoryService.add_item(player.id, item.id)
 
         # Equip
-        result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        result = await EquipmentService.equip_from_inventory(player.id, 0)
 
         assert result.success is True
         assert "Bronze Sword" in result.message
 
         # Verify equipped
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.WEAPON
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.WEAPON
         )
         assert equipped is not None
         assert equipped.item_id == item.id
@@ -284,7 +283,7 @@ class TestEquipFromInventory:
         """Equipping from empty inventory slot should fail."""
         player = player_with_equipment
 
-        result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        result = await EquipmentService.equip_from_inventory(player.id, 0)
 
         assert result.success is False
         assert "empty" in result.message.lower()
@@ -295,12 +294,12 @@ class TestEquipFromInventory:
     ):
         """Equipping non-equipable item should fail."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
 
         # Add to inventory
         await InventoryService.add_item(player.id, item.id, quantity=10)
 
-        result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        result = await EquipmentService.equip_from_inventory(player.id, 0)
 
         assert result.success is False
         assert "cannot be equipped" in result.message.lower()
@@ -311,8 +310,8 @@ class TestEquipFromInventory:
     ):
         """Equipping should swap with currently equipped item."""
         player = player_with_equipment
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
-        pickaxe = await ItemService.get_item_by_name(session, "bronze_pickaxe")
+        sword = await ItemService.get_item_by_name("bronze_sword")
+        pickaxe = await ItemService.get_item_by_name("bronze_pickaxe")
 
         # Give required skills
         await give_player_skill_level(session, player.id, "attack", 1)
@@ -323,16 +322,15 @@ class TestEquipFromInventory:
         await InventoryService.add_item(player.id, pickaxe.id)
 
         # Equip sword (slot 0)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Equip pickaxe (slot 1) - should swap with sword
-        result = await EquipmentService.equip_from_inventory(session, player.id, 1)
+        result = await EquipmentService.equip_from_inventory(player.id, 1)
 
         assert result.success is True
 
         # Pickaxe should be equipped
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.WEAPON
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.WEAPON
         )
         assert equipped.item_id == pickaxe.id
 
@@ -347,8 +345,8 @@ class TestEquipFromInventory:
     ):
         """Equipping two-handed weapon should unequip shield."""
         player = player_with_equipment
-        two_handed = await ItemService.get_item_by_name(session, "bronze_2h_sword")
-        shield = await ItemService.get_item_by_name(session, "bronze_shield")
+        two_handed = await ItemService.get_item_by_name("bronze_2h_sword")
+        shield = await ItemService.get_item_by_name("bronze_shield")
 
         # Give required skills
         await give_player_skill_level(session, player.id, "attack", 1)
@@ -356,29 +354,26 @@ class TestEquipFromInventory:
 
         # Add shield to inventory and equip it
         await InventoryService.add_item(player.id, shield.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Verify shield is equipped
-        equipped_shield = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.SHIELD
+        equipped_shield = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.SHIELD
         )
         assert equipped_shield is not None
 
         # Add two-handed weapon and equip it
         await InventoryService.add_item(player.id, two_handed.id)
-        result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        result = await EquipmentService.equip_from_inventory(player.id, 0)
 
         assert result.success is True
 
         # Two-handed should be equipped
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.WEAPON
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.WEAPON
         )
         assert equipped.item_id == two_handed.id
 
         # Shield should be unequipped (in inventory)
-        equipped_shield = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.SHIELD
+        equipped_shield = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.SHIELD
         )
         assert equipped_shield is None
 
@@ -392,8 +387,8 @@ class TestEquipFromInventory:
     ):
         """Equipping shield when using two-handed weapon should unequip weapon."""
         player = player_with_equipment
-        two_handed = await ItemService.get_item_by_name(session, "bronze_2h_sword")
-        shield = await ItemService.get_item_by_name(session, "bronze_shield")
+        two_handed = await ItemService.get_item_by_name("bronze_2h_sword")
+        shield = await ItemService.get_item_by_name("bronze_shield")
 
         # Give required skills
         await give_player_skill_level(session, player.id, "attack", 1)
@@ -401,30 +396,27 @@ class TestEquipFromInventory:
 
         # Add two-handed to inventory and equip it
         await InventoryService.add_item(player.id, two_handed.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Verify two-handed is equipped
-        equipped_weapon = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.WEAPON
+        equipped_weapon = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.WEAPON
         )
         assert equipped_weapon is not None
         assert equipped_weapon.item.is_two_handed is True
 
         # Add shield and equip it
         await InventoryService.add_item(player.id, shield.id)
-        result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        result = await EquipmentService.equip_from_inventory(player.id, 0)
 
         assert result.success is True
 
         # Shield should be equipped
-        equipped_shield = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.SHIELD
+        equipped_shield = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.SHIELD
         )
         assert equipped_shield.item_id == shield.id
 
         # Two-handed weapon should be unequipped (in inventory)
-        equipped_weapon = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.WEAPON
+        equipped_weapon = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.WEAPON
         )
         assert equipped_weapon is None
 
@@ -438,7 +430,7 @@ class TestEquipFromInventory:
     ):
         """Durability should be preserved when equipping."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         # Give required skill
         await give_player_skill_level(session, player.id, "attack", 1)
@@ -447,11 +439,10 @@ class TestEquipFromInventory:
         await InventoryService.add_item(player.id, item.id, durability=250)
 
         # Equip
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Check durability is preserved
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.WEAPON
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.WEAPON
         )
         assert equipped.current_durability == 250
 
@@ -469,25 +460,23 @@ class TestUnequipToInventory:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Basic unequip should work."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         # Give required skill
         await give_player_skill_level(session, player.id, "attack", 1)
 
         # Add to inventory and equip
         await InventoryService.add_item(player.id, item.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Unequip
-        result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.WEAPON)
+        result = await EquipmentService.unequip_to_inventory(player.id, EquipmentSlot.WEAPON)
 
         assert result.success is True
         assert result.inventory_slot is not None
 
         # Slot should be empty
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.WEAPON)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.WEAPON)
         assert equipped is None
 
         # Item should be in inventory
@@ -503,8 +492,7 @@ class TestUnequipToInventory:
         """Unequipping empty slot should fail."""
         player = player_with_equipment
 
-        result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.WEAPON)
+        result = await EquipmentService.unequip_to_inventory(player.id, EquipmentSlot.WEAPON)
 
         assert result.success is False
         assert "nothing equipped" in result.message.lower()
@@ -514,15 +502,15 @@ class TestUnequipToInventory:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Unequipping with full inventory should fail."""
         player = player_with_equipment
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
-        ore = await ItemService.get_item_by_name(session, "copper_ore")
+        sword = await ItemService.get_item_by_name("bronze_sword")
+        ore = await ItemService.get_item_by_name("copper_ore")
 
         # Give required skill
         await give_player_skill_level(session, player.id, "attack", 1)
 
         # Add sword and equip
         await InventoryService.add_item(player.id, sword.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Fill inventory with non-stackable items to ensure all slots are used
         non_stackable_items = [
@@ -535,12 +523,11 @@ class TestUnequipToInventory:
         
         for i in range(settings.INVENTORY_MAX_SLOTS):
             item_name = non_stackable_items[i]
-            item = await ItemService.get_item_by_name(session, item_name)
+            item = await ItemService.get_item_by_name(item_name)
             await InventoryService.add_item(player.id, item.id, quantity=1)
 
         # Try to unequip
-        result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.WEAPON)
+        result = await EquipmentService.unequip_to_inventory(player.id, EquipmentSlot.WEAPON)
 
         assert result.success is False
         assert "full" in result.message.lower()
@@ -550,7 +537,7 @@ class TestUnequipToInventory:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Durability should be preserved when unequipping."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         # Keep player online to ensure all operations go through Valkey (cache layer)
         # This matches real-world usage and avoids database session isolation issues
@@ -571,20 +558,18 @@ class TestUnequipToInventory:
         valkey_data = gsm._valkey.get_hash_data(inventory_key)
         print(f"DEBUG: Valkey inventory data after add: {valkey_data}")
         
-        equip_result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        equip_result = await EquipmentService.equip_from_inventory(player.id, 0)
         print(f"DEBUG: Equip result: {equip_result}")
         
         # Check if item is actually equipped
-        equipped = await EquipmentService.get_equipped_in_slot(session, player.id, EquipmentSlot.WEAPON)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.WEAPON)
         print(f"DEBUG: Item equipped in weapon slot: {equipped}")
 
         # Use equipment service to degrade durability to 150
-        await EquipmentService.degrade_equipment(
-            session, player.id, EquipmentSlot.WEAPON, 150)
+        await EquipmentService.degrade_equipment(player.id, EquipmentSlot.WEAPON, 150)
 
         # Unequip
-        result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.WEAPON)
+        result = await EquipmentService.unequip_to_inventory(player.id, EquipmentSlot.WEAPON)
 
         print(f"DEBUG: Unequip result: {result}")
         print(f"DEBUG: Unequip success: {result.success}")
@@ -630,12 +615,12 @@ class TestGetTotalStats:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Single equipped item should contribute its stats."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         # Give required skill and equip
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, item.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         stats = await EquipmentService.get_total_stats(player.id)
 
@@ -648,9 +633,9 @@ class TestGetTotalStats:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Multiple items should aggregate stats."""
         player = player_with_equipment
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
-        helmet = await ItemService.get_item_by_name(session, "bronze_helmet")
-        platebody = await ItemService.get_item_by_name(session, "bronze_platebody")
+        sword = await ItemService.get_item_by_name("bronze_sword")
+        helmet = await ItemService.get_item_by_name("bronze_helmet")
+        platebody = await ItemService.get_item_by_name("bronze_platebody")
 
         # Give required skills
         await give_player_skill_level(session, player.id, "attack", 1)
@@ -658,13 +643,13 @@ class TestGetTotalStats:
 
         # Equip all items
         await InventoryService.add_item(player.id, sword.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         await InventoryService.add_item(player.id, helmet.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         await InventoryService.add_item(player.id, platebody.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         stats = await EquipmentService.get_total_stats(player.id)
 
@@ -682,14 +667,14 @@ class TestGetTotalStats:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Negative stats should reduce totals."""
         player = player_with_equipment
-        platebody = await ItemService.get_item_by_name(session, "bronze_platebody")
+        platebody = await ItemService.get_item_by_name("bronze_platebody")
 
         # Give required skill
         await give_player_skill_level(session, player.id, "defence", 1)
 
         # Equip platebody (has negative magic attack)
         await InventoryService.add_item(player.id, platebody.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         stats = await EquipmentService.get_total_stats(player.id)
 
@@ -711,16 +696,17 @@ class TestDurability:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Degrading should reduce durability."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         # Give required skill and equip with full durability
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, item.id, durability=500)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Degrade
         remaining = await EquipmentService.degrade_equipment(
-            session, player.id, EquipmentSlot.WEAPON, amount=1)
+            player.id, EquipmentSlot.WEAPON, amount=1
+        )
 
         # Should be reduced by EQUIPMENT_DURABILITY_LOSS_PER_HIT
         expected = 500 - settings.EQUIPMENT_DURABILITY_LOSS_PER_HIT
@@ -732,8 +718,7 @@ class TestDurability:
         """Degrading empty slot should return None."""
         player = player_with_equipment
 
-        remaining = await EquipmentService.degrade_equipment(
-            session, player.id, EquipmentSlot.WEAPON)
+        remaining = await EquipmentService.degrade_equipment(player.id, EquipmentSlot.WEAPON)
 
         assert remaining is None
 
@@ -742,16 +727,17 @@ class TestDurability:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Durability should not go below zero."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         # Give required skill and equip with low durability
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, item.id, durability=1)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Degrade a lot
         remaining = await EquipmentService.degrade_equipment(
-            session, player.id, EquipmentSlot.WEAPON, amount=100)
+            player.id, EquipmentSlot.WEAPON, amount=100
+        )
 
         assert remaining == 0
 
@@ -760,23 +746,21 @@ class TestDurability:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Repairing should restore to max durability."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         # Give required skill and equip with partial durability
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, item.id, durability=250)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Repair
-        success, cost = await EquipmentService.repair_equipment(
-            session, player.id, EquipmentSlot.WEAPON)
+        success, cost = await EquipmentService.repair_equipment(player.id, EquipmentSlot.WEAPON)
 
         assert success is True
         assert cost > 0  # Repair should cost something
 
         # Check durability is restored
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.WEAPON)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.WEAPON)
         assert equipped.current_durability == item.max_durability
 
     @pytest.mark.asyncio
@@ -785,8 +769,7 @@ class TestDurability:
         """Repairing empty slot should fail."""
         player = player_with_equipment
 
-        success, cost = await EquipmentService.repair_equipment(
-            session, player.id, EquipmentSlot.WEAPON)
+        success, cost = await EquipmentService.repair_equipment(player.id, EquipmentSlot.WEAPON)
 
         assert success is False
         assert cost == 0
@@ -805,26 +788,26 @@ class TestClearEquipment:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Clear should remove all equipment."""
         player = player_with_equipment
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
-        helmet = await ItemService.get_item_by_name(session, "bronze_helmet")
+        sword = await ItemService.get_item_by_name("bronze_sword")
+        helmet = await ItemService.get_item_by_name("bronze_helmet")
 
         # Give required skills and equip
         await give_player_skill_level(session, player.id, "attack", 1)
         await give_player_skill_level(session, player.id, "defence", 1)
 
         await InventoryService.add_item(player.id, sword.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         await InventoryService.add_item(player.id, helmet.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Clear
-        count = await EquipmentService.clear_equipment(session, player.id)
+        count = await EquipmentService.clear_equipment(player.id)
 
         assert count == 2
 
         # All slots should be empty
-        equipment = await EquipmentService.get_equipment(session, player.id)
+        equipment = await EquipmentService.get_equipment(player.id)
         assert equipment == {}
 
     @pytest.mark.asyncio
@@ -833,7 +816,7 @@ class TestClearEquipment:
         """Clearing empty equipment should return 0."""
         player = player_with_equipment
 
-        count = await EquipmentService.clear_equipment(session, player.id)
+        count = await EquipmentService.clear_equipment(player.id)
 
         assert count == 0
 
@@ -851,14 +834,14 @@ class TestGetAllEquippedItems:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Should return list of (equipment, item) tuples."""
         player = player_with_equipment
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_sword")
 
         # Give required skill and equip
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, sword.id)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
-        items = await EquipmentService.get_all_equipped_items(session, player.id)
+        items = await EquipmentService.get_all_equipped_items(player.id)
 
         assert len(items) == 1
         eq, item = items[0]
@@ -879,20 +862,19 @@ class TestStackableAmmunition:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Equipping arrows to empty AMMO slot should work."""
         player = player_with_equipment
-        arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+        arrows = await ItemService.get_item_by_name("bronze_arrows")
 
         # Add arrows to inventory (stack of 100)
         await InventoryService.add_item(player.id, arrows.id, quantity=100)
 
         # Equip
-        result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        result = await EquipmentService.equip_from_inventory(player.id, 0)
 
         assert result.success is True
         assert "Bronze Arrows" in result.message
 
         # Verify equipped with correct quantity
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.AMMO)
         assert equipped is not None
         assert equipped.item_id == arrows.id
         assert equipped.quantity == 100
@@ -906,25 +888,24 @@ class TestStackableAmmunition:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Equipping more of the same arrow type should add to existing stack."""
         player = player_with_equipment
-        arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+        arrows = await ItemService.get_item_by_name("bronze_arrows")
 
         # Add first batch of arrows and equip
         await InventoryService.add_item(player.id, arrows.id, quantity=100)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Add second batch of arrows
         await InventoryService.add_item(player.id, arrows.id, quantity=50)
 
         # Equip second batch - should add to existing
-        result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        result = await EquipmentService.equip_from_inventory(player.id, 0)
 
         assert result.success is True
         assert "Added 50" in result.message
         assert "now 150" in result.message
 
         # Verify quantity increased
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.AMMO)
         assert equipped.quantity == 150
 
         # Verify inventory is empty
@@ -936,27 +917,26 @@ class TestStackableAmmunition:
         self, session: AsyncSession, player_with_equipment, gsm):
         """When equipped stack is near max, should only add what fits."""
         player = player_with_equipment
-        arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+        arrows = await ItemService.get_item_by_name("bronze_arrows")
         max_stack = arrows.max_stack_size  # 8192
 
         # Create equipped arrows near max using service layer
         # First add the arrows to inventory, then equip them
         await InventoryService.add_item(player.id, arrows.id, quantity=max_stack - 100)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Add 200 arrows to inventory (more than can fit)
         await InventoryService.add_item(player.id, arrows.id, quantity=200)
 
         # Equip - should add 100, leave 100 in inventory
-        result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        result = await EquipmentService.equip_from_inventory(player.id, 0)
 
         assert result.success is True
         assert "100" in result.message  # Added 100
         assert "100 remain" in result.message  # 100 left in inventory
 
         # Verify equipped is at max
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.AMMO)
         assert equipped.quantity == max_stack
 
         # Verify remainder in inventory
@@ -969,24 +949,23 @@ class TestStackableAmmunition:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Equipping different arrow type should swap (old goes to inventory)."""
         player = player_with_equipment
-        bronze_arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
-        iron_arrows = await ItemService.get_item_by_name(session, "iron_arrows")
+        bronze_arrows = await ItemService.get_item_by_name("bronze_arrows")
+        iron_arrows = await ItemService.get_item_by_name("iron_arrows")
 
         # Equip bronze arrows (quantity 100)
         await InventoryService.add_item(player.id, bronze_arrows.id, quantity=100)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Add iron arrows
         await InventoryService.add_item(player.id, iron_arrows.id, quantity=50)
 
         # Equip iron arrows - should swap with bronze
-        result = await EquipmentService.equip_from_inventory(session, player.id, 0)
+        result = await EquipmentService.equip_from_inventory(player.id, 0)
 
         assert result.success is True
 
         # Verify iron arrows equipped with correct quantity
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.AMMO)
         assert equipped.item_id == iron_arrows.id
         assert equipped.quantity == 50
 
@@ -1001,21 +980,19 @@ class TestStackableAmmunition:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Unequipping ammo should preserve quantity."""
         player = player_with_equipment
-        arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+        arrows = await ItemService.get_item_by_name("bronze_arrows")
 
         # Equip arrows
         await InventoryService.add_item(player.id, arrows.id, quantity=500)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Unequip
-        result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.AMMO)
+        result = await EquipmentService.unequip_to_inventory(player.id, EquipmentSlot.AMMO)
 
         assert result.success is True
 
         # Slot should be empty
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.AMMO)
         assert equipped is None
 
         # Inventory should have arrows with preserved quantity
@@ -1031,18 +1008,17 @@ class TestStackableAmmunition:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Unequipping ammo should merge with existing inventory stack."""
         player = player_with_equipment
-        arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+        arrows = await ItemService.get_item_by_name("bronze_arrows")
 
         # Add arrows to inventory
         await InventoryService.add_item(player.id, arrows.id, quantity=200)
 
         # Equip separate stack of arrows using service layer (not direct DB access)
         await InventoryService.add_item(player.id, arrows.id, quantity=300)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)  # Equip the 300 arrows
+        await EquipmentService.equip_from_inventory(player.id, 0)  # Equip the 300 arrows
 
         # Unequip - should merge with existing stack
-        result = await EquipmentService.unequip_to_inventory(
-            session, player.id, EquipmentSlot.AMMO)
+        result = await EquipmentService.unequip_to_inventory(player.id, EquipmentSlot.AMMO)
 
         assert result.success is True
 
@@ -1056,21 +1032,20 @@ class TestStackableAmmunition:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Consuming ammo should reduce equipped quantity."""
         player = player_with_equipment
-        arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+        arrows = await ItemService.get_item_by_name("bronze_arrows")
 
         # Equip arrows
         await InventoryService.add_item(player.id, arrows.id, quantity=100)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Consume 1 arrow
-        success, remaining = await EquipmentService.consume_ammo(session, player.id, 1)
+        success, remaining = await EquipmentService.consume_ammo(player.id, 1)
 
         assert success is True
         assert remaining == 99
 
         # Verify equipped quantity
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.AMMO)
         assert equipped.quantity == 99
 
     @pytest.mark.asyncio
@@ -1078,21 +1053,20 @@ class TestStackableAmmunition:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Consuming last ammo should remove equipment entry."""
         player = player_with_equipment
-        arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+        arrows = await ItemService.get_item_by_name("bronze_arrows")
 
         # Equip single arrow
         await InventoryService.add_item(player.id, arrows.id, quantity=1)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Consume the arrow
-        success, remaining = await EquipmentService.consume_ammo(session, player.id, 1)
+        success, remaining = await EquipmentService.consume_ammo(player.id, 1)
 
         assert success is True
         assert remaining == 0
 
         # Slot should be empty
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.AMMO)
         assert equipped is None
 
     @pytest.mark.asyncio
@@ -1100,21 +1074,20 @@ class TestStackableAmmunition:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Consuming more ammo than available should fail."""
         player = player_with_equipment
-        arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+        arrows = await ItemService.get_item_by_name("bronze_arrows")
 
         # Equip 5 arrows
         await InventoryService.add_item(player.id, arrows.id, quantity=5)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Try to consume 10
-        success, remaining = await EquipmentService.consume_ammo(session, player.id, 10)
+        success, remaining = await EquipmentService.consume_ammo(player.id, 10)
 
         assert success is False
         assert remaining == 5  # Returns current quantity
 
         # Quantity should be unchanged
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.AMMO)
         assert equipped.quantity == 5
 
     @pytest.mark.asyncio
@@ -1123,7 +1096,7 @@ class TestStackableAmmunition:
         """Consuming ammo with nothing equipped should fail."""
         player = player_with_equipment
 
-        success, remaining = await EquipmentService.consume_ammo(session, player.id, 1)
+        success, remaining = await EquipmentService.consume_ammo(player.id, 1)
 
         assert success is False
         assert remaining == 0
@@ -1133,14 +1106,14 @@ class TestStackableAmmunition:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Equipment response should include quantity for ammo slot."""
         player = player_with_equipment
-        arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+        arrows = await ItemService.get_item_by_name("bronze_arrows")
 
         # Equip arrows
         await InventoryService.add_item(player.id, arrows.id, quantity=250)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Get response
-        response = await EquipmentService.get_equipment_response(session, player.id)
+        response = await EquipmentService.get_equipment_response(player.id)
 
         # Find AMMO slot in response
         ammo_slot = next(
@@ -1155,12 +1128,12 @@ class TestStackableAmmunition:
         self, session: AsyncSession, player_with_equipment, gsm):
         """Unequipping ammo with full inventory should drop to ground."""
         player = player_with_equipment
-        arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
-        ore = await ItemService.get_item_by_name(session, "copper_ore")
+        arrows = await ItemService.get_item_by_name("bronze_arrows")
+        ore = await ItemService.get_item_by_name("copper_ore")
 
         # Equip arrows using service layer
         await InventoryService.add_item(player.id, arrows.id, quantity=100)
-        await EquipmentService.equip_from_inventory(session, player.id, 0)
+        await EquipmentService.equip_from_inventory(player.id, 0)
 
         # Fill inventory with non-stackable items to ensure all slots are used
         non_stackable_items = [
@@ -1173,22 +1146,20 @@ class TestStackableAmmunition:
         
         for i in range(settings.INVENTORY_MAX_SLOTS):
             item_name = non_stackable_items[i]
-            item = await ItemService.get_item_by_name(session, item_name)
+            item = await ItemService.get_item_by_name(item_name)
             await InventoryService.add_item(player.id, item.id, quantity=1)
 
         # Unequip with position (should drop to ground)
         result = await EquipmentService.unequip_to_inventory(
-            session,
-            player.id,
-            EquipmentSlot.AMMO,
+            player.id, EquipmentSlot.AMMO,
             map_id="test_map",
             player_x=10,
-            player_y=20)
+            player_y=20
+        )
 
         assert result.success is True
         assert "dropped" in result.message.lower()
 
         # Slot should be empty
-        equipped = await EquipmentService.get_equipped_in_slot(
-            session, player.id, EquipmentSlot.AMMO)
+        equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.AMMO)
         assert equipped is None

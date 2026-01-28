@@ -160,7 +160,7 @@ class TestDeathSequence:
         from server.src.services.hp_service import HpService
         
         # Ensure test data exists
-        sync_result = await TestDataService.ensure_game_data_synced(session)
+        sync_result = await TestDataService.ensure_game_data_synced()
         assert sync_result.success
         
         # Create test player using service layer
@@ -206,7 +206,7 @@ class TestDeathSequence:
         from server.src.services.hp_service import HpService
         
         # Ensure test data exists
-        sync_result = await TestDataService.ensure_game_data_synced(session)
+        sync_result = await TestDataService.ensure_game_data_synced()
         assert sync_result.success
         
         # Create test player

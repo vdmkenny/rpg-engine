@@ -82,8 +82,8 @@ class AuthenticationService:
 
             username = token_validation["username"]
 
-            # Get player from database
-            player = await PlayerService.get_player_by_username(db, username)
+            # Use PlayerService without db parameter (service-first architecture)
+            player = await PlayerService.get_player_by_username(username)
             if not player:
                 logger.warning(
                     "WebSocket authentication failed - player not found",
@@ -135,8 +135,8 @@ class AuthenticationService:
             Dict with complete player session data
         """
         try:
-            # Register player as online and load state
-            await PlayerService.login_player(db, player)
+            # Register player as online and load state (service-first architecture)
+            await PlayerService.login_player(player)
 
             # Get initial position data
             position_data = await PlayerService.get_player_position(player.id)

@@ -50,9 +50,8 @@ async def lifespan(app: FastAPI):
     # Sync items to database and load item cache for reference data
     try:
         # Ensure all ItemType entries exist in database
-        async with AsyncSessionLocal() as session:
-            from server.src.services.item_service import ItemService
-            await ItemService.sync_items_to_db(session)
+        from server.src.services.item_service import ItemService
+        await ItemService.sync_items_to_db()
         
         # Load item metadata cache (permanent cache for reference data)
         items_cached = await gsm.load_item_cache_from_db()

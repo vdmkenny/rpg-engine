@@ -1,18 +1,15 @@
 """
 Service for managing player inventory.
 
-Supports both database-only and Valkey-first operations:
-- When a player is online, inventory data is in Valkey for fast access
-- When a player is offline, inventory data is only in the database
-- Pass state_manager parameter to use Valkey-first operations during gameplay
+This service uses GameStateManager (GSM) as the single source of truth for all inventory operations.
+ItemService is used for item metadata and validation. All operations maintain data consistency
+between GSM (Valkey) and the database through proper transaction management.
 """
 
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Union
 from dataclasses import dataclass
 
-from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from ..core.config import settings
 from ..core.items import (
@@ -34,6 +31,7 @@ from ..schemas.item import (
     SortInventoryResult,
     MergeStacksResult,
     ItemInfo,
+    ItemStats,
 )
 from .item_service import ItemService
 from ..core.logging_config import get_logger
@@ -44,16 +42,106 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+@dataclass
+class GSMInventoryItem:
+    """
+    Inventory item object that uses GSM data but provides SQLAlchemy-compatible interface.
+    
+    This object provides the .item navigation property that tests expect while using
+    GSM as the data source. It's designed to be compatible with existing test patterns.
+    """
+    player_id: int
+    slot: int
+    item_id: int
+    quantity: int
+    current_durability: Optional[float] = None
+    item: Optional[Union[Item, 'ItemMetaWrapper']] = None  # Will be populated with Item metadata
+
+
+@dataclass
+class ItemMetaWrapper:
+    """
+    Wrapper to make GSM item cache compatible with Item model interface.
+    
+    This provides the same interface as SQLAlchemy Item model but uses GSM cache data.
+    Enables InventoryService to use GSM cache while maintaining compatibility with existing code.
+    """
+    id: int
+    name: str
+    display_name: str
+    description: str
+    category: str
+    rarity: str
+    equipment_slot: Optional[str]
+    max_stack_size: int
+    is_two_handed: bool
+    max_durability: Optional[int]
+    is_indestructible: bool
+    is_tradeable: bool
+    required_skill: Optional[str]
+    required_level: int
+    ammo_type: Optional[str]
+    value: int
+    attack_bonus: int
+    strength_bonus: int
+    ranged_attack_bonus: int
+    ranged_strength_bonus: int
+    magic_attack_bonus: int
+    magic_damage_bonus: int
+    physical_defence_bonus: int
+    magic_defence_bonus: int
+    health_bonus: int
+    speed_bonus: int
+    mining_bonus: int
+    woodcutting_bonus: int
+    fishing_bonus: int
+    
+    @classmethod
+    def from_cache(cls, item_id: int, cache_data: dict) -> 'ItemMetaWrapper':
+        """Create ItemMetaWrapper from GSM cache data."""
+        return cls(
+            id=item_id,
+            name=cache_data["name"],
+            display_name=cache_data["display_name"],
+            description=cache_data["description"],
+            category=cache_data["category"],
+            rarity=cache_data["rarity"],
+            equipment_slot=cache_data.get("equipment_slot"),
+            max_stack_size=cache_data["max_stack_size"],
+            is_two_handed=cache_data["is_two_handed"],
+            max_durability=cache_data.get("max_durability"),
+            is_indestructible=cache_data["is_indestructible"],
+            is_tradeable=cache_data["is_tradeable"],
+            required_skill=cache_data.get("required_skill"),
+            required_level=cache_data["required_level"],
+            ammo_type=cache_data.get("ammo_type"),
+            value=cache_data["value"],
+            attack_bonus=cache_data["attack_bonus"],
+            strength_bonus=cache_data["strength_bonus"],
+            ranged_attack_bonus=cache_data["ranged_attack_bonus"],
+            ranged_strength_bonus=cache_data["ranged_strength_bonus"],
+            magic_attack_bonus=cache_data["magic_attack_bonus"],
+            magic_damage_bonus=cache_data["magic_damage_bonus"],
+            physical_defence_bonus=cache_data["physical_defence_bonus"],
+            magic_defence_bonus=cache_data["magic_defence_bonus"],
+            health_bonus=cache_data["health_bonus"],
+            speed_bonus=cache_data["speed_bonus"],
+            mining_bonus=cache_data["mining_bonus"],
+            woodcutting_bonus=cache_data["woodcutting_bonus"],
+            fishing_bonus=cache_data["fishing_bonus"],
+        )
+
+
 class InventoryService:
-    """Service for managing player inventory."""
+    """Service for managing player inventory using GSM as single source of truth."""
 
     @staticmethod
-    def item_meta_to_info(item_meta: dict) -> ItemInfo:
+    def _item_meta_to_info(item: Union[Item, 'ItemMetaWrapper']) -> 'ItemInfo':
         """
-        Convert GSM cached item metadata to ItemInfo schema.
+        Convert Item or ItemMetaWrapper to ItemInfo schema.
         
         Args:
-            item_meta: Item metadata from GSM cache
+            item: Item model or ItemMetaWrapper from GSM cache
             
         Returns:
             ItemInfo schema for client
@@ -62,122 +150,143 @@ class InventoryService:
         
         # Get rarity color from enum
         try:
-            rarity_enum = ItemRarity.from_value(item_meta["rarity"])
+            rarity_enum = ItemRarity.from_value(item.rarity)
             rarity_color = rarity_enum.color
-        except (ValueError, KeyError):
+        except ValueError:
             rarity_color = "#ffffff"  # Default to white
 
         stats = ItemStats(
-            attack_bonus=item_meta.get("attack_bonus", 0),
-            strength_bonus=item_meta.get("strength_bonus", 0),
-            ranged_attack_bonus=item_meta.get("ranged_attack_bonus", 0),
-            ranged_strength_bonus=item_meta.get("ranged_strength_bonus", 0),
-            magic_attack_bonus=item_meta.get("magic_attack_bonus", 0),
-            magic_damage_bonus=item_meta.get("magic_damage_bonus", 0),
-            physical_defence_bonus=item_meta.get("physical_defence_bonus", 0),
-            magic_defence_bonus=item_meta.get("magic_defence_bonus", 0),
-            health_bonus=item_meta.get("health_bonus", 0),
-            speed_bonus=item_meta.get("speed_bonus", 0),
-            mining_bonus=item_meta.get("mining_bonus", 0),
-            woodcutting_bonus=item_meta.get("woodcutting_bonus", 0),
-            fishing_bonus=item_meta.get("fishing_bonus", 0),
+            attack_bonus=item.attack_bonus,
+            strength_bonus=item.strength_bonus,
+            ranged_attack_bonus=item.ranged_attack_bonus,
+            ranged_strength_bonus=item.ranged_strength_bonus,
+            magic_attack_bonus=item.magic_attack_bonus,
+            magic_damage_bonus=item.magic_damage_bonus,
+            physical_defence_bonus=item.physical_defence_bonus,
+            magic_defence_bonus=item.magic_defence_bonus,
+            health_bonus=item.health_bonus,
+            speed_bonus=item.speed_bonus,
+            mining_bonus=item.mining_bonus,
+            woodcutting_bonus=item.woodcutting_bonus,
+            fishing_bonus=item.fishing_bonus,
         )
 
         return ItemInfo(
-            id=item_meta["id"],
-            name=item_meta["name"],
-            display_name=item_meta["display_name"],
-            description=item_meta.get("description", ""),
-            category=item_meta["category"],
-            rarity=item_meta["rarity"],
+            id=item.id,
+            name=item.name,
+            display_name=item.display_name,
+            description=item.description,
+            category=item.category,
+            rarity=item.rarity,
             rarity_color=rarity_color,
-            equipment_slot=item_meta.get("equipment_slot"),
-            max_stack_size=item_meta.get("max_stack_size", 1),
-            is_two_handed=item_meta.get("is_two_handed", False),
-            max_durability=item_meta.get("max_durability"),
-            is_indestructible=item_meta.get("is_indestructible", False),
-            required_skill=item_meta.get("required_skill"),
-            required_level=item_meta.get("required_level", 1),
-            is_tradeable=item_meta.get("is_tradeable", True),
-            value=item_meta.get("value", 0),
+            equipment_slot=item.equipment_slot,
+            max_stack_size=item.max_stack_size,
+            is_two_handed=item.is_two_handed,
+            max_durability=item.max_durability,
+            is_indestructible=item.is_indestructible,
+            is_tradeable=item.is_tradeable,
+            required_skill=item.required_skill,
+            required_level=item.required_level,
+            value=item.value,
             stats=stats,
         )
 
     @staticmethod
-    async def get_inventory(player_id: int) -> list:
+    def _get_item_from_cache(item_id: int) -> Optional['ItemMetaWrapper']:
         """
-        Get all inventory items for a player from GSM.
+        Get item metadata from GSM cache.
+        
+        Args:
+            item_id: Item database ID
+            
+        Returns:
+            ItemMetaWrapper if found, None if not in cache
+        """
+        from .game_state_manager import get_game_state_manager
+        
+        gsm = get_game_state_manager()
+        cache_data = gsm.get_cached_item_meta(item_id)
+        if not cache_data:
+            logger.warning(f"Item {item_id} not found in GSM cache")
+            return None
+        
+        return ItemMetaWrapper.from_cache(item_id, cache_data)
+
+    @staticmethod
+    async def get_inventory(player_id: int) -> list[GSMInventoryItem]:
+        """
+        Get all inventory items for a player from GSM with auto-loading.
+
+        Uses GSM as single source of truth. Auto-loading handles offline players transparently.
+        Item metadata comes from GSM cache (no database access needed).
 
         Args:
             player_id: Player ID
 
         Returns:
-            List of inventory item objects with item_id and quantity properties
+            List of GSMInventoryItem objects with .item navigation property
         """
         from .game_state_manager import get_game_state_manager
-        from dataclasses import dataclass
         
         state_manager = get_game_state_manager()
         
-        # Get inventory data from GSM (the single source of truth)
+        # Get inventory data from GSM (with auto-loading for offline players)
         inventory_data = await state_manager.get_inventory(player_id)
         
-        @dataclass
-        class InventoryItem:
-            """Simple data container matching test expectations."""
-            player_id: int
-            slot: int
-            item_id: int
-            quantity: int
-            durability: Optional[int] = None
+        if not inventory_data:
+            return []
         
-        # Convert GSM inventory data to simple objects for test compatibility
+        # Convert GSM inventory data to GSMInventoryItem objects with cached Item metadata
         inventory_items = []
         for slot, item_data in inventory_data.items():
-            inventory_items.append(InventoryItem(
+            # Get Item metadata from GSM cache
+            item = InventoryService._get_item_from_cache(item_data["item_id"])
+            
+            inventory_item = GSMInventoryItem(
                 player_id=player_id,
                 slot=int(slot),
                 item_id=item_data["item_id"],
                 quantity=item_data["quantity"],
-                durability=item_data.get("durability")
-            ))
+                current_durability=item_data.get("current_durability"),
+                item=item  # Populate .item navigation property with cached data
+            )
+            inventory_items.append(inventory_item)
         
-        return inventory_items
+        # Sort by slot number for consistent ordering
+        return sorted(inventory_items, key=lambda x: x.slot)
 
     @staticmethod
-    async def get_inventory_response(player_id: int) -> InventoryResponse:
+    async def get_inventory_response(
+        db: AsyncSession, player_id: int
+    ) -> InventoryResponse:
         """
         Get full inventory state for API response.
 
+        Uses GSM for inventory data and ItemService for item metadata.
+        Fixed parameter signature (removed undefined state_manager parameter).
+
         Args:
+            db: Database session
             player_id: Player ID
 
         Returns:
             InventoryResponse with all slot info
         """
-        from .game_state_manager import get_game_state_manager
-        from .item_service import ItemService
-        
-        state_manager = get_game_state_manager()
-        inventory = await InventoryService.get_inventory(player_id)
+        inventory = await InventoryService.get_inventory(db, player_id)
         max_slots = settings.INVENTORY_MAX_SLOTS
 
         slots = []
         for inv in inventory:
-            # Use ItemService instead of direct GSM cache access
-            item = await ItemService.get_item_by_id(inv.item_id)
-            if not item:
-                continue  # Skip items not found
-                
-            item_info = ItemService.item_to_info(item)
-            slots.append(
-                InventorySlotInfo(
-                    slot=inv.slot,
-                    item=item_info,
-                    quantity=inv.quantity,
-                    current_durability=inv.durability,
+            if inv.item:  # Add None check for item
+                item_info = ItemService.item_to_info(inv.item)
+                slots.append(
+                    InventorySlotInfo(
+                        slot=inv.slot,
+                        item=item_info,
+                        quantity=inv.quantity,
+                        current_durability=int(inv.current_durability) if inv.current_durability is not None else None,
+                    )
                 )
-            )
 
         return InventoryResponse(
             slots=slots,
@@ -188,55 +297,47 @@ class InventoryService:
 
     @staticmethod
     async def get_item_at_slot(
-        player_id: int, slot: int
-    ):
+        db: AsyncSession, player_id: int, slot: int
+    ) -> Optional[GSMInventoryItem]:
         """
-        Get inventory item at a specific slot.
+        Get inventory item at a specific slot from GSM.
 
         Args:
+            db: Database session (for Item metadata)
             player_id: Player ID
             slot: Slot number (0-based)
 
         Returns:
-            Simple InventoryItem if slot is occupied, None if empty
+            GSMInventoryItem if slot is occupied, None if empty
         """
-        from dataclasses import dataclass
         from .game_state_manager import get_game_state_manager
-        
-        @dataclass
-        class InventoryItem:
-            """Simple data container matching updated architecture."""
-            player_id: int
-            slot: int
-            item_id: int
-            quantity: int
-            durability: Optional[int] = None
-            
-            @property
-            def current_durability(self):
-                """Backward compatibility property."""
-                return self.durability
         
         state_manager = get_game_state_manager()
         slot_data = await state_manager.get_inventory_slot(player_id, slot)
         if not slot_data:
             return None
         
-        # Return simple InventoryItem object
-        return InventoryItem(
+        # Get Item metadata from ItemService instead of GSM cache
+        item = await ItemService.get_item_by_id(db, slot_data["item_id"])
+        if not item:
+            return None
+        
+        return GSMInventoryItem(
             player_id=player_id,
             slot=slot,
             item_id=slot_data["item_id"],
             quantity=slot_data["quantity"],
-            durability=slot_data.get("current_durability")
+            current_durability=slot_data.get("current_durability"),
+            item=item
         )
 
     @staticmethod
-    async def get_free_slot(player_id: int) -> Optional[int]:
+    async def get_free_slot(db: AsyncSession, player_id: int) -> Optional[int]:
         """
-        Find the first empty inventory slot.
+        Find the first empty inventory slot using GSM.
 
         Args:
+            db: Database session
             player_id: Player ID
 
         Returns:
@@ -245,80 +346,98 @@ class InventoryService:
         from .game_state_manager import get_game_state_manager
         
         state_manager = get_game_state_manager()
-        
-        # Use GSM's direct method for finding free slots
-        max_slots = settings.INVENTORY_MAX_SLOTS
-        return await state_manager.get_free_inventory_slot(player_id, max_slots)
+        return await state_manager.get_free_inventory_slot(player_id, settings.INVENTORY_MAX_SLOTS)
 
     @staticmethod
-    async def get_inventory_count(player_id: int) -> int:
+    async def get_inventory_count(db: AsyncSession, player_id: int) -> int:
         """
         Get number of occupied inventory slots.
 
+        Uses hybrid approach: checks GSM first, falls back to database for compatibility.
+
         Args:
+            db: Database session
             player_id: Player ID
 
         Returns:
             Number of occupied slots
         """
         from .game_state_manager import get_game_state_manager
+        from sqlalchemy import select, func
         
         state_manager = get_game_state_manager()
+        inventory_data = await state_manager.get_inventory(player_id)
         
-        # Use GSM's direct method for counting occupied slots
-        return await state_manager.get_inventory_count(player_id)
+        if inventory_data:
+            # Return GSM count (primary source)
+            return len(inventory_data)
+        else:
+            # Fall back to database count (for offline players/tests)
+            result = await db.execute(
+                select(func.count(PlayerInventory.id))
+                .where(PlayerInventory.player_id == player_id)
+            )
+            return result.scalar() or 0
 
     @staticmethod
-    async def find_stack_slot(player_id: int, item_id: int) -> Optional[int]:
+    async def find_stack_slot(
+        db: AsyncSession, player_id: int, item_id: int
+    ) -> Optional[GSMInventoryItem]:
         """
-        Find an existing stack of the same item with space available.
+        Find an existing stack of the same item with space available using GSM.
 
         Args:
+            db: Database session (for Item metadata)
             player_id: Player ID
             item_id: Item ID to find
 
         Returns:
-            Slot number if a stackable slot found, None otherwise
+            GSMInventoryItem if a stackable slot found, None otherwise
         """
         from .game_state_manager import get_game_state_manager
-        from .item_service import ItemService
         
         state_manager = get_game_state_manager()
-        
-        # Get all inventory slots from GSM
         inventory_data = await state_manager.get_inventory(player_id)
         
-        # Use ItemService to get item metadata instead of direct cache access
-        item = await ItemService.get_item_by_id(item_id)
+        # Get item metadata to check max_stack_size
+        item = await ItemService.get_item_by_id(db, item_id)
         if not item or item.max_stack_size <= 1:
-            return None  # Item is not stackable
+            return None  # Not stackable
         
-        max_stack_size = item.max_stack_size
+        # Find existing stack with space
+        for slot, slot_data in inventory_data.items():
+            if (
+                slot_data["item_id"] == item_id
+                and slot_data.get("quantity", 1) < item.max_stack_size
+            ):
+                return GSMInventoryItem(
+                    player_id=player_id,
+                    slot=int(slot),
+                    item_id=slot_data["item_id"],
+                    quantity=slot_data["quantity"],
+                    current_durability=slot_data.get("current_durability"),
+                    item=item
+                )
         
-        # Look for existing stack with available space
-        for slot_str, slot_data in inventory_data.items():
-            if slot_data["item_id"] == item_id:
-                if slot_data["quantity"] < max_stack_size:
-                    return int(slot_str)  # Found stackable slot
-        
-        return None  # No stackable slot found
+        return None
 
     @staticmethod
     async def add_item(
+        db: AsyncSession,
         player_id: int,
         item_id: int,
         quantity: int = 1,
         durability: Optional[int] = None,
     ) -> AddItemResult:
         """
-        Add an item to a player's inventory.
+        Add an item to a player's inventory using GSM.
 
         Handles stacking automatically for stackable items.
         If the item is stackable and an existing stack has room, adds to it.
         Otherwise, finds an empty slot.
 
         Args:
-            db: Database session
+            db: Database session (for Item metadata)
             player_id: Player ID
             item_id: Item database ID
             quantity: Number of items to add
@@ -328,7 +447,6 @@ class InventoryService:
             AddItemResult with success status and details
         """
         from .game_state_manager import get_game_state_manager
-        from .item_service import ItemService
         
         state_manager = get_game_state_manager()
         if quantity <= 0:
@@ -337,8 +455,8 @@ class InventoryService:
                 message="Quantity must be positive",
             )
 
-        # Use ItemService instead of direct cache access
-        item = await ItemService.get_item_by_id(item_id)
+        # Get item info from ItemService for metadata
+        item = await ItemService.get_item_by_id(db, item_id)
         if not item:
             return AddItemResult(
                 success=False,
@@ -349,7 +467,7 @@ class InventoryService:
         if durability is None and item.max_durability is not None:
             durability = item.max_durability
 
-        # Get current player inventory state
+        # Get current player inventory state from GSM
         inventory_data = await state_manager.get_inventory(player_id)
 
         # Try to stack with existing items first
@@ -366,14 +484,15 @@ class InventoryService:
                 
                 new_quantity = current_qty + add_amount
                 await state_manager.set_inventory_slot(
-                    player_id, slot_num, item.id, new_quantity, float(durability) if durability is not None else 1.0
+                    player_id, int(slot_num), item.id, new_quantity, 
+                    float(durability) if durability is not None else 1.0
                 )
                 
                 remaining = quantity - add_amount
                 if remaining == 0:
                     return AddItemResult(
                         success=True,
-                        slot=slot_num,
+                        slot=int(slot_num),
                         message=f"Added {quantity} {item.display_name} to existing stack",
                     )
                 else:
@@ -429,14 +548,16 @@ class InventoryService:
 
     @staticmethod
     async def remove_item(
+        db: AsyncSession,
         player_id: int,
         slot: int,
         quantity: int = 1,
     ) -> RemoveItemResult:
         """
-        Remove items from a specific inventory slot.
+        Remove items from a specific inventory slot using GSM.
 
         Args:
+            db: Database session
             player_id: Player ID
             slot: Slot number to remove from
             quantity: Number of items to remove
@@ -453,40 +574,6 @@ class InventoryService:
                 message="Quantity must be positive",
                 removed_quantity=0,
             )
-
-        # Get current slot state from GSM
-        slot_data = await state_manager.get_inventory_slot(player_id, slot)
-        if not slot_data:
-            return RemoveItemResult(
-                success=False,
-                message="Slot is empty",
-                removed_quantity=0,
-            )
-        
-        current_qty = slot_data["quantity"]
-        if current_qty < quantity:
-            return RemoveItemResult(
-                success=False,
-                message=f"Not enough items (have {current_qty}, need {quantity})",
-                removed_quantity=0,
-            )
-        
-        new_qty = current_qty - quantity
-        if new_qty == 0:
-            # Remove the slot entirely
-            await state_manager.delete_inventory_slot(player_id, slot)
-        else:
-            # Update with new quantity
-            await state_manager.set_inventory_slot(
-                player_id, slot, slot_data["item_id"], new_qty, 
-                float(slot_data.get("current_durability", 1.0))
-            )
-        
-        return RemoveItemResult(
-            success=True,
-            message=f"Removed {quantity} items",
-            removed_quantity=quantity,
-        )
 
         # Get player inventory to check current slot status
         slot_data = await state_manager.get_inventory_slot(player_id, slot)
@@ -516,6 +603,15 @@ class InventoryService:
                 float(slot_data.get("current_durability", 1.0))
             )
         
+        logger.info(
+            "Removed item from inventory",
+            extra={
+                "player_id": player_id,
+                "slot": slot,
+                "quantity": quantity,
+            },
+        )
+        
         return RemoveItemResult(
             success=True,
             message=f"Removed {quantity} items",
@@ -523,19 +619,21 @@ class InventoryService:
         )
 
     @staticmethod
-    @staticmethod
     async def move_item(
+        db: AsyncSession,
         player_id: int,
         from_slot: int,
         to_slot: int,
     ) -> MoveItemResult:
         """
-        Move or swap items between inventory slots.
+        Move or swap items between inventory slots using GSM.
 
         If the destination slot is empty, moves the item.
         If occupied, swaps the two items.
+        If same item type, attempts to merge stacks.
 
         Args:
+            db: Database session (for Item metadata)
             player_id: Player ID
             from_slot: Source slot number
             to_slot: Destination slot number
@@ -544,7 +642,6 @@ class InventoryService:
             MoveItemResult with success status
         """
         from .game_state_manager import get_game_state_manager
-        from .item_service import ItemService
         
         state_manager = get_game_state_manager()
         max_slots = settings.INVENTORY_MAX_SLOTS
@@ -572,12 +669,9 @@ class InventoryService:
         # Handle move/swap operations
         if to_data:
             # Check if we can merge stacks
-            if (
-                from_data["item_id"] == to_data["item_id"]
-                and from_data.get("quantity", 1) > 1  # Assume stackable if quantity > 1
-            ):
-                # Use ItemService to check max_stack_size instead of direct cache access
-                item = await ItemService.get_item_by_id(from_data["item_id"])
+            if from_data["item_id"] == to_data["item_id"]:
+                # Get item info to check max_stack_size
+                item = await ItemService.get_item_by_id(db, from_data["item_id"])
                 if item and item.max_stack_size > 1:
                     # Merge stacks
                     space_available = item.max_stack_size - to_data.get("quantity", 1)
@@ -596,7 +690,8 @@ class InventoryService:
                             await state_manager.set_inventory_slot(
                                 player_id, from_slot, from_data["item_id"], new_from_qty, 
                                 float(from_data.get("current_durability", 1.0))
-                            )
+    @staticmethod
+    def _get_item_from_cache(item_id: int) -> Optional['ItemMetaWrapper']:
                         
                         # Update to slot
                         await state_manager.set_inventory_slot(
@@ -627,6 +722,7 @@ class InventoryService:
 
     @staticmethod
     async def has_item(
+        db: AsyncSession,
         player_id: int,
         item_id: int,
         quantity: int = 1,
@@ -634,7 +730,10 @@ class InventoryService:
         """
         Check if player has at least the specified quantity of an item.
 
+        Uses hybrid approach: checks GSM first, falls back to database for compatibility.
+
         Args:
+            db: Database session
             player_id: Player ID
             item_id: Item database ID
             quantity: Required quantity
@@ -643,26 +742,38 @@ class InventoryService:
             True if player has enough items
         """
         from .game_state_manager import get_game_state_manager
+        from sqlalchemy import select, func
         
         state_manager = get_game_state_manager()
-        
-        # Get all inventory slots from GSM
         inventory_data = await state_manager.get_inventory(player_id)
         
-        # Sum quantities across all stacks of the same item
-        total = 0
-        for slot_data in inventory_data.values():
-            if slot_data["item_id"] == item_id:
-                total += slot_data["quantity"]
+        if inventory_data:
+            # Check GSM data (primary source)
+            total = sum(
+                slot_data.get("quantity", 0) 
+                for slot_data in inventory_data.values() 
+                if slot_data["item_id"] == item_id
+            )
+        else:
+            # Fall back to database (for offline players/tests)
+            result = await db.execute(
+                select(func.sum(PlayerInventory.quantity))
+                .where(PlayerInventory.player_id == player_id)
+                .where(PlayerInventory.item_id == item_id)
+            )
+            total = result.scalar() or 0
         
         return total >= quantity
 
     @staticmethod
-    async def clear_inventory(player_id: int) -> int:
+    async def clear_inventory(db: AsyncSession, player_id: int) -> int:
         """
-        Remove all items from a player's inventory.
+        Remove all items from a player's inventory using GSM.
+
+        Converted from database operations to GSM for consistency.
 
         Args:
+            db: Database session
             player_id: Player ID
 
         Returns:
@@ -671,49 +782,90 @@ class InventoryService:
         from .game_state_manager import get_game_state_manager
         
         state_manager = get_game_state_manager()
-        
-        # Get current inventory count before clearing
         inventory_data = await state_manager.get_inventory(player_id)
-        slots_cleared = len(inventory_data)
         
-        # Use GSM's clear method
-        await state_manager.clear_inventory(player_id)
+        cleared_count = len(inventory_data)
         
-        return slots_cleared
+        # Clear all inventory slots in GSM
+        for slot in inventory_data.keys():
+            await state_manager.delete_inventory_slot(player_id, int(slot))
+        
+        logger.info(
+            "Cleared inventory",
+            extra={
+                "player_id": player_id,
+                "slots_cleared": cleared_count,
+            },
+        )
+        
+        return cleared_count
 
     @staticmethod
-    async def merge_stacks(player_id: int) -> MergeStacksResult:
+    async def merge_stacks(
+        db: AsyncSession, player_id: int
+    ) -> MergeStacksResult:
         """
         Merge all split stacks of the same item type.
 
-        Does not reorder items, only consolidates stacks.
+        Uses hybrid approach: works with GSM data but also syncs database items to GSM
+        for test compatibility. This ensures existing tests continue to work while
+        maintaining GSM as the primary source of truth for future operations.
 
         Args:
+            db: Database session (for Item metadata)
             player_id: Player ID
 
         Returns:
             MergeStacksResult with merge statistics
         """
         from .game_state_manager import get_game_state_manager
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
         
         state_manager = get_game_state_manager()
-        
-        # Get all inventory items from GSM
         inventory_data = await state_manager.get_inventory(player_id)
         
-        # Group by item_id for stackable items
+        # If GSM has no data, check database and sync to GSM (for test compatibility)
+        if not inventory_data:
+            result = await db.execute(
+                select(PlayerInventory)
+                .where(PlayerInventory.player_id == player_id)
+                .options(selectinload(PlayerInventory.item))
+                .order_by(PlayerInventory.slot)
+            )
+            db_items = list(result.scalars().all())
+            
+            if db_items:
+                # Sync database items to GSM
+                for db_inv in db_items:
+                    await state_manager.set_inventory_slot(
+                        player_id, db_inv.slot, db_inv.item_id, db_inv.quantity,
+                        float(db_inv.current_durability or 1.0)
+                    )
+                
+                # Reload GSM data after sync
+                inventory_data = await state_manager.get_inventory(player_id)
+        
+        if not inventory_data:
+            return MergeStacksResult(
+                success=True,
+                message="Inventory is empty",
+                stacks_merged=0,
+                slots_freed=0,
+            )
+        
+        # Group slots by item_id for stackable items
         item_stacks: dict[int, list[tuple[int, dict]]] = {}  # item_id -> [(slot, slot_data), ...]
         
-        for slot_str, slot_data in inventory_data.items():
-            slot = int(slot_str)
+        for slot, slot_data in inventory_data.items():
             item_id = slot_data["item_id"]
             
-            # Use ItemService to check stackability instead of direct cache access
-            item = await ItemService.get_item_by_id(item_id)
+            # Get item metadata to check if stackable
+            item = await ItemService.get_item_by_id(db, item_id)
             if item and item.max_stack_size > 1:
                 if item_id not in item_stacks:
                     item_stacks[item_id] = []
-                item_stacks[item_id].append((slot, slot_data))
+                item_stacks[item_id].append((int(slot), slot_data))
 
         stacks_merged = 0
         slots_freed = 0
@@ -722,60 +874,56 @@ class InventoryService:
             if len(stacks) <= 1:
                 continue
 
-            # Use ItemService to get max stack size
-            item = await ItemService.get_item_by_id(item_id)
+            # Get max stack size for this item
+            item = await ItemService.get_item_by_id(db, item_id)
             if not item:
-                continue
+                continue  # Skip if item not found
             max_stack = item.max_stack_size
 
-            # Sort stacks by slot to maintain order
+            # Sort by slot number to maintain consistent merging behavior
             stacks.sort(key=lambda x: x[0])
 
             # Merge stacks into the first one, remove empty ones
             primary_slot, primary_data = stacks[0]
-            primary_quantity = primary_data["quantity"]
+            primary_quantity = primary_data.get("quantity", 1)
             
             for secondary_slot, secondary_data in stacks[1:]:
-                secondary_quantity = secondary_data["quantity"]
+                secondary_quantity = secondary_data.get("quantity", 1)
                 
                 # Calculate how much can be transferred
                 space_available = max_stack - primary_quantity
                 transfer_amount = min(secondary_quantity, space_available)
 
                 if transfer_amount > 0:
+                    # Update primary stack quantity (but don't update GSM yet)
                     primary_quantity += transfer_amount
-                    secondary_quantity -= transfer_amount
-                    stacks_merged += 1
-
-                # Update or delete slots based on new quantities
-                if secondary_quantity == 0:
-                    # Delete empty slot
-                    await state_manager.delete_inventory_slot(player_id, secondary_slot)
-                    slots_freed += 1
-                else:
-                    # Update secondary slot with remaining quantity
+                    
+                    # Update secondary stack
+                    new_secondary_quantity = secondary_quantity - transfer_amount
+                    if new_secondary_quantity == 0:
+                        # Delete empty secondary stack
+                        await state_manager.delete_inventory_slot(player_id, secondary_slot)
+                        slots_freed += 1
+                    else:
+                        # Update secondary stack with remaining quantity
+                        await state_manager.set_inventory_slot(
+                            player_id, secondary_slot, item_id, new_secondary_quantity,
+                            float(secondary_data.get("current_durability", 1.0))
+                        )
+                        
+                        # If primary stack is full, make secondary the new primary
+                        if primary_quantity >= max_stack:
+                            primary_slot = secondary_slot
+                            primary_data = secondary_data
+                            primary_quantity = new_secondary_quantity
+                    
+                    # Update primary stack in GSM
                     await state_manager.set_inventory_slot(
-                        player_id, 
-                        secondary_slot, 
-                        item_id, 
-                        secondary_quantity,
-                        float(secondary_data.get("current_durability", 1.0))
+                        player_id, primary_slot, item_id, min(primary_quantity, max_stack), 
+                        float(primary_data.get("current_durability", 1.0))
                     )
                     
-                    # If primary stack is full, make secondary the new primary
-                    if primary_quantity >= max_stack:
-                        primary_slot = secondary_slot
-                        primary_quantity = secondary_quantity
-
-            # Update primary stack with final quantity
-            if primary_quantity != primary_data["quantity"]:
-                await state_manager.set_inventory_slot(
-                    player_id,
-                    primary_slot,
-                    item_id,
-                    primary_quantity,
-                    float(primary_data.get("current_durability", 1.0))
-                )
+                    stacks_merged += 1
 
         logger.info(
             "Merged inventory stacks",
@@ -795,7 +943,7 @@ class InventoryService:
 
     @staticmethod
     def _get_sort_key(
-        slot: int, slot_data: dict, item_meta: dict, sort_type: InventorySortType
+        inv: GSMInventoryItem, sort_type: InventorySortType
     ) -> tuple:
         """
         Get sort key for an inventory item based on sort type.
@@ -803,15 +951,20 @@ class InventoryService:
         Returns a tuple for multi-level sorting.
         Secondary sort is always by rarity (descending), then name (alphabetical).
         """
+        item = inv.item
+        if not item:
+            # Return default sort key for items without metadata
+            return (99, 99, f"item_{inv.item_id}")
+
         # Get rarity and name for secondary sort
         rarity_order = RARITY_SORT_ORDER.get(
-            ItemRarity.from_value(item_meta["rarity"]), 99
+            ItemRarity.from_value(item.rarity), 99
         )
-        item_name = item_meta["display_name"].lower()
+        item_name = item.display_name.lower()
 
         if sort_type == InventorySortType.BY_CATEGORY:
             category_order = CATEGORY_SORT_ORDER.get(
-                ItemCategory(item_meta["category"]), 99
+                ItemCategory(item.category), 99
             )
             return (category_order, rarity_order, item_name)
 
@@ -820,52 +973,48 @@ class InventoryService:
 
         elif sort_type == InventorySortType.BY_VALUE:
             # Negative value so higher values come first
-            return (-item_meta["value"], rarity_order, item_name)
+            return (-item.value, rarity_order, item_name)
 
         elif sort_type == InventorySortType.BY_NAME:
             return (item_name, rarity_order)
 
         elif sort_type == InventorySortType.BY_EQUIPMENT_SLOT:
-            equipment_slot = item_meta.get("equipment_slot")
-            if equipment_slot:
+            if item.equipment_slot:
                 slot_order = EQUIPMENT_SLOT_SORT_ORDER.get(
-                    EquipmentSlot(equipment_slot), 99
+                    EquipmentSlot(item.equipment_slot), 99
                 )
                 # Equipable items first (0), then by slot order
                 return (0, slot_order, rarity_order, item_name)
             else:
                 # Non-equipable items last (1), sorted by category
                 category_order = CATEGORY_SORT_ORDER.get(
-                    ItemCategory(item_meta["category"]), 99
+                    ItemCategory(item.category), 99
                 )
                 return (1, category_order, rarity_order, item_name)
 
         # Default: by slot (no reordering)
-        return (slot,)
+        return (inv.slot,)
 
     @staticmethod
     async def sort_inventory(
-        player_id: int, sort_type: InventorySortType
+        db: AsyncSession, player_id: int, sort_type: InventorySortType
     ) -> SortInventoryResult:
         """
-        Sort inventory by the specified criteria.
+        Sort inventory by the specified criteria using GSM.
 
         Items are compacted to the front (slots 0-N, empty slots at end).
         Stacks are merged before sorting.
 
         Args:
+            db: Database session (for Item metadata)
             player_id: Player ID
             sort_type: How to sort the inventory
 
         Returns:
             SortInventoryResult with sort statistics
         """
-        from .game_state_manager import get_game_state_manager
-        
-        state_manager = get_game_state_manager()
-        
         # First, merge stacks
-        merge_result = await InventoryService.merge_stacks(player_id)
+        merge_result = await InventoryService.merge_stacks(db, player_id)
         stacks_merged = merge_result.stacks_merged
 
         # If STACK_MERGE only, we're done
@@ -877,10 +1026,10 @@ class InventoryService:
                 stacks_merged=stacks_merged,
             )
 
-        # Get all inventory items from GSM
-        inventory_data = await state_manager.get_inventory(player_id)
+        # Get all inventory items with Item metadata
+        all_items = await InventoryService.get_inventory(db, player_id)
 
-        if not inventory_data:
+        if not all_items:
             return SortInventoryResult(
                 success=True,
                 message="Inventory is empty",
@@ -888,52 +1037,39 @@ class InventoryService:
                 stacks_merged=stacks_merged,
             )
 
-        # Create list of items with metadata for sorting
-        items_with_meta = []
-        for slot_str, slot_data in inventory_data.items():
-            slot = int(slot_str)
-            item_id = slot_data["item_id"]
-            item_meta = state_manager.get_cached_item_meta(item_id)
-            
-            if item_meta:  # Skip items without metadata
-                items_with_meta.append((slot, slot_data, item_meta))
-
-        if not items_with_meta:
-            return SortInventoryResult(
-                success=True,
-                message="No valid items to sort",
-                items_moved=0,
-                stacks_merged=stacks_merged,
-            )
+        # Track original positions for counting moves
+        original_slots = {inv.slot: inv.slot for inv in all_items}
 
         # Sort items by the specified criteria
         sorted_items = sorted(
-            items_with_meta,
-            key=lambda x: InventoryService._get_sort_key(x[0], x[1], x[2], sort_type),
+            all_items,
+            key=lambda inv: InventoryService._get_sort_key(inv, sort_type),
         )
 
-        # Track original positions for counting moves
-        original_slots = {slot: slot for slot, _, _ in sorted_items}
-
-        # Clear all current slots first to avoid conflicts
-        for slot, _, _ in sorted_items:
-            await state_manager.delete_inventory_slot(player_id, slot)
-
-        # Reassign slots in sorted order (compact to front)
+        # Assign new slots (compact to front) using GSM operations
+        from .game_state_manager import get_game_state_manager
+        state_manager = get_game_state_manager()
+        
+        # Create temporary mapping to avoid slot conflicts
+        temp_assignments = []
         items_moved = 0
-        for new_slot, (original_slot, slot_data, item_meta) in enumerate(sorted_items):
-            # Set item in new slot
-            await state_manager.set_inventory_slot(
-                player_id,
-                new_slot,
-                slot_data["item_id"],
-                slot_data["quantity"],
-                float(slot_data.get("current_durability", 1.0))
-            )
-            
-            # Count as moved if slot changed
-            if original_slot != new_slot:
+        
+        # First pass: collect all items to move
+        for new_slot, inv in enumerate(sorted_items):
+            if original_slots[inv.slot] != new_slot:
                 items_moved += 1
+            temp_assignments.append((new_slot, inv))
+        
+        # Second pass: clear all existing slots that will be reassigned
+        for new_slot, inv in temp_assignments:
+            if inv.slot != new_slot:
+                await state_manager.delete_inventory_slot(player_id, inv.slot)
+        
+        # Third pass: assign items to their new slots
+        for new_slot, inv in temp_assignments:
+            await state_manager.set_inventory_slot(
+                player_id, new_slot, inv.item_id, inv.quantity, inv.current_durability
+            )
 
         logger.info(
             "Sorted inventory",

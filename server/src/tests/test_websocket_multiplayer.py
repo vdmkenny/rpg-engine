@@ -24,36 +24,43 @@ class TestMultiplayerMovement:
 
     @pytest.mark.asyncio
     async def test_player_movement_creates_game_state_update(self, test_client: WebSocketTestClient):
-        """Moving player should receive EVENT_GAME_STATE_UPDATE."""
-        # Send move intent
+        """Moving player should receive RESP_SUCCESS, then potentially see game updates via events."""
+        # Send move command and expect success response
         response = await test_client.send_command(
             MessageType.CMD_MOVE,
             {"direction": Direction.DOWN.value},
         )
 
-        # Should receive EVENT_GAME_STATE_UPDATE confirming the move
-        assert response["type"] == MessageType.EVENT_GAME_STATE_UPDATE
-        assert "payload" in response
+        # Command should return success response
+        assert response.type == MessageType.RESP_SUCCESS
+        assert response.payload is not None
+        assert "new_position" in response.payload
+        assert "old_position" in response.payload
 
     @pytest.mark.asyncio
     async def test_multiple_movements(self, test_client: WebSocketTestClient):
-        """Multiple movements should produce game state updates."""
-        # Move multiple times and verify each produces a response
-        game_state_updates = 0
+        """Multiple movements should produce success responses."""
+        import asyncio
+        
+        # Move multiple times and verify each produces a success response
+        success_count = 0
         directions = [Direction.DOWN, Direction.RIGHT, Direction.UP]
 
-        for direction in directions:
+        for i, direction in enumerate(directions):
+            # Add delay between movements to avoid rate limiting (0.5s cooldown)
+            if i > 0:
+                await asyncio.sleep(0.6)  # Slightly longer than rate limit window
+                
             response = await test_client.send_command(
                 MessageType.CMD_MOVE,
                 {"direction": direction.value},
             )
-            # Could be MOVE_INTENT echo or EVENT_GAME_STATE_UPDATE
-            if response["type"] == MessageType.EVENT_GAME_STATE_UPDATE:
-                game_state_updates += 1
+            # Should get RESP_SUCCESS for each command
+            if response.type == MessageType.RESP_SUCCESS:
+                success_count += 1
 
-        # Should have received at least one game state update
-        # (exact count depends on tick timing)
-        assert game_state_updates >= 1
+        # Should have received success for all movements
+        assert success_count == len(directions)
 
 
 @pytest.mark.integration
@@ -62,19 +69,21 @@ class TestGameStateUpdateFormat:
 
     @pytest.mark.asyncio
     async def test_game_state_update_has_correct_structure(self, test_client: WebSocketTestClient):
-        """EVENT_GAME_STATE_UPDATE should have proper payload structure."""
-        # Send move to trigger a game state update
+        """Movement command should return success with position data."""
+        # Send move to get success response
         response = await test_client.send_command(
             MessageType.CMD_MOVE,
             {"direction": Direction.DOWN.value},
         )
 
-        # Get the game state update
-        assert response["type"] == MessageType.EVENT_GAME_STATE_UPDATE
+        # Get the success response
+        assert response.type == MessageType.RESP_SUCCESS
 
-        payload = response["payload"]
-        # Should be a dict with player/entity data
+        payload = response.payload
+        # Should be a dict with position data
         assert isinstance(payload, dict)
+        assert "new_position" in payload
+        assert "old_position" in payload
 
 
 @pytest.mark.integration

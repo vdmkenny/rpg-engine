@@ -12,6 +12,14 @@ import time
 
 
 # =============================================================================
+# Protocol Constants
+# =============================================================================
+
+PROTOCOL_VERSION = "2.0"
+"""Current WebSocket protocol version"""
+
+
+# =============================================================================
 # Enums
 # =============================================================================
 
@@ -78,7 +86,7 @@ class WSMessage(BaseModel):
     type: MessageType = Field(..., description="Message type from enum")
     payload: Dict[str, Any] = Field(..., description="Type-specific payload data")
     timestamp: int = Field(default_factory=lambda: int(time.time() * 1000), description="UTC timestamp in milliseconds")
-    version: Literal["2.0"] = Field("2.0", description="Protocol version")
+    version: Literal["2.0"] = Field(PROTOCOL_VERSION, description="Protocol version")
 
     model_config = ConfigDict(use_enum_values=True)
 

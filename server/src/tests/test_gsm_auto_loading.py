@@ -20,6 +20,7 @@ from server.src.services.game_state_manager import (
     get_game_state_manager
 )
 from server.src.models.item import PlayerInventory
+from server.src.models.player import Player
 from server.src.tests.conftest import FakeValkey
 
 
@@ -29,6 +30,18 @@ class TestGSMAutoLoadingCore:
     @pytest_asyncio.fixture
     async def gsm_with_offline_data(self, session, fake_valkey: FakeValkey, gsm: GameStateManager):
         """Create GSM with offline player data in database only."""
+        # Create the player first (required for foreign key constraint)
+        player = Player(
+            id=100,
+            username="test_offline_player", 
+            hashed_password="dummy_hash",
+            x_coord=50,
+            y_coord=50,
+            map_id="test_map"
+        )
+        session.add(player)
+        await session.commit()
+        
         # Add inventory data directly to database (simulating offline player)
         inv1 = PlayerInventory(
             player_id=100, item_id=1, slot=0, quantity=5, current_durability=1.0
@@ -142,11 +155,16 @@ class TestGSMAutoLoadingCore:
 class TestGSMValkeyFallback:
     """Test GSM behavior when Valkey is unavailable or disabled."""
 
-    async def test_valkey_unavailable_fallback(self, session, gsm: GameStateManager):
+    async def test_valkey_unavailable_fallback(self, session, gsm: GameStateManager, create_offline_player):
         """Test database fallback when Valkey is unavailable."""
+        # Create player first to satisfy foreign key constraints
+        player_id = 200
+        await create_offline_player(player_id, username=f"fallback_player_{player_id}")
+        await session.commit()  # Ensure player exists before creating inventory
+        
         # Add test data to database
         inv = PlayerInventory(
-            player_id=200, item_id=1, slot=0, quantity=3, current_durability=1.0
+            player_id=player_id, item_id=1, slot=0, quantity=3, current_durability=1.0
         )
         session.add(inv)
         await session.commit()
@@ -157,7 +175,7 @@ class TestGSMValkeyFallback:
         
         try:
             # Should fallback to database without error
-            inventory = await gsm.get_inventory(200)
+            inventory = await gsm.get_inventory(player_id)
             
             # Verify data loaded from database
             assert len(inventory) == 1
@@ -168,9 +186,13 @@ class TestGSMValkeyFallback:
             gsm._valkey = original_valkey
 
     @patch('server.src.core.config.settings.USE_VALKEY', False)
-    async def test_valkey_disabled_uses_database(self, session, gsm: GameStateManager):
+    async def test_valkey_disabled_uses_database(self, session, gsm: GameStateManager, create_offline_player):
         """Test that USE_VALKEY=False uses database even when Valkey available."""
         player_id = 300
+        
+        # Create player first to satisfy foreign key constraints
+        await create_offline_player(player_id, username=f"valkey_disabled_player_{player_id}")
+        await session.commit()  # Ensure player exists before creating inventory
         
         # Add test data to database
         inv = PlayerInventory(
@@ -202,6 +224,27 @@ class TestGSMServiceTransparency:
     @pytest_asyncio.fixture
     async def gsm_with_mixed_players(self, session, gsm: GameStateManager):
         """Create GSM with both online and offline player data."""
+        # Create player records first (required for foreign key constraints)
+        player_400 = Player(
+            id=400,
+            username="online_player",
+            hashed_password="dummy_hash",
+            x_coord=50,
+            y_coord=50,
+            map_id="test_map"
+        )
+        player_500 = Player(
+            id=500,
+            username="offline_player", 
+            hashed_password="dummy_hash",
+            x_coord=50,
+            y_coord=50,
+            map_id="test_map"
+        )
+        session.add(player_400)
+        session.add(player_500)
+        await session.commit()
+        
         # Player 400: Online with data in Valkey
         player_online = 400
         gsm.register_online_player(player_online, "online_player")

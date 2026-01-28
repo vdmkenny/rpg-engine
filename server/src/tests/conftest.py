@@ -8,12 +8,13 @@ import msgpack
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, Callable, Awaitable, Dict, Any, Optional
+from typing import AsyncGenerator, Callable, Awaitable, Dict, Any, Optional, List
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.future import select
 from sqlalchemy import delete, create_engine, text
+from sqlalchemy.pool import NullPool
 from alembic import command
 from alembic.config import Config
 
@@ -34,13 +35,85 @@ from server.src.services.game_state_manager import (
 # Configure logger for test fixtures
 logger = logging.getLogger(__name__)
 
+
+# Worker Detection and Database URL Generation
+def get_worker_id() -> str:
+    """
+    Get pytest-xdist worker ID or 'main' for single-threaded execution.
+    
+    Returns:
+        Worker ID like 'gw0', 'gw1', etc. or 'main' for non-parallel execution
+    """
+    return os.getenv("PYTEST_XDIST_WORKER", "main")
+
+
+def get_worker_database_url(worker_id: str) -> str:
+    """
+    Generate worker-specific database URL for isolation.
+    
+    Args:
+        worker_id: The worker identifier from get_worker_id()
+        
+    Returns:
+        PostgreSQL URL for worker-specific database
+    """
+    # Detect if running inside Docker container
+    if os.path.exists('/.dockerenv'):
+        # Inside Docker: use service name and internal port
+        base_url = "postgresql+asyncpg://rpg_test:rpg_test_password@test_db:5432"
+    else:
+        # Outside Docker: use localhost and mapped port
+        base_url = "postgresql+asyncpg://rpg_test:rpg_test_password@localhost:5433"
+        
+    worker_db_name = f"rpg_test_worker_{worker_id}"
+    return f"{base_url}/{worker_db_name}"
+
+
+def get_sync_worker_database_url(worker_id: str) -> str:
+    """
+    Generate sync (non-asyncpg) worker database URL for Alembic operations.
+    
+    Note: Even though this says 'sync', it still uses asyncpg because our
+    Alembic env.py is configured for async operations with AsyncEngine.
+    
+    Args:
+        worker_id: The worker identifier from get_worker_id()
+        
+    Returns:
+        AsyncPG PostgreSQL URL for worker-specific database (for Alembic)
+    """
+    # Detect if running inside Docker container
+    if os.path.exists('/.dockerenv'):
+        # Inside Docker: use service name and internal port
+        base_url = "postgresql+asyncpg://rpg_test:rpg_test_password@test_db:5432"
+    else:
+        # Outside Docker: use localhost and mapped port  
+        base_url = "postgresql+asyncpg://rpg_test:rpg_test_password@localhost:5433"
+        
+    worker_db_name = f"rpg_test_worker_{worker_id}"
+    return f"{base_url}/{worker_db_name}"
+
+
+def get_admin_database_url() -> str:
+    """
+    Generate admin database URL for creating/dropping worker databases.
+    
+    Returns:
+        PostgreSQL URL for connecting to postgres admin database
+    """
+    # Detect if running inside Docker container
+    if os.path.exists('/.dockerenv'):
+        # Inside Docker: use service name and internal port
+        return "postgresql://rpg_test:rpg_test_password@test_db:5432/postgres"
+    else:
+        # Outside Docker: use localhost and mapped port
+        return "postgresql://rpg_test:rpg_test_password@localhost:5433/postgres"
+
+
 # Use PostgreSQL for tests (production parity)
-# When running inside Docker container, use service names
-# When running locally, connect to Docker containers on localhost  
-TEST_DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql+asyncpg://rpg_test:rpg_test_password@localhost:5433/rpg_test"
-)
+# Worker-specific database URL based on pytest-xdist worker ID
+WORKER_ID = get_worker_id()
+TEST_DATABASE_URL = get_worker_database_url(WORKER_ID)
 
 # Global test engine and session maker
 test_engine = None
@@ -217,66 +290,154 @@ class FakeValkey:
         return self._set_data.get(key, set())
 
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_test_db_sync():
-    """Set up test database schema using complete schema reset for maximum isolation."""
-    # Set the DATABASE_URL environment variable for Alembic
-    test_db_url = os.getenv(
-        "DATABASE_URL", 
-        "postgresql+asyncpg://rpg_test:rpg_test_password@localhost:5433/rpg_test"
-    )
-    os.environ["DATABASE_URL"] = test_db_url
+@pytest.fixture(scope="session", autouse=True) 
+def setup_worker_database():
+    """
+    Set up worker-specific database for complete isolation between pytest-xdist workers.
     
-    # For maximum isolation, drop all schema objects and recreate them
-    # This approach is slower but ensures no conflicts between test runs
-    from sqlalchemy import create_engine, text
+    Each worker gets its own database to eliminate race conditions and enable true 
+    parallel test execution. Databases are auto-cleaned up after session completion.
+    """
+    worker_id = get_worker_id()
+    worker_db_name = f"rpg_test_worker_{worker_id}"
     
-    # Use sync engine for schema operations (Alembic compatibility)
-    sync_db_url = test_db_url.replace("+asyncpg", "")  # Remove asyncpg for sync operations
-    sync_engine = create_engine(sync_db_url, echo=False)
+    logger.info(f"Setting up worker database: {worker_db_name} (worker: {worker_id})")
+    
+    # Set the DATABASE_URL environment variable for this worker
+    worker_db_url = get_worker_database_url(worker_id)
+    sync_worker_db_url = get_sync_worker_database_url(worker_id) 
+    os.environ["DATABASE_URL"] = worker_db_url
+    
+    # Connect to main PostgreSQL instance to create worker database
+    admin_db_url = get_admin_database_url()
+    admin_engine = create_engine(admin_db_url, echo=False)
     
     try:
-        # Drop all schema objects for a clean slate
-        with sync_engine.connect() as conn:
-            logger.info("Dropping all database objects for clean test environment...")
-            
-            # Drop all tables (this will also drop dependent objects)
-            conn.execute(text("DROP SCHEMA public CASCADE"))
-            conn.execute(text("CREATE SCHEMA public"))
-            conn.execute(text("GRANT ALL ON SCHEMA public TO rpg_test"))
-            conn.execute(text("GRANT ALL ON SCHEMA public TO public"))
-            conn.commit()
-            
-        logger.info("Database schema reset successfully")
+        # Create worker-specific database
+        # Use autocommit for DDL operations like CREATE DATABASE
+        admin_engine = create_engine(admin_db_url, echo=False, isolation_level="AUTOCOMMIT")
         
-        # Run Alembic migrations to create fresh schema
-        alembic_cfg = Config("server/alembic.ini")
-        alembic_cfg.set_main_option("script_location", "server/alembic")
+        with admin_engine.connect() as conn:
+            # Check if database exists first
+            result = conn.execute(text(
+                "SELECT 1 FROM pg_database WHERE datname = :db_name"
+            ), {"db_name": worker_db_name})
+            
+            if result.fetchone() is None:
+                logger.info(f"Creating worker database: {worker_db_name}")
+                conn.execute(text(f'CREATE DATABASE "{worker_db_name}"'))
+                logger.info(f"Worker database created: {worker_db_name}")
+            else:
+                logger.info(f"Worker database already exists: {worker_db_name}")
+                
+        admin_engine.dispose()  # Clean up admin engine
+        logger.info(f"Worker database ready: {worker_db_name}")
         
-        # Now run upgrade to create all tables
-        command.upgrade(alembic_cfg, "head") 
-        logger.info("Alembic migrations applied successfully")
+        # Run Alembic migrations on the worker database
+        try:
+            logger.info(f"Running Alembic migrations on {worker_db_name}")
+            logger.info(f"Alembic URL: {sync_worker_db_url}")
+            
+            # Run Alembic in subprocess to avoid pytest context issues
+            import subprocess
+            import sys
+            
+            env = os.environ.copy()
+            env["DATABASE_URL"] = sync_worker_db_url
+            
+            # Run alembic upgrade head in subprocess
+            result = subprocess.run([
+                sys.executable, "-m", "alembic", 
+                "upgrade", "head"
+            ], 
+            env=env, 
+            cwd="/app/server",  # Change to server directory where alembic.ini is located
+            capture_output=True, 
+            text=True
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"Alembic subprocess failed: {result.stderr}")
+                raise RuntimeError(f"Alembic migration failed: {result.stderr}")
+            else:
+                logger.info("Alembic subprocess completed successfully")
+                logger.info(f"Alembic stdout: {result.stdout}")
+            
+            logger.info(f"Alembic migrations completed for {worker_db_name}")
+            
+            # Verify the migration worked by checking if tables exist
+            verify_engine = create_engine(sync_worker_db_url.replace("+asyncpg", ""), echo=False)
+            with verify_engine.connect() as conn:
+                result = conn.execute(text("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'"))
+                table_count = result.scalar()
+                logger.info(f"Worker database {worker_db_name} has {table_count} tables")
+                if table_count == 0:
+                    raise RuntimeError(f"No tables found in {worker_db_name} after migration")
+            verify_engine.dispose()
+            
+        except Exception as alembic_error:
+            logger.error(f"Alembic migration failed for {worker_db_name}: {alembic_error}")
+            # Try to get more details about the database state
+            try:
+                verify_engine = create_engine(sync_worker_db_url.replace("+asyncpg", ""), echo=False)
+                with verify_engine.connect() as conn:
+                    result = conn.execute(text("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'"))
+                    table_count = result.scalar()
+                    logger.error(f"Database {worker_db_name} has {table_count} tables after failed migration")
+                verify_engine.dispose()
+            except Exception as verify_error:
+                logger.error(f"Could not verify database state: {verify_error}")
+            
+            raise alembic_error
         
     except Exception as e:
-        logger.error(f"Database setup failed: {e}")
+        logger.error(f"Worker database setup failed: {e}")
         raise
     finally:
-        sync_engine.dispose()
+        # Ensure admin engine is disposed
+        try:
+            admin_engine.dispose()
+        except:
+            pass
 
     yield
     
-    # No cleanup needed - Docker containers will be reset between test sessions
+    # Auto-cleanup: Drop worker database after session completes
+    try:
+        logger.info(f"Cleaning up worker database: {worker_db_name}")
+        cleanup_engine = create_engine(admin_db_url, echo=False, isolation_level="AUTOCOMMIT")
+        
+        with cleanup_engine.connect() as conn:
+            # Force disconnect any remaining connections to the worker database
+            conn.execute(text(
+                "SELECT pg_terminate_backend(pid) "
+                "FROM pg_stat_activity " 
+                "WHERE datname = :db_name AND pid <> pg_backend_pid()"
+            ), {"db_name": worker_db_name})
+            
+            # Drop the worker database
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{worker_db_name}"'))
+            logger.info(f"Worker database cleaned up: {worker_db_name}")
+            
+    except Exception as e:
+        logger.warning(f"Worker database cleanup failed: {e}")
+    finally:
+        try:
+            cleanup_engine.dispose()
+        except:
+            pass
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def setup_test_db():
-    """Set up async database engine and session factory."""
+    """Set up async database engine and session factory for worker database."""
     global test_engine, TestingSessionLocal
 
     test_engine = create_async_engine(
-        TEST_DATABASE_URL, 
+        TEST_DATABASE_URL,
         echo=False,
-        # Remove SQLite-specific connect_args for PostgreSQL
+        # Optimize for test isolation with connection pooling
+        poolclass=NullPool,  # Each session gets its own connection
     )
     TestingSessionLocal = sessionmaker(
         autocommit=False,
@@ -295,13 +456,28 @@ async def setup_test_db():
 @pytest_asyncio.fixture(scope="function")
 async def session() -> AsyncGenerator[AsyncSession, None]:
     """
-    Creates a fresh database session for each test.
+    Creates a fresh database session for each test with isolated connection.
     Cleans up test data after the test completes.
     """
     if TestingSessionLocal is None:
         raise RuntimeError("TestingSessionLocal not initialized")
 
-    async with TestingSessionLocal() as session_obj:
+    # Create a completely isolated session with its own connection
+    isolated_engine = create_async_engine(
+        TEST_DATABASE_URL,
+        echo=False, 
+        poolclass=NullPool,  # No connection pooling for maximum isolation
+    )
+    
+    IsolatedSessionLocal = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=isolated_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    async with IsolatedSessionLocal() as session_obj:
         try:
             yield session_obj
         except Exception:
@@ -337,6 +513,8 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
             finally:
                 try:
                     await session_obj.close()
+                    # Dispose the isolated engine
+                    await isolated_engine.dispose()
                 except Exception as close_error:
                     logger.warning(
                         f"Error closing test session: {close_error}",
@@ -355,45 +533,51 @@ async def fake_valkey() -> FakeValkey:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def items_synced(session: AsyncSession) -> None:
+async def gsm(fake_valkey: FakeValkey) -> AsyncGenerator[GameStateManager, None]:
     """
-    Global fixture to ensure items are synced to database.
+    Create GameStateManager instance for testing using proper singleton pattern.
     
-    This fixture syncs all items from the game configuration to the database,
-    making them available for tests that need item metadata.
-    """
-    from server.src.services.item_service import ItemService
-    await ItemService.sync_items_to_db(session)
-
-
-@pytest_asyncio.fixture(scope="function")
-async def gsm(session: AsyncSession, fake_valkey: FakeValkey, items_synced) -> AsyncGenerator[GameStateManager, None]:
-    """
-    Create a GameStateManager for tests that need GSM functionality.
-    
-    Initializes the global GSM with a FakeValkey and test session factory.
-    Binds the test session to GSM to ensure proper transaction isolation.
-    Tests using this fixture can call get_game_state_manager() and it will
-    return this initialized GSM instance.
+    GSM manages its own sessions internally - no external session binding.
+    This ensures tests use the same architecture as production code.
+    Tests can call get_game_state_manager() to access this initialized GSM instance.
     """
     if TestingSessionLocal is None:
         raise RuntimeError("TestingSessionLocal not initialized")
     
-    # Initialize the global GSM
+    # Initialize the global GSM singleton with test dependencies
     gsm_instance = init_game_state_manager(fake_valkey, TestingSessionLocal)
     
-    # Bind the test session to ensure transaction isolation
-    gsm_instance.bind_test_session(session)
-
-    # Load item cache from database for metadata lookups
-    # Items are guaranteed to be synced by the items_synced dependency
+    # Load item cache from database (GSM uses its own session management)
     await gsm_instance.load_item_cache_from_db()
     
     yield gsm_instance
     
-    # Clean up - unbind session and reset the global GSM
-    gsm_instance.unbind_test_session()
+    # Clean up - reset the global GSM singleton
     reset_game_state_manager()
+
+
+@pytest_asyncio.fixture(scope="function")
+async def items_synced(gsm: GameStateManager) -> None:
+    """
+    Global fixture to ensure items are synced to database using GSM singleton.
+    
+    Depends on gsm fixture to ensure GSM is initialized first.
+    Uses GSM's own session management - no external sessions needed.
+    """
+    from server.src.services.item_service import ItemService
+    await ItemService.sync_items_to_db()
+
+
+@pytest_asyncio.fixture(scope="function")
+async def skills_synced(gsm: GameStateManager) -> None:
+    """
+    Global fixture to ensure skills are synced to database using GSM singleton.
+    
+    Depends on gsm fixture to ensure GSM is initialized first.
+    Uses GSM's own session management - no external sessions needed.
+    """
+    from server.src.services.skill_service import SkillService
+    await SkillService.sync_skills_to_db()
 
 
 @pytest_asyncio.fixture
@@ -540,6 +724,123 @@ def create_expired_token() -> Callable[[str], str]:
 
 
 @pytest_asyncio.fixture
+def create_offline_player(session: AsyncSession) -> Callable[..., Awaitable[Player]]:
+    """
+    Create database-only players for offline testing scenarios.
+    
+    This fixture creates Player records in the database without GSM registration,
+    perfect for testing auto-loading behavior and offline player scenarios.
+    """
+    async def _create_offline_player(
+        player_id: int,
+        username: str = None,
+        x_coord: int = 50, 
+        y_coord: int = 50,
+        map_id: str = "test_map",
+        current_hp: int = 10,
+        **extra_fields
+    ) -> Player:
+        from server.src.core.security import get_password_hash
+        from server.src.models.player import Player
+        
+        if username is None:
+            username = f"test_player_{player_id}"
+            
+        player = Player(
+            id=player_id,
+            username=username,
+            hashed_password=get_password_hash("test_password"),
+            x_coord=x_coord,
+            y_coord=y_coord, 
+            map_id=map_id,
+            current_hp=current_hp,
+            **extra_fields
+        )
+        session.add(player)
+        await session.flush()  # Get auto-generated fields if needed
+        return player
+    
+    return _create_offline_player
+
+
+@pytest_asyncio.fixture
+def create_player_with_skills(
+    create_offline_player, session: AsyncSession, skills_synced
+) -> Callable[..., Awaitable[Player]]:
+    """
+    Create player with pre-configured PlayerSkill records.
+    
+    This eliminates the boilerplate of creating Player + PlayerSkill records
+    manually while ensuring foreign key constraints are satisfied.
+    """
+    async def _create_with_skills(
+        player_id: int,
+        skills_data: Dict[str, Dict[str, Any]],
+        **player_kwargs
+    ) -> Player:
+        from server.src.services.skill_service import SkillService
+        from server.src.models.skill import PlayerSkill
+        
+        # Create base player first (satisfies foreign key constraint)
+        player = await create_offline_player(player_id, **player_kwargs)
+        
+        # Get skill ID mapping
+        skill_id_map = await SkillService.get_skill_id_map()
+        
+        # Create PlayerSkill records
+        for skill_name, skill_props in skills_data.items():
+            skill_record = PlayerSkill(
+                player_id=player_id,
+                skill_id=skill_id_map[skill_name],
+                current_level=skill_props.get('level', 1),
+                experience=skill_props.get('xp', 0)
+            )
+            session.add(skill_record)
+            
+        await session.flush()
+        return player
+    
+    return _create_with_skills
+
+
+@pytest_asyncio.fixture
+def create_player_with_inventory(
+    create_offline_player, session: AsyncSession, items_synced
+) -> Callable[..., Awaitable[Player]]:
+    """
+    Create player with pre-configured PlayerInventory records.
+    
+    This eliminates the boilerplate of creating Player + PlayerInventory records
+    manually while ensuring foreign key constraints are satisfied.
+    """
+    async def _create_with_inventory(
+        player_id: int,
+        inventory_data: List[Dict[str, Any]],
+        **player_kwargs
+    ) -> Player:
+        from server.src.models.item import PlayerInventory
+        
+        # Create base player first (satisfies foreign key constraint)
+        player = await create_offline_player(player_id, **player_kwargs)
+        
+        # Create PlayerInventory records
+        for inv_item in inventory_data:
+            inventory_record = PlayerInventory(
+                player_id=player_id,
+                item_id=inv_item['item_id'],
+                slot=inv_item['slot'],
+                quantity=inv_item['quantity'],
+                current_durability=inv_item.get('durability', 1.0)
+            )
+            session.add(inventory_record)
+            
+        await session.flush()
+        return player
+    
+    return _create_with_inventory
+
+
+@pytest_asyncio.fixture
 def set_player_banned(
     session: AsyncSession,
 ) -> Callable[[str], Awaitable[None]]:
@@ -585,101 +886,133 @@ from server.src.tests.websocket_test_utils import WebSocketTestClient
 
 @pytest_asyncio.fixture
 async def test_client(
-    session: AsyncSession, fake_valkey: FakeValkey, gsm: GameStateManager
+    fake_valkey: FakeValkey, gsm: GameStateManager
 ) -> AsyncGenerator[WebSocketTestClient, None]:
     """
-    Create a WebSocket test client.
+    Create a WebSocket test client with per-test data cleanup.
     
-    Provides a pre-authenticated WebSocket connection
-    with correlation ID support and structured responses.
+    Provides a pre-authenticated WebSocket connection with unique usernames
+    to prevent conflicts. Uses automatic post-test cleanup for integration tests.
     """
     import uuid
     from starlette.testclient import TestClient
     
-    # Override dependencies for WebSocket endpoint
-    async def override_get_db():
-        yield session
+    # Create a session for this integration test
+    if TestingSessionLocal is None:
+        raise RuntimeError("TestingSessionLocal not initialized")
     
-    async def override_get_valkey():
-        return fake_valkey
-    
-    app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_valkey] = override_get_valkey
-    
-    try:
-        # Create test player
-        from server.src.core.security import get_password_hash, create_access_token
+    async with TestingSessionLocal() as session:
+        created_objects = []  # Track objects for cleanup
         
-        username = "testuser"
-        password = "testpass123"
-        hashed_password = get_password_hash(password)
-        
-        player = Player(
-            username=username,
-            hashed_password=hashed_password,
-            x_coord=10,
-            y_coord=10,
-            map_id="samplemap",
-            current_hp=100
-        )
-        
-        session.add(player)
-        await session.flush()  # Get player ID
-        
-        # Initialize skills
         try:
-            from server.src.services.skill_service import SkillService
-            await SkillService.grant_all_skills_to_player(player.id)
+            # Override dependencies for WebSocket endpoint
+            async def override_get_db():
+                yield session
+            
+            async def override_get_valkey():
+                return fake_valkey
+            
+            app.dependency_overrides[get_db] = override_get_db
+            app.dependency_overrides[get_valkey] = override_get_valkey
+            
+            # Create test player with unique username to avoid conflicts
+            from server.src.core.security import get_password_hash, create_access_token
+            
+            username = f"testuser_{uuid.uuid4().hex[:8]}"  # Unique username for each test
+            password = "testpass123"
+            hashed_password = get_password_hash(password)
+            
+            player = Player(
+                username=username,
+                hashed_password=hashed_password,
+                x_coord=10,
+                y_coord=10,
+                map_id="samplemap",
+                current_hp=100
+            )
+            
+            session.add(player)
+            await session.flush()  # Get player ID
+            created_objects.append(('player', player.id))
+            
+            # Initialize skills
+            try:
+                from server.src.services.skill_service import SkillService
+                await SkillService.grant_all_skills_to_player(player.id)
+                created_objects.append(('player_skills', player.id))
+            except Exception:
+                pass  # Skills may not be available
+            
+            await session.commit()
+            
+            # Create JWT token
+            token = create_access_token(data={"sub": username})
+            
+            # Create test client and connect to WebSocket endpoint
+            with TestClient(app) as test_client:
+                with test_client.websocket_connect("/ws") as websocket:
+                    
+                    # Send authentication message
+                    from common.src.protocol import WSMessage, MessageType, AuthenticatePayload
+                    
+                    auth_message = WSMessage(
+                        id=str(uuid.uuid4()),
+                        type=MessageType.CMD_AUTHENTICATE,
+                        payload=AuthenticatePayload(token=token).model_dump(),
+                        version="2.0"
+                    )
+                    
+                    # Send auth message
+                    packed_auth = msgpack.packb(auth_message.model_dump(), use_bin_type=True)
+                    websocket.send_bytes(packed_auth)
+                    
+                    # Wait for auth response
+                    auth_response_bytes = websocket.receive_bytes()
+                    auth_response_data = msgpack.unpackb(auth_response_bytes, raw=False)
+                    auth_response = WSMessage(**auth_response_data)
+                    
+                    if auth_response.type != MessageType.EVENT_WELCOME:
+                        raise Exception(f"Authentication failed: expected WELCOME but got {auth_response.type}")
+                    
+                    # After EVENT_WELCOME, server sends a EVENT_CHAT_MESSAGE welcome - consume it
+                    chat_response_bytes = websocket.receive_bytes()
+                    chat_response_data = msgpack.unpackb(chat_response_bytes, raw=False)
+                    chat_response = WSMessage(**chat_response_data)
+                    
+                    if chat_response.type != MessageType.EVENT_CHAT_MESSAGE:
+                        raise Exception(f"Expected welcome chat message but got {chat_response.type}")
+                    
+                    # Create WebSocket test client wrapper
+                    client = WebSocketTestClient(websocket)
+                    
+                    yield client
+            
         except Exception:
-            pass  # Skills may not be available
-        
-        await session.commit()
-        
-        # Create JWT token
-        token = create_access_token(data={"sub": username})
-        
-        # Create test client and connect to WebSocket endpoint
-        with TestClient(app) as test_client:
-            with test_client.websocket_connect("/ws") as websocket:
+            raise
+        finally:
+            # Clean up any objects we created, in reverse order
+            try:
+                for obj_type, obj_id in reversed(created_objects):
+                    if obj_type == 'player_skills':
+                        await session.execute(delete(PlayerSkill).where(PlayerSkill.player_id == obj_id))
+                    elif obj_type == 'player':
+                        # Clean up related data first
+                        await session.execute(delete(PlayerInventory).where(PlayerInventory.player_id == obj_id))
+                        await session.execute(delete(PlayerEquipment).where(PlayerEquipment.player_id == obj_id))
+                        await session.execute(delete(GroundItem).where(GroundItem.dropped_by == obj_id))
+                        await session.execute(delete(Player).where(Player.id == obj_id))
                 
-                # Send authentication message
-                from common.src.protocol import WSMessage, MessageType, AuthenticatePayload
+                await session.commit()
                 
-                auth_message = WSMessage(
-                    id=str(uuid.uuid4()),
-                    type=MessageType.CMD_AUTHENTICATE,
-                    payload=AuthenticatePayload(token=token).model_dump(),
-                    version="2.0"
-                )
-                
-                # Send auth message
-                packed_auth = msgpack.packb(auth_message.model_dump(), use_bin_type=True)
-                websocket.send_bytes(packed_auth)
-                
-                # Wait for auth response
-                auth_response_bytes = websocket.receive_bytes()
-                auth_response_data = msgpack.unpackb(auth_response_bytes, raw=False)
-                auth_response = WSMessage(**auth_response_data)
-                
-                if auth_response.type != MessageType.EVENT_WELCOME:
-                    raise Exception(f"Authentication failed: expected WELCOME but got {auth_response.type}")
-                
-                # After EVENT_WELCOME, server sends a EVENT_CHAT_MESSAGE welcome - consume it
-                chat_response_bytes = websocket.receive_bytes()
-                chat_response_data = msgpack.unpackb(chat_response_bytes, raw=False)
-                chat_response = WSMessage(**chat_response_data)
-                
-                if chat_response.type != MessageType.EVENT_CHAT_MESSAGE:
-                    raise Exception(f"Expected welcome chat message but got {chat_response.type}")
-                
-                # Create WebSocket test client wrapper
-                client = WebSocketTestClient(websocket)
-                
-                yield client
-        
-    finally:
-        # Clean up
-        app.dependency_overrides.clear()
+            except Exception as cleanup_error:
+                logger.warning(f"Integration test cleanup failed: {cleanup_error}")
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
+            
+            # Clean up dependency overrides
+            app.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture
@@ -691,6 +1024,28 @@ def create_test_token() -> Callable[[str], str]:
         return create_access_token(data={"sub": username})
     
     return _create_token
+
+
+@pytest_asyncio.fixture  
+def test_disconnection_context(
+    fake_valkey: FakeValkey, gsm: GameStateManager
+) -> Dict[str, Any]:
+    """
+    Provides a context for testing WebSocket disconnection scenarios.
+    Does NOT attempt actual connections - just provides the setup needed
+    for disconnection tests that handle their own connection attempts.
+    """
+    # Create a session for this integration test
+    if TestingSessionLocal is None:
+        raise RuntimeError("TestingSessionLocal not initialized")
+    
+    return {
+        'session_factory': TestingSessionLocal,
+        'fake_valkey': fake_valkey,
+        'app': app,
+        'get_db': get_db,
+        'get_valkey': get_valkey
+    }
 
 
 @pytest_asyncio.fixture

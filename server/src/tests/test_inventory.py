@@ -41,7 +41,7 @@ async def player_with_inventory(session: AsyncSession, create_test_player, items
     player = await create_test_player(unique_name, "password123")
     
     # Ensure player is synced to GSM by logging them in
-    await PlayerService.login_player(session, player)
+    await PlayerService.login_player(player)
     
     return player
 
@@ -60,7 +60,7 @@ class TestAddItem:
     ):
         """Adding a single item should create inventory entry."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         assert item is not None, "bronze_sword should exist in test data"
 
         add_result = await InventoryService.add_item(player.id, item.id)
@@ -84,7 +84,7 @@ class TestAddItem:
     ):
         """Removing part of a stack should reduce quantity."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
         assert item is not None, "copper_ore should exist in test data"
 
         add_result = await InventoryService.add_item(
@@ -122,7 +122,7 @@ class TestAddItem:
     ):
         """Removing more than available should fail."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
         assert item is not None, "copper_ore should exist in test data"
 
         add_result = await InventoryService.add_item(
@@ -153,7 +153,7 @@ class TestMoveItem:
     ):
         """Moving to empty slot should work."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         assert item is not None, "bronze_sword should exist in test data"
 
         add_result = await InventoryService.add_item(player.id, item.id)
@@ -183,8 +183,8 @@ class TestMoveItem:
     ):
         """Moving to occupied slot should swap items."""
         player = player_with_inventory
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
-        pickaxe = await ItemService.get_item_by_name(session, "bronze_pickaxe")
+        sword = await ItemService.get_item_by_name("bronze_sword")
+        pickaxe = await ItemService.get_item_by_name("bronze_pickaxe")
         assert sword is not None, "bronze_sword should exist in test data"
         assert pickaxe is not None, "bronze_pickaxe should exist in test data"
 
@@ -225,7 +225,7 @@ class TestMoveItem:
     ):
         """Moving stackable item to same item type should merge."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
         assert item is not None, "copper_ore should exist in test data"
 
         # Add two separate stacks
@@ -259,7 +259,7 @@ class TestMoveItem:
     ):
         """Moving to same slot should succeed (no-op)."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         assert item is not None, "bronze_sword should exist in test data"
 
         add_result = await InventoryService.add_item(player.id, item.id)
@@ -288,7 +288,7 @@ class TestMoveItem:
     ):
         """Moving to invalid slot should fail."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         assert item is not None, "bronze_sword should exist in test data"
 
         add_result = await InventoryService.add_item(player.id, item.id)
@@ -323,9 +323,9 @@ class TestSortInventory:
         player = player_with_inventory
 
         # Add items from different categories
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
-        ore = await ItemService.get_item_by_name(session, "copper_ore")
-        gold = await ItemService.get_item_by_name(session, "gold_coins")
+        sword = await ItemService.get_item_by_name("bronze_sword")
+        ore = await ItemService.get_item_by_name("copper_ore")
+        gold = await ItemService.get_item_by_name("gold_coins")
         assert sword is not None, "bronze_sword should exist in test data"
         assert ore is not None, "copper_ore should exist in test data"
         assert gold is not None, "gold_coins should exist in test data"
@@ -347,7 +347,7 @@ class TestSortInventory:
         # Get item details for each inventory item
         categories = []
         for inventory_item in inv:
-            item = await ItemService.get_item_by_id(session, inventory_item.item_id)
+            item = await ItemService.get_item_by_id(inventory_item.item_id)
             assert item is not None, f"Item {inventory_item.item_id} should exist"
             categories.append(item.category)
 
@@ -369,8 +369,8 @@ class TestSortInventory:
         player = player_with_inventory
 
         # Add items with different rarities
-        shrimp = await ItemService.get_item_by_name(session, "raw_shrimp")  # poor
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")  # common
+        shrimp = await ItemService.get_item_by_name("raw_shrimp")  # poor
+        sword = await ItemService.get_item_by_name("bronze_sword")  # common
         assert shrimp is not None, "raw_shrimp should exist in test data"
         assert sword is not None, "bronze_sword should exist in test data"
 
@@ -388,7 +388,7 @@ class TestSortInventory:
         # Get item rarities
         rarities = []
         for inventory_item in inv:
-            item = await ItemService.get_item_by_id(session, inventory_item.item_id)
+            item = await ItemService.get_item_by_id(inventory_item.item_id)
             assert item is not None, f"Item {inventory_item.item_id} should exist"
             rarities.append(item.rarity)
 
@@ -408,8 +408,8 @@ class TestSortInventory:
         player = player_with_inventory
 
         # Add items with different values
-        ore = await ItemService.get_item_by_name(session, "copper_ore")  # 5
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")  # 20
+        ore = await ItemService.get_item_by_name("copper_ore")  # 5
+        sword = await ItemService.get_item_by_name("bronze_sword")  # 20
         assert ore is not None, "copper_ore should exist in test data"
         assert sword is not None, "bronze_sword should exist in test data"
 
@@ -427,7 +427,7 @@ class TestSortInventory:
         # Get item values
         values = []
         for inventory_item in inv:
-            item = await ItemService.get_item_by_id(session, inventory_item.item_id)
+            item = await ItemService.get_item_by_id(inventory_item.item_id)
             assert item is not None, f"Item {inventory_item.item_id} should exist"
             values.append(item.value)
 
@@ -441,8 +441,8 @@ class TestSortInventory:
         """Sorting by name should be alphabetical."""
         player = player_with_inventory
 
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
-        arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+        sword = await ItemService.get_item_by_name("bronze_sword")
+        arrows = await ItemService.get_item_by_name("bronze_arrows")
         assert sword is not None, "bronze_sword should exist in test data"
         assert arrows is not None, "bronze_arrows should exist in test data"
 
@@ -460,7 +460,7 @@ class TestSortInventory:
         # Get item names
         names = []
         for inventory_item in inv:
-            item = await ItemService.get_item_by_id(session, inventory_item.item_id)
+            item = await ItemService.get_item_by_id(inventory_item.item_id)
             assert item is not None, f"Item {inventory_item.item_id} should exist"
             names.append(item.display_name)
 
@@ -475,8 +475,8 @@ class TestSortInventory:
         """Sorting should compact items to front of inventory."""
         player = player_with_inventory
 
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
-        pickaxe = await ItemService.get_item_by_name(session, "bronze_pickaxe")
+        sword = await ItemService.get_item_by_name("bronze_sword")
+        pickaxe = await ItemService.get_item_by_name("bronze_pickaxe")
         assert sword is not None, "bronze_sword should exist in test data"
         assert pickaxe is not None, "bronze_pickaxe should exist in test data"
 
@@ -532,7 +532,7 @@ class TestMergeStacks:
     ):
         """Merge stacks should combine split stacks of same item."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
         assert item is not None, "copper_ore should exist in test data"
 
         # Create two separate stacks
@@ -574,7 +574,7 @@ class TestMergeStacks:
     ):
         """Merging stacks should free up inventory slots."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
         assert item is not None, "copper_ore should exist in test data"
 
         # Clear inventory first to ensure clean test state
@@ -623,7 +623,7 @@ class TestInventoryResponse:
     ):
         """Inventory response should have all required fields."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         assert item is not None, "bronze_sword should exist in test data"
 
         await InventoryService.add_item(player.id, item.id)
@@ -641,7 +641,7 @@ class TestInventoryResponse:
     ):
         """Each slot should include item info."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         assert item is not None, "bronze_sword should exist in test data"
 
         await InventoryService.add_item(player.id, item.id)
@@ -668,7 +668,7 @@ class TestHasItem:
     ):
         """has_item should return True when player has enough."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
         assert item is not None, "copper_ore should exist in test data"
 
         await InventoryService.add_item(player.id, item.id, quantity=10)
@@ -682,7 +682,7 @@ class TestHasItem:
     ):
         """has_item should return False when player doesn't have enough."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
         assert item is not None, "copper_ore should exist in test data"
 
         await InventoryService.add_item(player.id, item.id, quantity=5)
@@ -695,7 +695,7 @@ class TestHasItem:
     ):
         """has_item should sum across multiple stacks."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
         assert item is not None, "copper_ore should exist in test data"
 
         # Create two stacks

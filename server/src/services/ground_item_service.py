@@ -86,8 +86,7 @@ class GroundItemService:
         gsm = get_game_state_manager()
 
         # Get item info for rarity-based timers
-        async with gsm._db_session() as db:
-            item = await ItemService.get_item_by_id(db, item_id)
+        item = await ItemService.get_item_by_id(item_id)
 
         if not item:
             logger.warning(
@@ -187,8 +186,7 @@ class GroundItemService:
             )
 
         # Get item info for ground item creation
-        async with gsm._db_session() as db:
-            item = await ItemService.get_item_by_id(db, item_id)
+        item = await ItemService.get_item_by_id(item_id)
 
         if not item:
             return DropItemResult(
@@ -273,6 +271,8 @@ class GroundItemService:
         Returns:
             PickupItemResult with success status and detailed error messages
         """
+        from .inventory_service import InventoryService
+        
         gsm = get_game_state_manager()
         now = datetime.now(timezone.utc).timestamp()
 
@@ -317,27 +317,29 @@ class GroundItemService:
                 message="This item is protected",
             )
 
-        # Find free inventory slot
-        free_slot = await gsm.get_free_inventory_slot(player_id)
-        if free_slot is None:
+        # Use InventoryService for adding items instead of direct GSM calls
+        durability_val = ground_item.get("durability")
+        
+        # Convert GSM's float durability to InventoryService's int durability
+        durability_int = None
+        if durability_val is not None:
+            # Round float durability to integer for InventoryService compatibility
+            durability_int = int(durability_val) if durability_val != 1.0 else None
+        
+        add_result = await InventoryService.add_item(
+            player_id=player_id,
+            item_id=ground_item["item_id"],
+            quantity=ground_item["quantity"],
+            durability=durability_int,
+        )
+        
+        if not add_result.success:
             return PickupItemResult(
                 success=False,
-                message="Inventory is full",
+                message=add_result.message or "Failed to add item to inventory",
             )
 
-        # Add to inventory
-        durability_val = ground_item.get("durability")
-        if durability_val is None:
-            durability_val = 1.0
-        await gsm.set_inventory_slot(
-            player_id,
-            free_slot,
-            ground_item["item_id"],
-            ground_item["quantity"],
-            float(durability_val),
-        )
-
-        # Remove ground item
+        # Remove ground item after successful inventory addition
         await gsm.remove_ground_item(ground_item_id, ground_item["map_id"])
 
         logger.info(
@@ -347,14 +349,14 @@ class GroundItemService:
                 "ground_item_id": ground_item_id,
                 "item_id": ground_item["item_id"],
                 "quantity": ground_item["quantity"],
-                "inventory_slot": free_slot,
+                "inventory_slot": add_result.slot,
             },
         )
 
         return PickupItemResult(
             success=True,
             message="Item picked up",
-            inventory_slot=free_slot,
+            inventory_slot=add_result.slot,
         )
 
     @staticmethod
@@ -416,11 +418,10 @@ class GroundItemService:
         # Look up item metadata for all unique items
         item_metadata = {}
         if unique_item_ids:
-            async with gsm._db_session() as db:
-                for item_id in unique_item_ids:
-                    item = await ItemService.get_item_by_id(db, item_id)
-                    if item:
-                        item_metadata[item_id] = item
+            for item_id in unique_item_ids:
+                item = await ItemService.get_item_by_id(item_id)
+                if item:
+                    item_metadata[item_id] = item
 
         # Build response with merged data
         items = []
@@ -514,11 +515,10 @@ class GroundItemService:
         # Get item metadata for all unique items
         item_metadata = {}
         if unique_item_ids:
-            async with gsm._db_session() as db:
-                for item_id in unique_item_ids:
-                    item = await ItemService.get_item_by_id(db, item_id)
-                    if item:
-                        item_metadata[item_id] = item
+            for item_id in unique_item_ids:
+                item = await ItemService.get_item_by_id(item_id)
+                if item:
+                    item_metadata[item_id] = item
 
         # Merge item metadata into ground item data
         for item in visible_items:
@@ -617,12 +617,11 @@ class GroundItemService:
 
         # Replace bulk DB query with individual service calls (no bulk method available)
         items_by_id = {}
-        async with gsm._db_session() as db:
-            for item_id in all_item_ids:
-                item = await ItemService.get_item_by_id(db, item_id)
-                if item:  # Only add if found
-                    items_by_id[item_id] = item
-                # Skip missing items (don't fail entire death drop for missing items)
+        for item_id in all_item_ids:
+            item = await ItemService.get_item_by_id(item_id)
+            if item:  # Only add if found
+                items_by_id[item_id] = item
+            # Skip missing items (don't fail entire death drop for missing items)
 
         # Drop inventory items
         for slot, slot_data in inventory.items():

@@ -239,21 +239,13 @@ class ItemManager(IItemManager):
         5. Update equipment stats
         
         Maintains atomicity via GSM state operations.
-        
-        Note: EquipmentService still uses legacy db parameter - needs architectural update.
         """
         from server.src.services.equipment_service import EquipmentService
         
-        # TEMP: EquipmentService still expects db parameter (architectural inconsistency)
-        # This is a structural issue that needs full service migration
-        from server.src.core.database import AsyncSessionLocal
-        
-        async with AsyncSessionLocal() as session:
-            return await EquipmentService.equip_from_inventory(
-                db=session,
-                player_id=player_id,
-                inventory_slot=inventory_slot,
-            )
+        return await EquipmentService.equip_from_inventory(
+            player_id=player_id,
+            inventory_slot=inventory_slot,
+        )
 
     async def unequip_item(
         self,
@@ -272,23 +264,16 @@ class ItemManager(IItemManager):
         3. If inventory full, drop to ground (if position provided)
         4. Adjust HP for health bonus loss
         5. Update equipment stats
-        
-        Note: EquipmentService still uses legacy db parameter - needs architectural update.
         """
         from server.src.services.equipment_service import EquipmentService
         
-        # TEMP: EquipmentService still expects db parameter (architectural inconsistency)
-        from server.src.core.database import AsyncSessionLocal
-        
-        async with AsyncSessionLocal() as session:
-            return await EquipmentService.unequip_to_inventory(
-                db=session,
-                player_id=player_id,
-                equipment_slot=equipment_slot,
-                map_id=map_id,
-                player_x=player_x,
-                player_y=player_y,
-            )
+        return await EquipmentService.unequip_to_inventory(
+            player_id=player_id,
+            equipment_slot=equipment_slot,
+            map_id=map_id,
+            player_x=player_x,
+            player_y=player_y,
+        )
 
     async def drop_item(
         self,

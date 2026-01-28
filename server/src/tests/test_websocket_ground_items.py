@@ -96,11 +96,11 @@ class TestGroundItemsInGameStateUpdate:
         from server.src.services.item_service import ItemService
         
         # Ensure test data exists (eliminates pytest.skip)
-        sync_result = await TestDataService.ensure_game_data_synced(session)
+        sync_result = await TestDataService.ensure_game_data_synced()
         assert sync_result.success, f"Failed to sync test data: {sync_result.message}"
         
         # Get bronze sword item for validation
-        bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
+        bronze_sword = await ItemService.get_item_by_name("bronze_sword")
         assert bronze_sword is not None, "bronze_sword should exist after sync"
         bronze_sword_id = bronze_sword.id
         
@@ -158,11 +158,11 @@ class TestPickupItemWithRealItems:
         from server.src.services.item_service import ItemService
         
         # Ensure test data exists (eliminates pytest.skip)
-        sync_result = await TestDataService.ensure_game_data_synced(session)
+        sync_result = await TestDataService.ensure_game_data_synced()
         assert sync_result.success
         
         # Get bronze sword item for creation
-        bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
+        bronze_sword = await ItemService.get_item_by_name("bronze_sword")
         assert bronze_sword is not None, "bronze_sword should exist after sync"
         bronze_sword_id = bronze_sword.id
         
@@ -216,11 +216,11 @@ class TestPickupItemWithRealItems:
         from server.src.services.item_service import ItemService
         
         # Ensure test data exists (eliminates pytest.skip)
-        sync_result = await TestDataService.ensure_game_data_synced(session)
+        sync_result = await TestDataService.ensure_game_data_synced()
         assert sync_result.success
         
         # Get bronze sword item
-        bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
+        bronze_sword = await ItemService.get_item_by_name("bronze_sword")
         assert bronze_sword is not None
         bronze_sword_id = bronze_sword.id
         
@@ -271,11 +271,11 @@ class TestPickupStackableItem:
         from server.src.services.item_service import ItemService
         
         # Ensure test data exists (eliminates complex database setup)
-        sync_result = await TestDataService.ensure_game_data_synced(session)
+        sync_result = await TestDataService.ensure_game_data_synced()
         assert sync_result.success
         
         # Get bronze arrows item
-        bronze_arrows = await ItemService.get_item_by_name(session, "bronze_arrows")
+        bronze_arrows = await ItemService.get_item_by_name("bronze_arrows")
         assert bronze_arrows is not None, "bronze_arrows should exist after sync"
         bronze_arrows_id = bronze_arrows.id
         

@@ -58,7 +58,11 @@ async def player_with_hp(
         "password123",
         current_hp=HITPOINTS_START_LEVEL,
     )
-    # Grant skills including Hitpoints
+    # CRITICAL: Commit the player to database before calling GSM methods
+    # GSM uses its own session and cannot see uncommitted changes
+    await session.commit()
+    
+    # Grant skills including Hitpoints - now GSM can see the committed player
     await SkillService.grant_all_skills_to_player(player.id)
     await session.refresh(player)
     return player
@@ -79,7 +83,6 @@ async def player_with_gsm(
     # Set up player state in GSM
     await gsm.set_player_full_state(
         player_id=player.id,
-        
         x=10,
         y=10,
         map_id="samplemap",
@@ -87,15 +90,8 @@ async def player_with_gsm(
         max_hp=HITPOINTS_START_LEVEL,
     )
     
-    # Load skills into GSM
-    result = await session.execute(
-        select(PlayerSkill, Skill)
-        .join(Skill, PlayerSkill.skill_id == Skill.id)
-        .where(PlayerSkill.player_id == player.id)
-    )
-    
-    # Grant all skills to player using proper server initialization method
-    await gsm.grant_all_skills_to_player_offline(player.id)
+    # Skills were already granted by player_with_hp fixture
+    # No need to duplicate the grant_all_skills_to_player_offline call
     
     return player
 
@@ -371,7 +367,7 @@ class TestDeathHandling:
         player = player_with_gsm
         
         # Give player some items via GSM
-        bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
+        bronze_sword = await ItemService.get_item_by_name("bronze_sword")
         if bronze_sword:
             await gsm.set_inventory_slot(player.id, 0, bronze_sword.id, 1, bronze_sword.max_durability)
         
@@ -392,7 +388,7 @@ class TestDeathHandling:
         player = player_with_gsm
         
         # Give player items
-        bronze_sword = await ItemService.get_item_by_name(session, "bronze_sword")
+        bronze_sword = await ItemService.get_item_by_name("bronze_sword")
         if bronze_sword:
             await gsm.set_inventory_slot(player.id, 0, bronze_sword.id, 1, bronze_sword.max_durability)
             await gsm.set_inventory_slot(player.id, 1, bronze_sword.id, 1, bronze_sword.max_durability)

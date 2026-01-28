@@ -123,7 +123,7 @@ class TestCreateGroundItem:
     ):
         """Basic ground item creation should work."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -150,7 +150,7 @@ class TestCreateGroundItem:
     ):
         """Ground items should have rarity-based despawn timers."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         now = datetime.now(timezone.utc).timestamp()
         ground_item_id = await GroundItemService.create_ground_item(
@@ -205,7 +205,7 @@ class TestDropFromInventory:
     ):
         """Dropping entire stack should work."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
 
         # Add to inventory via GSM
         await gsm.set_inventory_slot(player.id, 0, item.id, 10, None)
@@ -231,7 +231,7 @@ class TestDropFromInventory:
     ):
         """Dropping partial stack should leave remainder."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
 
         await gsm.set_inventory_slot(player.id, 0, item.id, 10, None)
 
@@ -275,7 +275,7 @@ class TestDropFromInventory:
     ):
         """Dropping more than available should fail."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
 
         await gsm.set_inventory_slot(player.id, 0, item.id, 5, None)
 
@@ -305,7 +305,7 @@ class TestPickupItem:
     ):
         """Owner should be able to pick up their item during protection."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -341,7 +341,7 @@ class TestPickupItem:
     ):
         """Cannot pick up item from different tile."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -369,7 +369,7 @@ class TestPickupItem:
         """Other players cannot pick up protected items."""
         player = player_for_ground_items
         other = second_player
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -397,7 +397,7 @@ class TestPickupItem:
         """Anyone can pick up public (unprotected) items."""
         player = player_for_ground_items
         other = second_player
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -446,7 +446,7 @@ class TestPickupItem:
     ):
         """Picking up despawned item should fail."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -478,7 +478,7 @@ class TestPickupItem:
     ):
         """Cannot pick up item from different map."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -518,7 +518,7 @@ class TestVisibility:
     ):
         """Own items should always be visible (even during protection)."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -545,7 +545,7 @@ class TestVisibility:
         """Other players' protected items should be hidden."""
         player = player_for_ground_items
         other = second_player
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -571,7 +571,7 @@ class TestVisibility:
         """Public items should be visible to everyone."""
         player = player_for_ground_items
         other = second_player
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -603,7 +603,7 @@ class TestVisibility:
     ):
         """Items outside range should not be visible."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -638,7 +638,7 @@ class TestCleanupExpiredItems:
     ):
         """Cleanup should remove expired items."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -667,7 +667,7 @@ class TestCleanupExpiredItems:
     ):
         """Cleanup should not remove valid items."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -700,7 +700,7 @@ class TestDropPlayerItemsOnDeath:
     ):
         """Death should drop all inventory items."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name(session, "copper_ore")
+        item = await ItemService.get_item_by_name("copper_ore")
 
         await gsm.set_inventory_slot(player.id, slot=0, item_id=item.id, quantity=10, durability=None)
 
@@ -727,7 +727,7 @@ class TestDropPlayerItemsOnDeath:
     ):
         """Death should drop all equipped items."""
         player = player_for_ground_items
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_sword")
 
         await give_player_skill_level(session, gsm, player.id, "attack", 1)
         
@@ -762,8 +762,8 @@ class TestDropPlayerItemsOnDeath:
     ):
         """Death should drop inventory and equipment."""
         player = player_for_ground_items
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
-        ore = await ItemService.get_item_by_name(session, "copper_ore")
+        sword = await ItemService.get_item_by_name("bronze_sword")
+        ore = await ItemService.get_item_by_name("copper_ore")
 
         await give_player_skill_level(session, gsm, player.id, "attack", 1)
         
@@ -822,8 +822,8 @@ class TestGetItemsAtPosition:
     ):
         """Should return all items at position."""
         player = player_for_ground_items
-        sword = await ItemService.get_item_by_name(session, "bronze_sword")
-        ore = await ItemService.get_item_by_name(session, "copper_ore")
+        sword = await ItemService.get_item_by_name("bronze_sword")
+        ore = await ItemService.get_item_by_name("copper_ore")
 
         await GroundItemService.create_ground_item(
             item_id=sword.id, map_id="testmap", x=10, y=10, dropped_by=player.id
