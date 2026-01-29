@@ -110,7 +110,7 @@ class GSMAtomicOperations:
         Returns:
             True if update was successful, False otherwise
         """
-        redis_ops = self._get_redis_ops()
+        valkey_ops = self._get_valkey_ops()
         
         async def _hp_operation(tx):
             player_key = f"player:{player_id}"
@@ -146,7 +146,7 @@ class GSMAtomicOperations:
             return True
         
         try:
-            async with redis_ops.transaction(f"hp_update_player_{player_id}") as tx:
+            async with valkey_ops.transaction(f"hp_update_player_{player_id}") as tx:
                 return await _hp_operation(tx)
                 
         except Exception as e:
@@ -179,7 +179,7 @@ class GSMAtomicOperations:
         Returns:
             True if update was successful, False otherwise
         """
-        redis_ops = self._get_redis_ops()
+        valkey_ops = self._get_valkey_ops()
         
         async def _position_operation(tx):
             player_key = f"player:{player_id}"
@@ -208,7 +208,7 @@ class GSMAtomicOperations:
             return True
         
         try:
-            async with redis_ops.transaction(f"position_update_player_{player_id}") as tx:
+            async with valkey_ops.transaction(f"position_update_player_{player_id}") as tx:
                 return await _position_operation(tx)
                 
         except Exception as e:

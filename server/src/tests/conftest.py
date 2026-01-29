@@ -36,6 +36,64 @@ from server.src.services.game_state_manager import (
 logger = logging.getLogger(__name__)
 
 
+class FakeValkeyTransaction:
+    """
+    Transaction wrapper for FakeValkey that queues operations for atomic execution.
+    
+    Mimics the behavior of real Valkey transactions by:
+    - Queuing operations during the transaction
+    - Executing all operations atomically when exec() is called
+    - Supporting the main operations used by GSM atomic operations
+    """
+    
+    def __init__(self, valkey_instance):
+        self.valkey = valkey_instance
+        self.queued_operations = []
+    
+    async def hset(self, key: str, mapping: Dict[str, str]) -> None:
+        """Queue a hash set operation."""
+        self.queued_operations.append(('hset', key, mapping))
+    
+    async def set(self, key: str, value: str) -> None:
+        """Queue a string set operation."""
+        self.queued_operations.append(('set', key, value))
+    
+    async def sadd(self, key: str, members: list) -> None:
+        """Queue a set add operation."""
+        self.queued_operations.append(('sadd', key, members))
+    
+    async def hdel(self, key: str, fields: list) -> None:
+        """Queue a hash delete operation."""
+        self.queued_operations.append(('hdel', key, fields))
+    
+    async def delete(self, keys: list | str) -> None:
+        """Queue a key delete operation."""
+        self.queued_operations.append(('delete', keys))
+    
+    async def incr(self, key: str) -> None:
+        """Queue an increment operation."""
+        self.queued_operations.append(('incr', key))
+    
+    async def exec(self) -> list:
+        """Execute all queued operations atomically and return results."""
+        results = []
+        for operation, *args in self.queued_operations:
+            if operation == 'hset':
+                result = await self.valkey.hset(args[0], args[1])
+            elif operation == 'set':
+                result = await self.valkey.set(args[0], args[1])
+            elif operation == 'sadd':
+                result = await self.valkey.sadd(args[0], args[1])
+            elif operation == 'hdel':
+                result = await self.valkey.hdel(args[0], args[1])
+            elif operation == 'delete':
+                result = await self.valkey.delete(args[0])
+            elif operation == 'incr':
+                result = await self.valkey.incr(args[0])
+            results.append(result)
+        return results
+
+
 # Worker Detection and Database URL Generation
 def get_worker_id() -> str:
     """
@@ -274,6 +332,10 @@ class FakeValkey:
         if (key in self._data or key in self._string_data or key in self._set_data):
             return 1
         return 0
+    
+    def multi(self):
+        """Start a transaction and return a transaction object."""
+        return FakeValkeyTransaction(self)
     
     def clear(self):
         """Clear all data (useful between tests)."""

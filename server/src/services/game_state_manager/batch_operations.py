@@ -94,6 +94,10 @@ class GSMBatchOps:
                 
             dirty_players = [int(p.decode() if isinstance(p, bytes) else p) for p in dirty_players_raw]
             
+            # Get atomic operations for coordinated transactions
+            from server.src.core.concurrency import ValkeyAtomicOperations
+            atomic_ops = ValkeyAtomicOperations(self.valkey)
+            
             async with self._gsm._db_session() as db:
                 # Import here to avoid circular imports
                 from server.src.models.player import Player
@@ -121,10 +125,13 @@ class GSMBatchOps:
                             player.map_id = position_data["map_id"]
                             player.current_hp = hp_data["current_hp"]
                 
+                # Commit database changes FIRST
                 await db.commit()
-                
-                # Clear dirty tracking
-                await self.valkey.delete(["dirty:position"])
+            
+            # Clear dirty flags atomically AFTER successful database commit
+            async with atomic_ops.transaction("position_sync_cleanup") as tx:
+                # Clear all position flags at once
+                await tx.delete(["dirty:position"])
                 
             logger.debug(
                 "Synced player positions",
@@ -146,6 +153,10 @@ class GSMBatchOps:
                 return
                 
             dirty_players = [int(p.decode() if isinstance(p, bytes) else p) for p in dirty_players_raw]
+            
+            # Get atomic operations for coordinated transactions
+            from server.src.core.concurrency import ValkeyAtomicOperations
+            atomic_ops = ValkeyAtomicOperations(self.valkey)
             
             async with self._gsm._db_session() as db:
                 from server.src.models.item import PlayerInventory
@@ -171,13 +182,16 @@ class GSMBatchOps:
                 if inventory_records:
                     await db.execute(pg_insert(PlayerInventory).values(inventory_records))
                 
+                # Commit database changes FIRST
                 await db.commit()
-                
-                # Clear dirty flags for processed players
+            
+            # Clear dirty flags atomically AFTER successful database commit
+            # Use atomic transaction to ensure all flags are cleared together
+            async with atomic_ops.transaction("inventory_sync_cleanup") as tx:
                 for player_id in dirty_players:
-                    await self.valkey.srem("dirty:inventory", str(player_id))
+                    await tx.srem("dirty:inventory", str(player_id))
                 
-                logger.debug("Inventory sync completed", extra={"player_count": len(dirty_players)})
+            logger.debug("Inventory sync completed", extra={"player_count": len(dirty_players)})
             
         except Exception as e:
             logger.error(
@@ -197,6 +211,10 @@ class GSMBatchOps:
                 return
                 
             dirty_players = [int(p.decode() if isinstance(p, bytes) else p) for p in dirty_players_raw]
+            
+            # Get atomic operations for coordinated transactions
+            from server.src.core.concurrency import ValkeyAtomicOperations
+            atomic_ops = ValkeyAtomicOperations(self.valkey)
             
             async with self._gsm._db_session() as db:
                 from server.src.models.item import PlayerEquipment
@@ -221,13 +239,15 @@ class GSMBatchOps:
                 if equipment_records:
                     await db.execute(pg_insert(PlayerEquipment).values(equipment_records))
                 
+                # Commit database changes FIRST
                 await db.commit()
-                
-                # Clear dirty flags for processed players
+            
+            # Clear dirty flags atomically AFTER successful database commit
+            async with atomic_ops.transaction("equipment_sync_cleanup") as tx:
                 for player_id in dirty_players:
-                    await self.valkey.srem("dirty:equipment", str(player_id))
+                    await tx.srem("dirty:equipment", str(player_id))
                 
-                logger.debug("Equipment sync completed", extra={"player_count": len(dirty_players)})
+            logger.debug("Equipment sync completed", extra={"player_count": len(dirty_players)})
             
         except Exception as e:
             logger.error(
@@ -247,6 +267,10 @@ class GSMBatchOps:
                 return
                 
             dirty_players = [int(p.decode() if isinstance(p, bytes) else p) for p in dirty_players_raw]
+            
+            # Get atomic operations for coordinated transactions
+            from server.src.core.concurrency import ValkeyAtomicOperations
+            atomic_ops = ValkeyAtomicOperations(self.valkey)
             
             async with self._gsm._db_session() as db:
                 from server.src.models.skill import PlayerSkill
@@ -271,13 +295,15 @@ class GSMBatchOps:
                 if skills_records:
                     await db.execute(pg_insert(PlayerSkill).values(skills_records))
                 
+                # Commit database changes FIRST
                 await db.commit()
-                
-                # Clear dirty flags for processed players
+            
+            # Clear dirty flags atomically AFTER successful database commit
+            async with atomic_ops.transaction("skills_sync_cleanup") as tx:
                 for player_id in dirty_players:
-                    await self.valkey.srem("dirty:skills", str(player_id))
+                    await tx.srem("dirty:skills", str(player_id))
                 
-                logger.debug("Skills sync completed", extra={"player_count": len(dirty_players)})
+            logger.debug("Skills sync completed", extra={"player_count": len(dirty_players)})
             
         except Exception as e:
             logger.error(
@@ -298,6 +324,10 @@ class GSMBatchOps:
                 return
                 
             dirty_maps = [m.decode() if isinstance(m, bytes) else m for m in dirty_maps_raw]
+            
+            # Get atomic operations for coordinated transactions
+            from server.src.core.concurrency import ValkeyAtomicOperations
+            atomic_ops = ValkeyAtomicOperations(self.valkey)
             
             async with self._gsm._db_session() as db:
                 from server.src.models.item import GroundItem
@@ -329,13 +359,15 @@ class GSMBatchOps:
                         if ground_item_records:
                             await db.execute(pg_insert(GroundItem).values(ground_item_records))
                 
+                # Commit database changes FIRST
                 await db.commit()
-                
-                # Clear dirty flags for processed maps
+            
+            # Clear dirty flags atomically AFTER successful database commit
+            async with atomic_ops.transaction("ground_items_sync_cleanup") as tx:
                 for map_id in dirty_maps:
-                    await self.valkey.srem("dirty:ground_items", map_id)
+                    await tx.srem("dirty:ground_items", map_id)
                 
-                logger.debug("Ground items sync completed", extra={"map_count": len(dirty_maps)})
+            logger.debug("Ground items sync completed", extra={"map_count": len(dirty_maps)})
             
         except Exception as e:
             logger.error(

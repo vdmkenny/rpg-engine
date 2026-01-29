@@ -334,7 +334,7 @@ class GameStateManager:
     
     async def get_player_position(self, player_id: int) -> Optional[Dict[str, Any]]:
         """
-        Get player's position from Valkey.
+        Get player position from game session cache.
         
         Args:
             player_id: Player's database ID
@@ -342,7 +342,19 @@ class GameStateManager:
         Returns:
             Dict with x, y, map_id, last_movement_time or None if not found
         """
-        if not self._valkey or not self.is_online(player_id):
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Position access not available in database-only mode", extra={"player_id": player_id})
+            return None
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for position access", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
             return None
         
         key = PLAYER_KEY.format(player_id=player_id)
@@ -371,7 +383,19 @@ class GameStateManager:
         Returns:
             Dict with current_hp, max_hp or None if not found
         """
-        if not self._valkey or not self.is_online(player_id):
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("HP access not available in database-only mode", extra={"player_id": player_id})
+            return None
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for HP access", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
             return None
         
         key = PLAYER_KEY.format(player_id=player_id)
@@ -396,7 +420,19 @@ class GameStateManager:
             current_hp: Current HP value
             max_hp: Max HP value (optional, only updates if provided)
         """
-        if not self._valkey or not self.is_online(player_id):
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("HP updates not available in database-only mode", extra={"player_id": player_id})
+            return
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for HP update", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
             return
         
         key = PLAYER_KEY.format(player_id=player_id)
@@ -417,7 +453,19 @@ class GameStateManager:
         Returns:
             Dict with all player state or None if not found
         """
-        if not self._valkey or not self.is_online(player_id):
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Full state access not available in database-only mode", extra={"player_id": player_id})
+            return None
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for state access", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
             return None
         
         key = PLAYER_KEY.format(player_id=player_id)
@@ -467,7 +515,19 @@ class GameStateManager:
             max_hp: Maximum HP
             update_movement_time: Whether to update last_move_time (default True)
         """
-        if not self._valkey or not self.is_online(player_id):
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("State updates not available in database-only mode", extra={"player_id": player_id})
+            return
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for state update", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
             return
         
         import time
@@ -513,14 +573,18 @@ class GameStateManager:
         """
         from server.src.core.config import settings
         
-        # Retrieve inventory data for game session
-        if not settings.USE_VALKEY or not self._valkey:
-            if not settings.USE_VALKEY:
-                logger.debug("Retrieving inventory from persistent storage", extra={"player_id": player_id})
-            else:
-                logger.warning("Cache unavailable, retrieving from persistent storage", extra={"player_id": player_id})
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Using database-only mode for inventory access", extra={"player_id": player_id})
             return await self.get_inventory_offline(player_id)
         
+        # Valkey mode - fail fast if unavailable  
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for inventory access", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Valkey operations (no fallback)
         key = INVENTORY_KEY.format(player_id=player_id)
         raw = await self._valkey.hgetall(key)
         
@@ -597,15 +661,19 @@ class GameStateManager:
         """
         from server.src.core.config import settings
         
-        # Retrieve slot data for player session
-        if not settings.USE_VALKEY or not self._valkey:
-            if not settings.USE_VALKEY:
-                logger.debug("Retrieving inventory slot from persistent storage", extra={"player_id": player_id, "slot": slot})
-            else:
-                logger.warning("Cache unavailable, retrieving slot from persistent storage", extra={"player_id": player_id, "slot": slot})
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Using database-only mode for inventory slot access", extra={"player_id": player_id, "slot": slot})
             inventory_data = await self.get_inventory_offline(player_id)
             return inventory_data.get(slot)
         
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for inventory slot access", 
+                        extra={"player_id": player_id, "slot": slot})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Valkey operations (no fallback)
         key = INVENTORY_KEY.format(player_id=player_id)
         raw = await self._valkey.hget(key, str(slot))
         
@@ -650,16 +718,19 @@ class GameStateManager:
         """
         from server.src.core.config import settings
         
-        # Handle inventory update for player session
-        if not settings.USE_VALKEY or not self._valkey:
-            if not settings.USE_VALKEY:
-                logger.debug("Updating inventory in persistent storage", extra={"player_id": player_id, "slot": slot})
-            else:
-                logger.warning("Cache unavailable, updating in persistent storage", extra={"player_id": player_id, "slot": slot})
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Using database-only mode for inventory update", extra={"player_id": player_id, "slot": slot})
             await self.set_inventory_slot_offline(player_id, slot, item_id, quantity, durability)
             return
         
-        # Ensure player data is available for session update
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for inventory update", 
+                        extra={"player_id": player_id, "slot": slot})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Valkey operations (no fallback)
         await self.get_inventory(player_id)
         
         key = INVENTORY_KEY.format(player_id=player_id)
@@ -680,7 +751,19 @@ class GameStateManager:
             player_id: Player's database ID
             slot: Inventory slot number
         """
-        if not self._valkey or not self.is_online(player_id):
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Inventory operations not available in database-only mode", extra={"player_id": player_id})
+            return
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for inventory operation", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
             return
         
         key = INVENTORY_KEY.format(player_id=player_id)
@@ -728,7 +811,19 @@ class GameStateManager:
         Args:
             player_id: Player's database ID
         """
-        if not self._valkey or not self.is_online(player_id):
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Inventory operations not available in database-only mode", extra={"player_id": player_id})
+            return
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for inventory operation", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
             return
         
         key = INVENTORY_KEY.format(player_id=player_id)
@@ -885,8 +980,20 @@ class GameStateManager:
     
     async def get_equipment(self, player_id: int) -> Dict[str, Dict]:
         """Get player's equipment for game session."""
-        if not self._valkey or not self.is_online(player_id):
-            # Retrieve equipment data for offline players
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Using database-only mode for equipment access", extra={"player_id": player_id})
+            return await self.get_equipment_offline(player_id)
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for equipment access", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
+            # For offline players in Valkey mode, load from database
             return await self.get_equipment_offline(player_id)
         
         key = EQUIPMENT_KEY.format(player_id=player_id)
@@ -905,7 +1012,19 @@ class GameStateManager:
     
     async def get_equipment_slot(self, player_id: int, slot: str) -> Optional[Dict[str, Any]]:
         """Get item in specific equipment slot."""
-        if not self._valkey or not self.is_online(player_id):
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Equipment slot access not available in database-only mode", extra={"player_id": player_id})
+            return None
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for equipment slot access", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
             return None
         
         key = EQUIPMENT_KEY.format(player_id=player_id)
@@ -921,7 +1040,19 @@ class GameStateManager:
     
     async def set_equipment_slot(self, player_id: int, slot: str, item_id: int, quantity: int, durability: float) -> None:
         """Set item in equipment slot."""
-        if not self._valkey or not self.is_online(player_id):
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Equipment operations not available in database-only mode", extra={"player_id": player_id})
+            return
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for equipment operation", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
             return
         
         key = EQUIPMENT_KEY.format(player_id=player_id)
@@ -932,7 +1063,19 @@ class GameStateManager:
     
     async def delete_equipment_slot(self, player_id: int, slot: str) -> None:
         """Delete item from equipment slot."""
-        if not self._valkey or not self.is_online(player_id):
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Equipment operations not available in database-only mode", extra={"player_id": player_id})
+            return
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for equipment operation", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
             return
         
         key = EQUIPMENT_KEY.format(player_id=player_id)
@@ -941,7 +1084,19 @@ class GameStateManager:
     
     async def clear_equipment(self, player_id: int) -> None:
         """Clear all equipment."""
-        if not self._valkey or not self.is_online(player_id):
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Equipment operations not available in database-only mode", extra={"player_id": player_id})
+            return
+        
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for equipment operation", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Check if player is online
+        if not self.is_online(player_id):
             return
         
         key = EQUIPMENT_KEY.format(player_id=player_id)
@@ -954,103 +1109,108 @@ class GameStateManager:
     
     async def get_skill(self, player_id: int, skill_name: str) -> Optional[Dict[str, Any]]:
         """Get specific skill data for player session."""
-        # Retrieve skill data for player session
-        if self._valkey and settings.USE_VALKEY:
-            try:
-                key = SKILLS_KEY.format(player_id=player_id)
-                raw = await self._valkey.hget(key, skill_name.lower())
-                
-                if raw is not None:
-                    try:
-                        return json.loads(_decode_bytes(raw))
-                    except json.JSONDecodeError as e:
-                        logger.warning("Invalid skill data in session cache", extra={"player_id": player_id, "skill": skill_name, "error": str(e)})
-                        # Continue to load from persistent storage
-                
-                # Load all skills and cache them for session
-                skills_data = await self.get_skills_offline(player_id)
-                if skills_data:
-                    # Cache all skills for session performance
-                    await self._cache_skills_in_valkey(player_id, skills_data)
-                    return skills_data.get(skill_name.lower())
-                
-                return None
-                
-            except Exception as e:
-                # Cache unavailable - retrieve from persistent storage
-                logger.warning("Cache unavailable for skill access, using persistent storage", extra={"player_id": player_id, "error": str(e)})
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Using database-only mode for skill access", extra={"player_id": player_id, "skill": skill_name})
+            skills_data = await self.get_skills_offline(player_id)
+            return skills_data.get(skill_name.lower())
         
-        # Retrieve skills from persistent storage
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for skill access", 
+                        extra={"player_id": player_id, "skill": skill_name})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Valkey operations (no fallback)
+        key = SKILLS_KEY.format(player_id=player_id)
+        raw = await self._valkey.hget(key, skill_name.lower())
+        
+        if raw is not None:
+            try:
+                return json.loads(_decode_bytes(raw))
+            except json.JSONDecodeError as e:
+                logger.warning("Invalid skill data in session cache", extra={"player_id": player_id, "skill": skill_name, "error": str(e)})
+                # Continue to load from persistent storage
+        
+        # Load all skills and cache them for session
         skills_data = await self.get_skills_offline(player_id)
-        return skills_data.get(skill_name.lower())
+        if skills_data:
+            # Cache all skills for session performance
+            await self._cache_skills_in_valkey(player_id, skills_data)
+            return skills_data.get(skill_name.lower())
+        
+        return None
     
     async def get_all_skills(self, player_id: int) -> Dict[str, Dict]:
         """Get all skills for a player with session data loading."""
-        # Retrieve skills for player session
-        if self._valkey and settings.USE_VALKEY:
-            try:
-                key = SKILLS_KEY.format(player_id=player_id)
-                raw = await self._valkey.hgetall(key)
-                
-                if raw:
-                    # Parse existing session data
-                    skills = {}
-                    for skill_name_bytes, skill_data_bytes in raw.items():
-                        try:
-                            skill_name = _decode_bytes(skill_name_bytes)
-                            skill_data = json.loads(_decode_bytes(skill_data_bytes))
-                            skills[skill_name] = skill_data
-                        except json.JSONDecodeError as e:
-                            logger.warning("Invalid skill data in session cache", extra={"player_id": player_id, "error": str(e)})
-                    return skills
-                
-                # Load from persistent storage and cache
-                logger.debug("Loading player skills from persistent storage", extra={"player_id": player_id})
-                skills_data = await self.get_skills_offline(player_id)
-                
-                # Cache for session performance
-                if skills_data:
-                    await self._cache_skills_in_valkey(player_id, skills_data)
-                
-                return skills_data
-                
-            except Exception as e:
-                # Cache unavailable - retrieve from persistent storage
-                logger.warning("Cache unavailable for skills access, using persistent storage", extra={"player_id": player_id, "error": str(e)})
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Using database-only mode for skills access", extra={"player_id": player_id})
+            return await self.get_skills_offline(player_id)
         
-        # Retrieve skills from persistent storage
-        return await self.get_skills_offline(player_id)
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for skills access", 
+                        extra={"player_id": player_id})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Valkey operations (no fallback)
+        key = SKILLS_KEY.format(player_id=player_id)
+        raw = await self._valkey.hgetall(key)
+        
+        if raw:
+            # Parse existing session data
+            skills = {}
+            for skill_name_bytes, skill_data_bytes in raw.items():
+                try:
+                    skill_name = _decode_bytes(skill_name_bytes)
+                    skill_data = json.loads(_decode_bytes(skill_data_bytes))
+                    skills[skill_name] = skill_data
+                except json.JSONDecodeError as e:
+                    logger.warning("Invalid skill data in session cache", extra={"player_id": player_id, "error": str(e)})
+            return skills
+        
+        # Load skills from persistent storage and cache
+        skills_data = await self.get_skills_offline(player_id)
+        
+        # Cache for session performance
+        if skills_data:
+            await self._cache_skills_in_valkey(player_id, skills_data)
+        
+        return skills_data
     
     async def set_skill(self, player_id: int, skill_name: str, skill_id: int, level: int, experience: int) -> None:
         """Update skill data for player session."""
         from server.src.core.config import settings
         
-        # Update skill data for player session
-        if self._valkey and settings.USE_VALKEY:
-            try:
-                key = SKILLS_KEY.format(player_id=player_id)
-                skill_data = {"skill_id": skill_id, "level": level, "experience": experience}
-                
-                await self._valkey.hset(key, {skill_name.lower(): json.dumps(skill_data)})
-                
-                # Manage session cache lifetime for offline players
-                if not self.is_online(player_id):
-                    await self._valkey.expire(key, settings.OFFLINE_PLAYER_CACHE_TTL)
-                
-                # Mark for persistent storage sync if player is online
-                if self.is_online(player_id):
-                    await self._valkey.sadd(DIRTY_SKILLS_KEY, [str(player_id)])
-                else:
-                    # For offline players, also update persistent storage immediately
-                    await self._update_skill_in_database(player_id, skill_name, skill_id, level, experience)
-                
-                return
-                
-            except Exception as e:
-                logger.warning("Cache unavailable for skill update, using persistent storage", extra={"player_id": player_id, "error": str(e)})
+        # Configuration-based mode selection
+        if not settings.USE_VALKEY:
+            logger.debug("Using database-only mode for skill update", extra={"player_id": player_id, "skill": skill_name})
+            await self._update_skill_in_database(player_id, skill_name, skill_id, level, experience)
+            return
         
-        # Update skill in persistent storage
-        await self._update_skill_in_database(player_id, skill_name, skill_id, level, experience)
+        # Valkey mode - fail fast if unavailable
+        if not self._valkey:
+            logger.error("Valkey client required but unavailable for skill update", 
+                        extra={"player_id": player_id, "skill": skill_name})
+            raise RuntimeError("Cache infrastructure unavailable - check Valkey connection")
+        
+        # Valkey operations (no fallback)
+        key = SKILLS_KEY.format(player_id=player_id)
+        skill_data = {"skill_id": skill_id, "level": level, "experience": experience}
+        
+        await self._valkey.hset(key, {skill_name.lower(): json.dumps(skill_data)})
+        
+        # Manage session cache lifetime for offline players
+        if not self.is_online(player_id):
+            await self._valkey.expire(key, settings.OFFLINE_PLAYER_CACHE_TTL)
+        
+        # Mark for persistent storage sync if player is online
+        if self.is_online(player_id):
+            await self._valkey.sadd(DIRTY_SKILLS_KEY, [str(player_id)])
+        else:
+            # For offline players, also update persistent storage immediately
+            await self._update_skill_in_database(player_id, skill_name, skill_id, level, experience)
 
     async def _update_skill_in_database(self, player_id: int, skill_name: str, skill_id: int, level: int, experience: int) -> None:
         """Update skill data in persistent storage."""
