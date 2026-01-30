@@ -402,7 +402,7 @@ class TestEquipFromInventory:
         equipped_weapon = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.WEAPON
         )
         assert equipped_weapon is not None
-        assert equipped_weapon.item.is_two_handed is True
+        assert equipped_weapon.item_data.get("is_two_handed") is True
 
         # Add shield and equip it
         await InventoryService.add_item(player.id, shield.id)
@@ -844,9 +844,9 @@ class TestGetAllEquippedItems:
         items = await EquipmentService.get_all_equipped_items(player.id)
 
         assert len(items) == 1
-        eq, item = items[0]
+        eq = items[0]
         assert eq.item_id == sword.id
-        assert item.display_name == "Bronze Sword"
+        assert eq.item_data.get("display_name") == "Bronze Sword"
 
 
 # =============================================================================
