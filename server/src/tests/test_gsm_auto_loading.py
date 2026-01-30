@@ -96,7 +96,8 @@ class TestGSMAutoLoadingCore:
         async def mock_expire(key, seconds):
             nonlocal expire_called
             expire_called = True
-            assert seconds == 3600, "Should set 1 hour TTL"
+            from server.src.core.config import settings
+            assert seconds == settings.OFFLINE_PLAYER_CACHE_TTL, f"Should set TTL to {settings.OFFLINE_PLAYER_CACHE_TTL} seconds"
             return await original_expire(key, seconds)
         
         gsm._valkey.expire = mock_expire
@@ -156,7 +157,7 @@ class TestGSMValkeyFallback:
     """Test GSM behavior when Valkey is unavailable or disabled."""
 
     async def test_valkey_unavailable_fallback(self, session, gsm: GameStateManager, create_offline_player):
-        """Test database fallback when Valkey is unavailable."""
+        """Test that GSM fails fast when Valkey is unavailable (no fallback)."""
         # Create player first to satisfy foreign key constraints
         player_id = 200
         await create_offline_player(player_id, username=f"fallback_player_{player_id}")
@@ -174,13 +175,9 @@ class TestGSMValkeyFallback:
         gsm._valkey = None
         
         try:
-            # Should fallback to database without error
-            inventory = await gsm.get_inventory(player_id)
-            
-            # Verify data loaded from database
-            assert len(inventory) == 1
-            assert inventory[0]["item_id"] == 1
-            assert inventory[0]["quantity"] == 3
+            # Should fail fast with RuntimeError (no fallback in current architecture)
+            with pytest.raises(RuntimeError, match="Cache infrastructure unavailable"):
+                await gsm.get_inventory(player_id)
         finally:
             # Restore Valkey
             gsm._valkey = original_valkey

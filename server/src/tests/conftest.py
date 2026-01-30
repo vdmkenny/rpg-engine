@@ -688,6 +688,41 @@ async def items_synced(gsm: GameStateManager) -> None:
     await ItemService.sync_items_to_db()
 
 
+@pytest_asyncio.fixture(scope="function")  
+async def map_manager_loaded() -> None:
+    """
+    Global fixture to ensure maps are loaded for tests that need spawn positions.
+    
+    Creates a minimal mock map instead of loading real files to avoid test hangs.
+    """
+    from server.src.services.map_service import get_map_manager
+    
+    map_manager = get_map_manager()
+    
+    # Create a minimal mock map for testing
+    # We'll just add it directly to the maps dict
+    class MockTileMap:
+        def __init__(self):
+            self.width = 10
+            self.height = 10
+            self.tile_width = 32 
+            self.tile_height = 32
+            
+        def get_spawn_position(self):
+            return (5, 5)  # Center of mock map
+            
+        def is_walkable(self, x, y):
+            return True  # Everything is walkable in mock
+            
+        def get_chunks_around_position(self, x, y, radius):
+            return []  # No chunks in mock
+    
+    # Add the mock map if no real maps are loaded
+    if not map_manager.maps:
+        map_manager.maps["samplemap"] = MockTileMap()
+        logger.info("Mock map loaded for testing")
+
+
 @pytest_asyncio.fixture(scope="function")
 async def skills_synced(gsm: GameStateManager) -> None:
     """
@@ -748,7 +783,6 @@ def create_test_player(
     ) -> Player:
         from server.src.core.security import get_password_hash
         from server.src.models.player import Player
-        from server.src.services.skill_service import SkillService
         
         # Create player record using the same session as HTTP endpoints
         # This ensures test players are visible to HTTP endpoint calls
@@ -767,9 +801,9 @@ def create_test_player(
         session.add(player)
         await session.flush()  # Get player ID
         
-        # Initialize skills using SkillService
+        # Initialize skills using GSM with session sharing to avoid isolation issues
         try:
-            await SkillService.grant_all_skills_to_player(player.id)
+            await gsm.grant_all_skills_to_player_offline(player.id, session)
         except Exception:
             # Skills may not be available in test environment, that's ok
             pass

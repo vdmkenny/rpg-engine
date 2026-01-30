@@ -11,31 +11,37 @@ Covers:
 import pytest
 from datetime import timedelta
 from httpx import AsyncClient
+import uuid
 
 
 class TestRegistration:
     """Tests for the /auth/register endpoint."""
 
     @pytest.mark.asyncio
-    async def test_register_success(self, client: AsyncClient):
+    async def test_register_success(self, client: AsyncClient, map_manager_loaded):
         """Valid registration should create a new player."""
+        unique_username = f"player_{uuid.uuid4().hex[:8]}"
         response = await client.post(
             "/auth/register",
-            json={"username": "newplayer", "password": "securepass123"},
+            json={"username": unique_username, "password": "securepass123"},
         )
         
-        assert response.status_code == 201
+        assert response.status_code == 201, f"Registration failed with status {response.status_code}: {response.text}"
         data = response.json()
-        assert data["username"] == "newplayer"
+        assert data["username"] == unique_username
         assert "id" in data
         assert "password" not in data
         assert "hashed_password" not in data
 
     @pytest.mark.asyncio
-    async def test_register_duplicate_username(self, client: AsyncClient, create_test_player):
+    async def test_register_duplicate_username(self, client: AsyncClient, map_manager_loaded):
         """Registration with an existing username should fail."""
-        # Create a player first
-        await create_test_player("existinguser", "password123")
+        # Create a player first via API
+        first_response = await client.post(
+            "/auth/register",
+            json={"username": "existinguser", "password": "password123"},
+        )
+        assert first_response.status_code == 201  # Ensure first creation succeeds
         
         # Try to register with the same username
         response = await client.post(
@@ -92,8 +98,8 @@ class TestRegistration:
         # Pydantic validation error for min_length
 
     @pytest.mark.asyncio
-    async def test_register_password_minimum_length(self, client: AsyncClient):
-        """Password with exactly 8 characters should be accepted."""
+    async def test_register_password_minimum_length(self, client: AsyncClient, map_manager_loaded):
+        """Password at minimum length should work."""
         response = await client.post(
             "/auth/register",
             json={"username": "minpassuser", "password": "exactly8"},
@@ -145,8 +151,8 @@ class TestRegistration:
         assert response.status_code in (201, 400, 422)
 
     @pytest.mark.asyncio
-    async def test_register_unicode_username(self, client: AsyncClient):
-        """Unicode characters in username should be handled properly."""
+    async def test_register_unicode_username(self, client: AsyncClient, map_manager_loaded):
+        """Unicode usernames should be supported."""
         response = await client.post(
             "/auth/register",
             json={"username": "ユーザー名", "password": "password123"},
