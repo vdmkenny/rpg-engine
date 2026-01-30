@@ -21,6 +21,7 @@ from server.src.core.metrics import (
 )
 from server.src.services.map_service import get_map_manager
 from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.visibility_service import get_visibility_service
 from server.src.core.database import AsyncSessionLocal
 from common.src.protocol import (
     WSMessage,
@@ -38,11 +39,6 @@ VISIBILITY_RADIUS = 1
 
 # Track player chunk positions for chunk updates
 player_chunk_positions: Dict[str, Tuple[int, int]] = {}
-
-# Track last known visible state per player for diff calculation
-# Contains both players and ground items in a nested structure:
-# {username: {"players": {other_username: {...}}, "ground_items": {ground_item_id: {...}}}}
-player_visible_state: Dict[str, Dict[str, Dict]] = {}
 
 # Global tick counter (incremented every game tick)
 _global_tick_counter: int = 0
@@ -320,16 +316,14 @@ async def send_diff_update(
         )
 
 
-def cleanup_disconnected_player(username: str) -> None:
+async def cleanup_disconnected_player(username: str) -> None:
     """Clean up state tracking for a disconnected player."""
     player_chunk_positions.pop(username, None)
-    player_visible_state.pop(username, None)
     player_login_ticks.pop(username, None)
     
-    # Also remove this player from other players' visible player state
-    for other_state in player_visible_state.values():
-        players_dict = other_state.get("players", {})
-        players_dict.pop(username, None)
+    # Remove player from VisibilityService
+    visibility_service = get_visibility_service()
+    await visibility_service.remove_player(username)
 
 
 def register_player_login(username: str) -> None:
@@ -386,15 +380,17 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 player_usernames = list(map_connections.keys())
                 
                 gsm = get_game_state_manager()
+                visibility_service = get_visibility_service()
                 
-                # Fetch all player states for this map in a single batch operation
-                all_players_data = await gsm.state_access.get_multiple_players_by_usernames(player_usernames)
-                
-                # Process player data and handle HP regeneration
+                # Process player data and collect HP regeneration updates
                 all_player_data: List[Dict[str, Any]] = []
                 player_positions: Dict[str, Tuple[int, int]] = {}
+                hp_updates: List[tuple[str, int]] = []  # Batch HP updates
                 
-                for username, data in all_players_data.items():
+                # Fetch player states individually (avoiding broken batch methods)
+                for username in player_usernames:
+                    # Get player state using existing individual method
+                    data = await gsm.state_access.get_player_state_by_username(username)
                     if data:
                         x = int(data.get("x", 0))
                         y = int(data.get("y", 0))
@@ -411,17 +407,9 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         )
                         
                         if should_regen:
-                            current_hp = min(current_hp + 1, max_hp)
-                            await gsm.state_access.set_player_hp_by_username(username, current_hp)
-                            logger.debug(
-                                "HP regenerated",
-                                extra={
-                                    "username": username,
-                                    "new_hp": current_hp,
-                                    "max_hp": max_hp,
-                                    "ticks_since_login": ticks_since_login,
-                                },
-                            )
+                            new_hp = min(current_hp + 1, max_hp)
+                            hp_updates.append((username, new_hp))
+                            current_hp = new_hp  # Use updated HP for this tick
                         
                         all_player_data.append({
                             "id": username,
@@ -432,6 +420,10 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             "max_hp": max_hp,
                         })
                         player_positions[username] = (x, y)
+
+                # Execute batch HP regeneration updates
+                if hp_updates:
+                    await gsm.state_access.batch_update_player_hp(hp_updates)
 
                 # For each connected player, compute and send their personalized diff
                 for username in player_usernames:
@@ -450,16 +442,14 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     )
                     
                     # Get ground items visible to this player
-                    # We need the player_id for loot protection check
-                    player_key = f"player:{username}"
-                    player_data = await valkey.hgetall(player_key)
-                    player_id = int(player_data.get(b"player_id", b"0")) if player_data else 0
+                    from ..services.connection_service import ConnectionService
+                    player_id = ConnectionService.get_online_player_id_by_username(username)
                     
                     # Skip ground item processing if player_id is invalid
-                    if player_id <= 0:
+                    if not player_id:
                         current_visible_ground_items = {}
                     else:
-                        # Use GroundItemService for ground item visibility (proper architecture)
+                        # Use GroundItemService for ground item visibility
                         from ..services.ground_item_service import GroundItemService
                         visible_ground_items = await GroundItemService.get_visible_ground_items_raw(
                             player_id=player_id,
@@ -485,30 +475,22 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                                 "is_protected": item.get("is_protected", False),
                             }
                     
-                    # Get last known visible state for this player
-                    last_state = player_visible_state.get(username, {"players": {}, "ground_items": {}})
-                    last_visible_players = last_state.get("players", {})
-                    last_visible_ground_items = last_state.get("ground_items", {})
+                    # Combine players and ground items into single visibility state
+                    combined_visible_entities = {}
                     
-                    # Compute diffs for players and ground items
-                    player_diff = compute_entity_diff(current_visible_players, last_visible_players)
-                    ground_item_diff = compute_ground_item_diff(current_visible_ground_items, last_visible_ground_items)
+                    # Add players with 'player_' prefix to avoid ID conflicts with ground items
+                    for player_username, player_data in current_visible_players.items():
+                        combined_visible_entities[f"player_{player_username}"] = player_data
                     
-                    # Combine diffs
-                    combined_diff = {
-                        "added": player_diff["added"] + ground_item_diff["added"],
-                        "updated": player_diff["updated"] + ground_item_diff["updated"],
-                        "removed": player_diff["removed"] + ground_item_diff["removed"],
-                    }
+                    # Add ground items directly (they already have unique IDs)
+                    for ground_item_id, ground_item_data in current_visible_ground_items.items():
+                        combined_visible_entities[f"ground_item_{ground_item_id}"] = ground_item_data
+                    
+                    # Use VisibilityService to compute diff and update state
+                    diff = await visibility_service.update_player_visible_entities(username, combined_visible_entities)
                     
                     # Send diff update if there are changes
-                    await send_diff_update(username, websocket, combined_diff, map_id)
-                    
-                    # Update stored visible state
-                    player_visible_state[username] = {
-                        "players": current_visible_players,
-                        "ground_items": current_visible_ground_items,
-                    }
+                    await send_diff_update(username, websocket, diff, map_id)
                     
                     # Check if player needs chunk updates
                     await send_chunk_update_if_needed(

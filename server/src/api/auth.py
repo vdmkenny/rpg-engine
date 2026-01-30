@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from server.src.core.database import get_db
 from server.src.core.logging_config import get_logger
+from server.src.core.config import settings
 from server.src.core.metrics import (
     metrics,
     players_registered_total,
@@ -24,6 +25,7 @@ from server.src.schemas.player import PlayerCreate, PlayerPublic
 from server.src.schemas.token import Token
 from server.src.services.map_service import map_manager
 from server.src.services.skill_service import SkillService
+from server.src.services.game_state_manager import get_game_state_manager
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -148,6 +150,28 @@ async def login_for_access_token(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Account is timed out until {player.timeout_until.isoformat()}",
+            )
+
+    # Check server capacity (admins and moderators bypass capacity limits)
+    if player.role not in ["ADMIN", "MODERATOR"]:
+        gsm = get_game_state_manager()
+        current_players = gsm.get_active_player_count()
+        
+        if current_players >= settings.MAX_PLAYERS:
+            logger.warning(
+                "Login attempt rejected due to server capacity",
+                extra={
+                    "username": form_data.username,
+                    "current_players": current_players,
+                    "max_players": settings.MAX_PLAYERS
+                }
+            )
+            metrics.track_auth_attempt("login", "failure")
+            metrics.track_auth_failure("capacity")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Server at capacity ({current_players}/{settings.MAX_PLAYERS} slots occupied). Please try again later.",
+                headers={"Retry-After": "300"}
             )
 
     access_token_expires = timedelta(minutes=30)

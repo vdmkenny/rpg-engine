@@ -1639,7 +1639,7 @@ async def _handle_player_join_broadcast(websocket: WebSocket, username: str, pla
         packed_join = msgpack.packb(player_joined.model_dump(), use_bin_type=True)
         
         # Get all connections on this map and filter out the joining player
-        all_connections = manager.get_all_connections()
+        all_connections = await manager.get_all_connections()
         other_players = [
             conn['username'] for conn in all_connections 
             if conn['map_id'] == map_id and conn['username'] != username
@@ -1696,7 +1696,7 @@ async def _handle_player_disconnect(username: str, player_id: Optional[int], db:
                 packed_left = msgpack.packb(player_left.model_dump(), use_bin_type=True)
                 
                 # Get all connections on this map and filter out the disconnecting player
-                all_connections = manager.get_all_connections()
+                all_connections = await manager.get_all_connections()
                 other_players = [
                     conn['username'] for conn in all_connections 
                     if conn['map_id'] == player_map and conn['username'] != username

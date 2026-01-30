@@ -122,6 +122,23 @@ players_by_map = Gauge(
     "rpg_players_by_map", "Number of players on each map", ["map_id"], registry=REGISTRY
 )
 
+# Server capacity metrics
+server_capacity_max = Gauge(
+    "rpg_server_capacity_max", "Maximum players allowed on server", registry=REGISTRY
+)
+
+server_capacity_utilization_percent = Gauge(
+    "rpg_server_capacity_utilization_percent", "Server utilization percentage", registry=REGISTRY
+)
+
+server_capacity_available = Gauge(
+    "rpg_server_capacity_available", "Available player slots", registry=REGISTRY
+)
+
+server_capacity_over_limit = Gauge(
+    "rpg_server_capacity_over_limit", "Number of players over capacity limit (admin overrides)", registry=REGISTRY
+)
+
 player_movements_total = Counter(
     "rpg_player_movements_total",
     "Total number of player movements",
@@ -365,6 +382,20 @@ class MetricsHelper:
     def set_players_by_map(map_id: str, count: int):
         """Set the number of players on a specific map."""
         players_by_map.labels(map_id=map_id).set(count)
+
+    @staticmethod
+    def update_server_capacity_metrics(current_players: int, max_players: int):
+        """Update all server capacity metrics."""
+        server_capacity_max.set(max_players)
+        
+        # Calculate derived metrics
+        utilization_percent = (current_players / max_players * 100) if max_players > 0 else 0
+        available_slots = max(0, max_players - current_players)
+        over_limit = max(0, current_players - max_players)
+        
+        server_capacity_utilization_percent.set(utilization_percent)
+        server_capacity_available.set(available_slots)
+        server_capacity_over_limit.set(over_limit)
 
     @staticmethod
     def track_auth_attempt(endpoint: str, status: str):

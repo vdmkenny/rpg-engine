@@ -233,6 +233,14 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE: int = int(os.getenv("DB_POOL_RECYCLE", "3600"))
     DB_POOL_PRE_PING: bool = os.getenv("DB_POOL_PRE_PING", "true").lower() in ("true", "1", "yes")
 
+    # Server capacity settings from config.yml
+    MAX_PLAYERS: int = int(
+        os.getenv(
+            "MAX_PLAYERS",
+            str(game_config.get("server", {}).get("capacity", {}).get("max_players", 500))
+        )
+    )
+
     @model_validator(mode="after")
     def validate_jwt_secret(self) -> "Settings":
         """Ensure JWT secret is changed from default in non-development environments."""

@@ -178,6 +178,60 @@ test_engine = None
 TestingSessionLocal = None
 
 
+class FakeValkeyPipeline:
+    """
+    Pipeline for batching Valkey operations.
+    """
+    
+    def __init__(self, valkey_instance):
+        self._valkey = valkey_instance
+        self._commands = []
+    
+    def hset(self, key: str, field: str, value: str):
+        """Queue hset command for batch execution."""
+        self._commands.append(('hset', key, field, value))
+        return self
+    
+    def hgetall(self, key: str):
+        """Queue hgetall command for batch execution."""
+        self._commands.append(('hgetall', key))
+        return self
+    
+    def sadd(self, key: str, member: str):
+        """Queue sadd command for batch execution.""" 
+        self._commands.append(('sadd', key, member))
+        return self
+        
+    async def execute(self):
+        """Execute all queued commands."""
+        results = []
+        for cmd in self._commands:
+            if cmd[0] == 'hset':
+                _, key, field, value = cmd
+                if key not in self._valkey._data:
+                    self._valkey._data[key] = {}
+                self._valkey._data[key][field] = str(value)
+                results.append(1)
+            elif cmd[0] == 'hgetall':
+                _, key = cmd
+                if key not in self._valkey._data:
+                    results.append({})
+                else:
+                    # Return bytes like real Valkey does
+                    results.append({k.encode(): v.encode() for k, v in self._valkey._data[key].items()})
+            elif cmd[0] == 'sadd':
+                _, key, member = cmd
+                if key not in self._valkey._set_data:
+                    self._valkey._set_data[key] = set()
+                if str(member) not in self._valkey._set_data[key]:
+                    self._valkey._set_data[key].add(str(member))
+                    results.append(1)
+                else:
+                    results.append(0)
+        self._commands.clear()
+        return results
+
+
 class FakeValkey:
     """
     In-memory Valkey/Redis implementation for testing.
@@ -336,6 +390,10 @@ class FakeValkey:
     def multi(self):
         """Start a transaction and return a transaction object."""
         return FakeValkeyTransaction(self)
+    
+    def pipeline(self):
+        """Create a pipeline for batch operations (returns itself for simplicity)."""
+        return FakeValkeyPipeline(self)
     
     def clear(self):
         """Clear all data (useful between tests)."""

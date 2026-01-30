@@ -328,6 +328,16 @@ class GameStateManager:
         """Check if a player is online."""
         return player_id in self._online_players
     
+    def get_active_player_count(self) -> int:
+        """
+        Get count of currently active online players.
+        Used for server capacity management and monitoring.
+        
+        Returns:
+            Number of players currently registered as online
+        """
+        return len(self._online_players)
+    
     # =========================================================================
     # PLAYER POSITION & HP
     # =========================================================================

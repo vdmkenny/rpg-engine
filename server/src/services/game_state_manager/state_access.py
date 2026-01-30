@@ -70,12 +70,43 @@ class GSMStateAccess:
             
         await self._gsm.set_player_hp(player_id, current_hp, max_hp)
     
+    async def batch_update_player_hp(
+        self,
+        hp_updates: List[tuple[str, int]]  # List of (username, new_hp) tuples
+    ) -> None:
+        """
+        Batch update HP for multiple players using individual operations.
+        Optimized for HP regeneration processing in game loop.
+        
+        Args:
+            hp_updates: List of (username, new_current_hp) tuples
+        """
+        if not self.valkey or not hp_updates:
+            return
+        
+        # Process each HP update individually (since pipeline isn't available)
+        # TODO: This should be refactored to use player IDs directly instead of username lookups
+        for username, new_hp in hp_updates:
+            # Use ConnectionService to get player ID
+            from ..connection_service import ConnectionService
+            player_id = ConnectionService.get_online_player_id_by_username(username)
+            if player_id:
+                player_key = f"player:{player_id}"
+                await self.valkey.hset(player_key, mapping={"current_hp": str(new_hp)})
+                # Mark dirty for database sync
+                await self.valkey.sadd("dirty:position", [str(player_id)])
+        
+        logger.debug(
+            "Batch HP regeneration completed",
+            extra={"updated_players": len(hp_updates)}
+        )
+    
     async def get_multiple_players_by_usernames(
         self, 
         usernames: List[str]
     ) -> Dict[str, Dict[str, Any]]:
         """
-        Get full state for multiple players by username (for game loop efficiency).
+        Get full state for multiple players by username using individual operations.
         
         Args:
             usernames: List of player usernames
@@ -83,12 +114,24 @@ class GSMStateAccess:
         Returns:
             Dict mapping username to player state
         """
-        if not self.valkey:
+        if not usernames:
             return {}
-            
-        result = {}
+        
+        # Get player IDs from ConnectionService
+        from ..connection_service import ConnectionService
+        username_to_id = {}
         for username in usernames:
-            state = await self.get_player_state_by_username(username)
+            player_id = ConnectionService.get_online_player_id_by_username(username)
+            if player_id:
+                username_to_id[username] = player_id
+        
+        if not username_to_id:
+            return {}
+        
+        # Use individual operations for each player
+        result = {}
+        for username, player_id in username_to_id.items():
+            state = await self._gsm.get_player_full_state(player_id)
             if state:
                 result[username] = state
         

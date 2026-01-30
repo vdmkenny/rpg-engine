@@ -140,6 +140,13 @@ cache:
 
 # Server infrastructure settings
 server:
+  # Player capacity management
+  capacity:
+    # Maximum number of concurrent players allowed
+    # Admins and moderators can always connect, even when at capacity
+    # 0 = unlimited (not recommended for production)
+    max_players: 500
+  
   # Valkey (Redis-compatible) connection settings
   valkey:
     host: "valkey"

@@ -533,7 +533,7 @@ class TestHpRegeneration:
         assert player_login_ticks[test_username] == _global_tick_counter
         
         # Cleanup
-        cleanup_disconnected_player(test_username)
+        await cleanup_disconnected_player(test_username)
         
         assert test_username not in player_login_ticks
 

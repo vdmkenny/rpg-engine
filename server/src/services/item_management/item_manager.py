@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.src.core.config import settings
 from server.src.core.items import EquipmentSlot, ItemCategory
 from server.src.core.logging_config import get_logger
-from server.src.models.item import Item, PlayerInventory, PlayerEquipment
 from server.src.schemas.item import (
     AddItemResult,
     RemoveItemResult,
@@ -145,7 +144,7 @@ class IItemManager(ABC):
         pass
 
     @abstractmethod
-    async def can_equip_item(self, player_id: int, item: Item) -> CanEquipResult:
+    async def can_equip_item(self, player_id: int, item_data: Dict[str, Any]) -> CanEquipResult:
         """Check if player can equip an item (requirements, conflicts)."""
         pass
 
@@ -362,11 +361,11 @@ class ItemManager(IItemManager):
         
         return await EquipmentService.get_total_stats(player_id)
 
-    async def can_equip_item(self, player_id: int, item: Item) -> CanEquipResult:
+    async def can_equip_item(self, player_id: int, item_data: Dict[str, Any]) -> CanEquipResult:
         """Check if player can equip an item."""
         from server.src.services.equipment_service import EquipmentService
         
-        return await EquipmentService.can_equip(player_id, item)
+        return await EquipmentService.can_equip(player_id, item_data)
 
     # Extended functionality for future atomic transactions
     async def _begin_transaction(self) -> str:

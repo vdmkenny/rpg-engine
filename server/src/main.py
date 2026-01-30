@@ -9,7 +9,8 @@ from fastapi import FastAPI, Response
 import msgpack
 from server.src.api import websockets, auth, assets
 from server.src.core.logging_config import setup_logging, get_logger
-from server.src.core.metrics import init_metrics, get_metrics, get_metrics_content_type
+from server.src.core.config import settings
+from server.src.core.metrics import init_metrics, get_metrics, get_metrics_content_type, metrics
 from server.src.services.map_service import get_map_manager
 from server.src.core.database import get_valkey, AsyncSessionLocal
 from server.src.game.game_loop import game_loop, cleanup_disconnected_player
@@ -189,6 +190,44 @@ def read_version():
     """Returns the current version of the server application."""
     logger.debug("Version endpoint accessed")
     return {"version": "0.1.0"}
+
+
+@app.get("/status", summary="Get server status and capacity", tags=["Status"])
+def get_server_status():
+    """
+    Returns server status including capacity information.
+    Shows real player count even if over maximum capacity (admin overrides).
+    """
+    logger.debug("Status endpoint accessed")
+    
+    gsm = get_game_state_manager()
+    current_players = gsm.get_active_player_count()
+    max_players = settings.MAX_PLAYERS
+    
+    # Update Prometheus metrics
+    metrics.update_server_capacity_metrics(current_players, max_players)
+    
+    # Calculate capacity metrics
+    over_capacity = current_players > max_players
+    utilization_percent = (current_players / max_players * 100) if max_players > 0 else 0
+    available_slots = max(0, max_players - current_players)
+    admin_overrides_active = max(0, current_players - max_players) if over_capacity else 0
+    
+    return {
+        "status": "ok",
+        "capacity": {
+            "max_players": max_players,
+            "current_players": current_players,
+            "available_slots": available_slots,
+            "over_capacity": over_capacity,
+            "utilization_percent": round(utilization_percent, 1),
+            "admin_overrides_active": admin_overrides_active
+        },
+        "performance": {
+            # TODO: Add actual performance metrics here later
+            "avg_tick_time_ms": None
+        }
+    }
 
 
 # Include API routers
