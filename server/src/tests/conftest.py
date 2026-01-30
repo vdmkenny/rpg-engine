@@ -1064,11 +1064,19 @@ async def test_client(
             async def override_get_db():
                 yield session
             
-            async def override_get_valkey():
-                return fake_valkey
-            
             app.dependency_overrides[get_db] = override_get_db
-            app.dependency_overrides[get_valkey] = override_get_valkey
+            
+            # For integration tests, use real Valkey; for unit tests, use fake
+            import os
+            if os.getenv("RUN_INTEGRATION_TESTS") == "1":
+                # Use real Valkey connection for integration tests
+                from server.src.core.database import get_valkey as real_get_valkey
+                app.dependency_overrides[get_valkey] = real_get_valkey
+            else:
+                # Use fake Valkey for unit tests
+                async def override_get_valkey():
+                    return fake_valkey
+                app.dependency_overrides[get_valkey] = override_get_valkey
             
             # Create test player with unique username to avoid conflicts
             from server.src.core.security import get_password_hash, create_access_token
@@ -1102,6 +1110,11 @@ async def test_client(
             
             # Create JWT token
             token = create_access_token(data={"sub": username})
+            
+            # Reset Valkey client for TestClient compatibility
+            # TestClient creates new event loop, old Valkey client becomes invalid
+            from server.src.core.database import reset_valkey
+            reset_valkey()
             
             # Create test client and connect to WebSocket endpoint
             with TestClient(app) as test_client:

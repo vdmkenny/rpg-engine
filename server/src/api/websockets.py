@@ -1252,15 +1252,21 @@ async def websocket_endpoint(
     
     try:
         # Accept WebSocket connection
+        logger.debug("Attempting to accept WebSocket connection")
         await websocket.accept()
+        logger.debug("WebSocket connection accepted successfully")
         metrics.track_websocket_connection("accepted")
         connection_start_time = time.time()
         
         logger.info("WebSocket unified connection accepted")
         
         # Wait for authentication message
+        logger.debug("Waiting for authentication message")
         auth_message = await _receive_auth_message(websocket)
+        logger.debug("Authentication message received", extra={"message_type": auth_message.type})
+        
         username, player_id = await _authenticate_player(auth_message)
+        logger.debug("Player authenticated", extra={"username": username, "player_id": player_id})
         
         # Initialize player connection and load into GSM
         await _initialize_player_connection(username, player_id, valkey)
