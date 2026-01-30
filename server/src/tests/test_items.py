@@ -286,31 +286,53 @@ class TestItemServiceSync:
     """Test item synchronization to database."""
 
     @pytest.mark.asyncio
-    async def test_sync_items_creates_all_items(self, session: AsyncSession):
-        """sync_items_to_db should create all items in the database."""
-        items = await ItemService.sync_items_to_db(session)
+    async def test_sync_items_creates_all_items(self, session: AsyncSession, gsm):
+        """sync_items_to_db should ensure all items exist in the database."""
+        await ItemService.sync_items_to_db()
 
-        # Verify all items were created
-        assert len(items) == len(ItemType)
+        # Verify all items are in database (might have been synced by fixtures)
+        from sqlalchemy import select
+        from server.src.models.item import Item
+        result = await session.execute(select(Item))
+        items = result.scalars().all()
+        
+        # Should have at least as many items as ItemType defines
+        assert len(items) >= len(ItemType)
 
+        # Verify all ItemType items exist by name
         item_names = {i.name for i in items}
         for item_type in ItemType:
             assert item_type.name.lower() in item_names
 
     @pytest.mark.asyncio
-    async def test_sync_items_is_idempotent(self, session: AsyncSession):
+    async def test_sync_items_is_idempotent(self, session: AsyncSession, gsm):
         """Calling sync_items_to_db multiple times should not create duplicates."""
-        await ItemService.sync_items_to_db(session)
-        items = await ItemService.sync_items_to_db(session)
+        # Get initial count
+        from sqlalchemy import select
+        from server.src.models.item import Item
+        initial_result = await session.execute(select(Item))
+        initial_count = len(initial_result.scalars().all())
+        
+        # Sync items twice
+        await ItemService.sync_items_to_db()
+        await ItemService.sync_items_to_db()
 
-        assert len(items) == len(ItemType)
+        # Verify count didn't change (idempotent)
+        final_result = await session.execute(select(Item))
+        final_items = final_result.scalars().all()
+        assert len(final_items) == initial_count
+        
+        # Verify all ItemType items still exist
+        item_names = {i.name for i in final_items}
+        for item_type in ItemType:
+            assert item_type.name.lower() in item_names
 
     @pytest.mark.asyncio
-    async def test_synced_items_have_correct_stats(self, session: AsyncSession):
+    async def test_synced_items_have_correct_stats(self, session: AsyncSession, gsm):
         """Synced items should have correct stats from definitions."""
-        await ItemService.sync_items_to_db(session)
+        await ItemService.sync_items_to_db()
 
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         assert item is not None
         assert item.attack_bonus == ItemType.BRONZE_SWORD.value.attack_bonus
         assert item.strength_bonus == ItemType.BRONZE_SWORD.value.strength_bonus
@@ -320,72 +342,67 @@ class TestItemServiceLookup:
     """Test item lookup operations."""
 
     @pytest.mark.asyncio
-    async def test_get_item_by_name(self, session: AsyncSession):
+    async def test_get_item_by_name(self, session: AsyncSession, gsm):
         """get_item_by_name should return the correct item."""
-        await ItemService.sync_items_to_db(session)
+        await ItemService.sync_items_to_db()
 
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         assert item is not None
         assert item.display_name == "Bronze Sword"
 
     @pytest.mark.asyncio
-    async def test_get_item_by_name_case_insensitive(self, session: AsyncSession):
+    async def test_get_item_by_name_case_insensitive(self, session: AsyncSession, gsm):
         """get_item_by_name should be case-insensitive."""
-        await ItemService.sync_items_to_db(session)
+        await ItemService.sync_items_to_db()
 
-        item1 = await ItemService.get_item_by_name(session, "bronze_sword")
-        item2 = await ItemService.get_item_by_name(session, "BRONZE_SWORD")
+        item1 = await ItemService.get_item_by_name("bronze_sword")
+        item2 = await ItemService.get_item_by_name("BRONZE_SWORD")
         assert item1 is not None
         assert item2 is not None
         assert item1.id == item2.id
 
     @pytest.mark.asyncio
     async def test_get_item_by_name_returns_none_for_invalid(
-        self, session: AsyncSession
+        self, session: AsyncSession, gsm
     ):
         """get_item_by_name should return None for invalid names."""
-        await ItemService.sync_items_to_db(session)
+        await ItemService.sync_items_to_db()
 
-        item = await ItemService.get_item_by_name(session, "invalid_item")
+        item = await ItemService.get_item_by_name("invalid_item")
         assert item is None
 
     @pytest.mark.asyncio
-    async def test_get_item_by_id(self, session: AsyncSession):
+    async def test_get_item_by_id(self, session: AsyncSession, gsm):
         """get_item_by_id should return the correct item."""
-        await ItemService.sync_items_to_db(session)
+        await ItemService.sync_items_to_db()
 
-        # Get an item first to get its ID
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         assert item is not None
 
-        # Look it up by ID
-        item_by_id = await ItemService.get_item_by_id(session, item.id)
+        item_by_id = await ItemService.get_item_by_id(item.id)
         assert item_by_id is not None
-        assert item_by_id.name == item.name
+        assert item_by_id.id == item.id
 
     @pytest.mark.asyncio
-    async def test_get_item_by_id_returns_none_for_invalid(
-        self, session: AsyncSession
-    ):
+    async def test_get_item_by_id_returns_none_for_invalid(self, session: AsyncSession, gsm):
         """get_item_by_id should return None for invalid IDs."""
-        await ItemService.sync_items_to_db(session)
+        await ItemService.sync_items_to_db()
 
-        item = await ItemService.get_item_by_id(session, 99999)
+        item = await ItemService.get_item_by_id(99999)
         assert item is None
-
 
 class TestItemToInfo:
     """Test item_to_info conversion."""
 
     @pytest.mark.asyncio
-    async def test_item_to_info_includes_all_fields(self, session: AsyncSession):
+    async def test_item_to_info_includes_all_fields(self, session: AsyncSession, gsm):
         """item_to_info should return all expected fields."""
-        await ItemService.sync_items_to_db(session)
+        await ItemService.sync_items_to_db()
 
-        item = await ItemService.get_item_by_name(session, "bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_sword")
         assert item is not None
 
-        info = ItemService.item_to_info(item)
+        info = ItemService.item_to_info(item._data)
 
         assert info.id == item.id
         assert info.name == item.name
@@ -398,14 +415,14 @@ class TestItemToInfo:
         assert info.value == item.value
 
     @pytest.mark.asyncio
-    async def test_item_to_info_includes_stats(self, session: AsyncSession):
+    async def test_item_to_info_includes_stats(self, session: AsyncSession, gsm):
         """item_to_info should include all stat bonuses."""
-        await ItemService.sync_items_to_db(session)
+        await ItemService.sync_items_to_db()
 
-        item = await ItemService.get_item_by_name(session, "bronze_platebody")
+        item = await ItemService.get_item_by_name("bronze_platebody")
         assert item is not None
 
-        info = ItemService.item_to_info(item)
+        info = ItemService.item_to_info(item._data)
 
         assert info.stats.attack_bonus == item.attack_bonus
         assert info.stats.physical_defence_bonus == item.physical_defence_bonus
@@ -413,14 +430,16 @@ class TestItemToInfo:
         assert info.stats.health_bonus == item.health_bonus
 
     @pytest.mark.asyncio
-    async def test_item_to_info_includes_rarity_color(self, session: AsyncSession):
+    async def test_item_to_info_includes_rarity_color(self, session: AsyncSession, gsm):
         """item_to_info should include rarity color for UI display."""
-        await ItemService.sync_items_to_db(session)
+        await ItemService.sync_items_to_db()
 
-        item = await ItemService.get_item_by_name(session, "gold_coins")
+        item = await ItemService.get_item_by_name("gold_coins")
         assert item is not None
 
-        info = ItemService.item_to_info(item)
+        info = ItemService.item_to_info(item._data)
 
+        # Check that rarity color is included
+        assert hasattr(info, 'rarity_color')
         assert info.rarity_color is not None
         assert info.rarity_color.startswith("#")

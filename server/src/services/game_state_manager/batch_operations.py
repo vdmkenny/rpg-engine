@@ -283,7 +283,7 @@ class GSMBatchOps:
                 # Insert fresh skills data
                 skills_records = []
                 for player_id in dirty_players:
-                    skills = await self._gsm.get_skills_offline(player_id)  # Use offline method for consistency
+                    skills = await self._gsm.get_all_skills(player_id)  # Use unified method
                     for skill_name, skill_data in skills.items():
                         skills_records.append({
                             "player_id": player_id,
@@ -440,7 +440,7 @@ class GSMBatchOps:
             
             # Sync skills
             await db.execute(delete(PlayerSkill).where(PlayerSkill.player_id == player_id))
-            skills = await self._gsm.get_skills_offline(player_id)
+            skills = await self._gsm.get_all_skills(player_id)
             if skills:
                 skills_records = []
                 for skill_name, skill_data in skills.items():

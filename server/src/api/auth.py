@@ -13,7 +13,7 @@ from server.src.core.metrics import (
 from server.src.core.security import create_access_token
 from server.src.schemas.player import PlayerCreate, PlayerPublic
 from server.src.schemas.token import Token
-from server.src.services.map_service import map_manager
+from server.src.services.map_service import get_map_manager
 from server.src.services.skill_service import SkillService
 from server.src.services.player_service import PlayerService
 from server.src.services.authentication_service import AuthenticationService
@@ -38,6 +38,7 @@ async def register_player(*, player_in: PlayerCreate):
     """
     try:
         # Get default spawn position
+        map_manager = get_map_manager()
         default_map_id, spawn_x, spawn_y = map_manager.get_default_spawn_position()
 
         # Use PlayerService to create the player with spawn position
@@ -83,10 +84,35 @@ async def login_for_access_token(
     """
     OAuth2-compatible login, returns an access token.
     """
-    # Authenticate user using service
-    player = await AuthenticationService.authenticate_with_password(
-        form_data.username, form_data.password
-    )
+    try:
+        # Authenticate user using service
+        player = await AuthenticationService.authenticate_with_password(
+            form_data.username, form_data.password
+        )
+    except PermissionError:
+        # Player is banned
+        logger.warning(
+            "Login attempt failed - banned user",
+            extra={"username": form_data.username, "reason": "banned"},
+        )
+        metrics.track_auth_attempt("login", "failure") 
+        metrics.track_auth_failure("banned")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is banned",
+        )
+    except ValueError as e:
+        # Player is timed out
+        logger.warning(
+            "Login attempt failed - timed out user",
+            extra={"username": form_data.username, "reason": "timeout"},
+        )
+        metrics.track_auth_attempt("login", "failure") 
+        metrics.track_auth_failure("timeout")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
 
     if not player:
         logger.warning(

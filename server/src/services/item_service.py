@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 
 class ItemWrapper:
     """
-    Simple wrapper to provide backward compatibility for item data.
+    Simple wrapper to provide dict compatibility for item data.
     
     Allows dict-based item data to be accessed like an object with .id attribute
     and also supports dict-like methods like .get().
@@ -43,15 +43,15 @@ class ItemWrapper:
         return self._data.get(key, default)
     
     def __getitem__(self, key: str) -> Any:
-        """Dict-like item access."""
+        """Dict-like getitem method."""
         return self._data[key]
     
     def __setitem__(self, key: str, value: Any) -> None:
-        """Dict-like item setting."""
+        """Dict-like setitem method."""
         self._data[key] = value
     
     def __contains__(self, key: str) -> bool:
-        """Dict-like 'in' operator support."""
+        """Dict-like contains method."""
         return key in self._data
     
     def keys(self):
@@ -71,16 +71,12 @@ class ItemService:
     """Service for managing item definitions."""
 
     @staticmethod
-    async def sync_items_to_db() -> list:
+    async def sync_items_to_db() -> None:
         """
         Sync items from ItemType enum to database using GSM.
-        
-        Returns:
-            Empty list for compatibility with existing code
         """
         gsm = get_game_state_manager()
         await gsm.sync_items_to_database()
-        return []
 
     @staticmethod
     async def get_item_by_name(name: str) -> Optional[ItemWrapper]:
@@ -99,21 +95,18 @@ class ItemService:
         """
         gsm = get_game_state_manager()
         
-        gsm = get_game_state_manager()
-        name_lower = name.lower()
+        # Get all cached items and search by name
+        cached_items = gsm.get_all_cached_items()
+        for item_id, item_data in cached_items.items():
+            # Compare lowercase names for case-insensitive matching
+            if item_data.get("name", "").lower() == name.lower():
+                # Create a copy to avoid modifying cached data
+                item_copy = dict(item_data)
+                item_copy["id"] = item_id  # Ensure ID is included
+                if isinstance(item_copy["id"], str):
+                    item_copy["id"] = int(item_copy["id"])
+                return ItemWrapper(item_copy)  # Return wrapped item data
         
-        # Check item reference data for name lookup
-        if hasattr(gsm, '_item_cache') and gsm._item_cache:
-            # Search through reference items by name
-            for item_id, item_data in gsm._item_cache.items():
-                if item_data.get("name") == name_lower:
-                    return ItemWrapper(item_data)  # Return wrapped item data
-        
-        # Item not found in reference data
-        logger.warning(
-            "Item not found by name in reference data",
-            extra={"item_name": name, "cache_size": len(getattr(gsm, '_item_cache', {}))}
-        )
         return None
 
     @staticmethod

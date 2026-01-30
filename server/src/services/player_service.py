@@ -75,7 +75,15 @@ class PlayerService:
                 
         except Exception as e:
             # GSM will raise IntegrityError for duplicate username, convert to HTTP error
-            logger.warning("Player creation failed", extra={"username": player_data.username, "error": str(e)})
+            logger.error(
+                "Player creation failed", 
+                extra={
+                    "username": player_data.username, 
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                },
+                exc_info=True
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="A player with this username already exists.",

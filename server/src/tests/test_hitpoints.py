@@ -304,7 +304,7 @@ class TestMaxHpCalculation:
         
         # Find an item with health_bonus
         result = await session.execute(
-            select(Item).where(Item.health_bonus > 0)
+            select(Item).where(Item.health_bonus > 0).limit(1)
         )
         health_item = result.scalar_one_or_none()
         

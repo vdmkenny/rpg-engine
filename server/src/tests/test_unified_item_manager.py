@@ -26,15 +26,16 @@ class TestUnifiedItemManager:
         return get_item_manager()
 
     @pytest_asyncio.fixture
-    async def sample_item(self, session):
+    async def sample_item(self, session, gsm):
         """Create a sample item for testing."""
         from server.src.services.item_service import ItemService
         
         # Sync items to ensure we have test items
-        items = await ItemService.sync_items_to_db()
+        await ItemService.sync_items_to_db()
         
-        # Return first item for testing
-        return items[0] if items else None
+        # Get an item from the service
+        item = await ItemService.get_item_by_name("bronze_sword")
+        return item
 
     @pytest.mark.asyncio
     async def test_add_item_to_inventory_delegates_correctly(

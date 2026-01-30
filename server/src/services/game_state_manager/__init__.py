@@ -242,7 +242,7 @@ class GameStateManager:
     
     def get_cached_item_meta(self, item_id: int) -> Optional[Dict[str, Any]]:
         """
-        Get item metadata from cache (synchronous).
+        Get cached item metadata by ID.
         
         Args:
             item_id: Item ID
@@ -251,6 +251,15 @@ class GameStateManager:
             Item metadata dict or None if not found
         """
         return self._item_cache.get(item_id)
+    
+    def get_all_cached_items(self) -> Dict[int, Dict[str, Any]]:
+        """
+        Get all cached item metadata.
+        
+        Returns:
+            Dictionary mapping item IDs to their metadata
+        """
+        return dict(self._item_cache)  # Return a copy to prevent external modification
     
     # =========================================================================
     # ONLINE PLAYER REGISTRY
@@ -1682,7 +1691,17 @@ class GameStateManager:
             
             return skill_data
 
-    async def sync_skills_to_db_offline(self) -> list:
+    async def sync_skills_to_db(self) -> list:
+        """
+        Ensure all SkillType entries exist in the skills table with transparent handling.
+        
+        Returns:
+            List of all Skill records in the database
+        """
+        # Skill syncing is a one-time operation that doesn't need online/offline distinction
+        return await self._sync_skills_to_db_offline()
+
+    async def _sync_skills_to_db_offline(self) -> list:
         """
         Ensure all SkillType entries exist in the skills table.
         
@@ -1714,7 +1733,17 @@ class GameStateManager:
             result = await db.execute(select(Skill))
             return list(result.scalars().all())
     
-    async def get_skill_id_map_offline(self) -> Dict[str, int]:
+    async def get_skill_id_map(self) -> Dict[str, int]:
+        """
+        Get a mapping of skill names to their database IDs with transparent handling.
+        
+        Returns:
+            Dict mapping lowercase skill name to skill ID
+        """
+        # Skill ID mapping is reference data that doesn't need online/offline distinction
+        return await self._get_skill_id_map_offline()
+    
+    async def _get_skill_id_map_offline(self) -> Dict[str, int]:
         """
         Get a mapping of skill names to their database IDs.
         
@@ -1730,7 +1759,26 @@ class GameStateManager:
             result = await db.execute(select(Skill))
             return {s.name: s.id for s in result.scalars().all()}
     
-    async def grant_all_skills_to_player_offline(self, player_id: int, db_session: Optional[AsyncSession] = None) -> list:
+    async def grant_all_skills_to_player(self, player_id: int) -> list:
+        """
+        Grant all skills to a player with transparent online/offline handling.
+        
+        Most skills start at level 1 with 0 XP.
+        Hitpoints starts at level 10 with the XP required for level 10.
+        
+        Args:
+            player_id: The player's database ID
+            
+        Returns:
+            List of all PlayerSkill records for the player
+        """
+        from server.src.core.config import settings
+        
+        # For skill granting, always use offline method for consistency
+        # Skills are reference data that doesn't benefit from online/offline distinction
+        return await self._grant_all_skills_to_player_offline(player_id)
+    
+    async def _grant_all_skills_to_player_offline(self, player_id: int, db_session: Optional[AsyncSession] = None) -> list:
         """
         Create PlayerSkill rows for all skills for offline players.
         
@@ -1752,12 +1800,12 @@ class GameStateManager:
             )
             from sqlalchemy.dialects.postgresql import insert as pg_insert
             
-            skill_id_map = await self.get_skill_id_map_offline()
+            skill_id_map = await self._get_skill_id_map_offline()
             
             if not skill_id_map:
                 # No skills in database yet, sync them first
-                await self.sync_skills_to_db_offline()
-                skill_id_map = await self.get_skill_id_map_offline()
+                await self._sync_skills_to_db_offline()
+                skill_id_map = await self._get_skill_id_map_offline()
             
             if not skill_id_map:
                 # Still no skills, return empty list
@@ -1818,7 +1866,24 @@ class GameStateManager:
             async with self._db_session() as db:
                 return await _execute_with_session()
     
-    async def get_player_skills_offline(self, player_id: int) -> list:
+    async def get_player_skills(self, player_id: int) -> list:
+        """
+        Fetch all skills for a player with computed metadata.
+        Handles both online and offline players transparently.
+        
+        Args:
+            player_id: Player ID
+            
+        Returns:
+            List of skill info dicts with name, category, level, xp, etc.
+        """
+        from server.src.core.config import settings
+        
+        # For skill metadata computation, always use offline method for now
+        # TODO: Add Valkey support for skill metadata computations  
+        return await self._get_player_skills_offline(player_id)
+    
+    async def _get_player_skills_offline(self, player_id: int) -> list:
         """
         Fetch all skills for a player with computed metadata (offline).
         
@@ -1892,7 +1957,25 @@ class GameStateManager:
             player_skills = result.scalars().all()
             return sum(ps.current_level for ps in player_skills)
     
-    async def get_hitpoints_level_offline(self, player_id: int) -> int:
+    async def get_hitpoints_level(self, player_id: int) -> int:
+        """
+        Get the player's Hitpoints skill level with transparent handling.
+        
+        Args:
+            player_id: Player ID
+            
+        Returns:
+            Hitpoints level
+        """
+        # Try the unified get_skill method first
+        hitpoints_skill = await self.get_skill(player_id, "hitpoints")
+        if hitpoints_skill:
+            return hitpoints_skill["level"]
+        
+        # Fallback to offline method for safety
+        return await self._get_hitpoints_level_offline(player_id)
+    
+    async def _get_hitpoints_level_offline(self, player_id: int) -> int:
         """
         Get the players Hitpoints skill level (offline).
         
@@ -1997,11 +2080,14 @@ class GameStateManager:
             return {
                 "id": player.id,
                 "username": player.username,
-                "x": player.x,
-                "y": player.y,
+                "x_coord": player.x_coord,
+                "y_coord": player.y_coord,
                 "map_id": player.map_id,
                 "current_hp": player.current_hp,
-                "is_admin": player.is_admin,
+                "hashed_password": player.hashed_password,
+                "is_banned": player.is_banned,
+                "timeout_until": player.timeout_until,
+                "role": player.role,
             }
     
     async def update_player_hp(self, player_id: int, hp: int) -> None:
@@ -2209,9 +2295,10 @@ class GameStateManager:
             for item_type in ItemType:
                 item_def = item_type.value
                 
-                # Check if item exists in database
+                # Check if item exists in database (using lowercase enum name)
+                item_name = item_type.name.lower()
                 result = await db.execute(
-                    select(Item).where(Item.name == item_type.name)
+                    select(Item).where(Item.name == item_name)
                 )
                 existing_item = result.scalar_one_or_none()
                 
@@ -2247,7 +2334,7 @@ class GameStateManager:
                 else:
                     # Create new item
                     new_item = Item(
-                        name=item_type.name,
+                        name=item_name,  # Use lowercase name
                         display_name=item_def.display_name,
                         description=item_def.description,
                         category=item_def.category.value,
@@ -2330,7 +2417,7 @@ class GameStateManager:
             await db.flush()  # Get player ID
             
             # Initialize player skills with default values (using same session)
-            await self.grant_all_skills_to_player_offline(player.id, db)
+            await self._grant_all_skills_to_player_offline(player.id, db)
             
             await db.commit()
             await db.refresh(player)

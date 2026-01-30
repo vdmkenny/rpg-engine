@@ -107,7 +107,8 @@ class TestSkillsAutoLoadingCore:
         async def mock_expire(key, seconds):
             nonlocal expire_called
             expire_called = True
-            assert seconds == 3600, "Should set 1 hour TTL"
+            from server.src.core.config import settings
+            assert seconds == settings.OFFLINE_PLAYER_CACHE_TTL, f"Should set TTL to {settings.OFFLINE_PLAYER_CACHE_TTL} seconds"
             return await original_expire(key, seconds)
         
         gsm._valkey.expire = mock_expire
@@ -238,7 +239,7 @@ class TestSkillsValkeyFallback:
     """Test skills behavior when Valkey is unavailable or disabled."""
 
     async def test_skills_valkey_unavailable_fallback(self, session, gsm: GameStateManager, create_offline_player):
-        """Test database fallback when Valkey is unavailable for skills."""
+        """Test that GSM fails fast when Valkey is unavailable for skills (no fallback)."""
         await SkillService.sync_skills_to_db()
         
         # Create player first to satisfy foreign key constraints
@@ -254,14 +255,9 @@ class TestSkillsValkeyFallback:
         gsm._valkey = None
         
         try:
-            # Should fallback to database without error
-            skills = await gsm.get_all_skills(player_id)
-            
-            # Verify skills loaded from database
-            assert len(skills) >= 9, "Should load all skills from database"
-            assert "attack" in skills, "Attack skill should be loaded"
-            assert "hitpoints" in skills, "Hitpoints skill should be loaded"
-            assert skills["hitpoints"]["level"] == 10, "Hitpoints should start at level 10"
+            # Should fail fast with RuntimeError (no fallback in current architecture)
+            with pytest.raises(RuntimeError, match="Cache infrastructure unavailable"):
+                await gsm.get_all_skills(player_id)
         finally:
             # Restore Valkey
             gsm._valkey = original_valkey

@@ -801,15 +801,16 @@ def create_test_player(
         session.add(player)
         await session.flush()  # Get player ID
         
-        # Initialize skills using GSM with session sharing to avoid isolation issues
+        # Initialize skills using GSM unified interface 
         try:
-            await gsm.grant_all_skills_to_player_offline(player.id, session)
+            await gsm.grant_all_skills_to_player(player.id)
         except Exception:
             # Skills may not be available in test environment, that's ok
             pass
         
-        # IMPORTANT: Don't commit here - let the test manage the transaction
-        # await session.commit()  # Removed - this isolates the transaction
+        # IMPORTANT: Commit the transaction so the player is visible to other sessions
+        # This is required for authentication tests that use separate database sessions
+        await session.commit()
         
         # Apply any extra fields to the created player state  
         if extra_fields:

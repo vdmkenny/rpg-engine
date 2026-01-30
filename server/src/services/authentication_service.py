@@ -32,6 +32,10 @@ class AuthenticationService:
 
         Returns:
             Player instance if authenticated, None otherwise
+            
+        Raises:
+            PermissionError: If player is banned
+            ValueError: If player is timed out
         """
         try:
             # Get player by username
@@ -57,7 +61,7 @@ class AuthenticationService:
                     "Authentication failed - player banned",
                     extra={"username": username, "player_id": player.id}
                 )
-                return None
+                raise PermissionError("Player is banned")
 
             # Check if player is timed out
             if player.timeout_until:
@@ -74,7 +78,7 @@ class AuthenticationService:
                             "timeout_until": str(player.timeout_until)
                         }
                     )
-                    return None
+                    raise ValueError(f"Player is timed out until {player.timeout_until}")
 
             logger.info(
                 "User authentication successful",
@@ -83,6 +87,9 @@ class AuthenticationService:
 
             return player
 
+        except (PermissionError, ValueError):
+            # Re-raise permission and timeout errors 
+            raise
         except Exception as e:
             logger.error(
                 "Error during user authentication",

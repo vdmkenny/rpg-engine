@@ -46,7 +46,7 @@ class SkillService:
             List of all Skill records in the database
         """
         gsm = get_game_state_manager()
-        return await gsm.sync_skills_to_db_offline()
+        return await gsm.sync_skills_to_db()
 
     @staticmethod
     async def get_skill_id_map() -> Dict[str, int]:
@@ -57,7 +57,7 @@ class SkillService:
             Dict mapping lowercase skill name to skill ID
         """
         gsm = get_game_state_manager()
-        return await gsm.get_skill_id_map_offline()
+        return await gsm.get_skill_id_map()
 
     @staticmethod
     async def grant_all_skills_to_player(player_id: int) -> list:
@@ -78,7 +78,7 @@ class SkillService:
             List of all PlayerSkill records for the player
         """
         gsm = get_game_state_manager()
-        return await gsm.grant_all_skills_to_player_offline(player_id)
+        return await gsm.grant_all_skills_to_player(player_id)
 
     @staticmethod
     async def add_experience(
@@ -173,9 +173,9 @@ class SkillService:
         """
         gsm = get_game_state_manager()
         
-        # Always use offline method for now to ensure consistency
+        # Always use unified method for consistent skill metadata computation
         # TODO: Add Valkey support for skill metadata computations
-        return await gsm.get_player_skills_offline(player_id)
+        return await gsm.get_player_skills(player_id)
 
     @staticmethod
     async def get_total_level(player_id: int) -> int:
@@ -211,11 +211,4 @@ class SkillService:
             Hitpoints level (minimum HITPOINTS_START_LEVEL if not found)
         """
         gsm = get_game_state_manager()
-        
-        # Use auto-loading GSM method - works for both online and offline players
-        hitpoints_skill = await gsm.get_skill(player_id, "hitpoints")
-        if hitpoints_skill:
-            return hitpoints_skill["level"]
-            
-        # If skill not found, fallback to offline method for safety
-        return await gsm.get_hitpoints_level_offline(player_id)
+        return await gsm.get_hitpoints_level(player_id)

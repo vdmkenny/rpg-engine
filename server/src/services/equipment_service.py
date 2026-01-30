@@ -93,7 +93,7 @@ class EquipmentService:
                     item_id=item_id,
                     quantity=slot_data.get("quantity", 1),
                     current_durability=slot_data.get("current_durability"),
-                    item_data=item_wrapper._data  # Extract raw dict from ItemWrapper
+                    item_data=item_wrapper  # Raw dict from ItemService
                 )
                 equipment[slot] = eq
                 
@@ -388,7 +388,7 @@ class EquipmentService:
                 current_level = skill_data.get("level", 1)
         else:
             # Player is offline, get skills from database via GSM
-            skills_data = await gsm.get_skills_offline(player_id)
+            skills_data = await gsm.get_all_skills(player_id)
             if not skills_data or not isinstance(skills_data, dict):
                 current_level = 1
             else:
@@ -446,7 +446,7 @@ class EquipmentService:
             return EquipItemResult(success=False, message="Item cannot be equipped")
 
         # Check requirements
-        can_equip = await EquipmentService.can_equip(player_id, item_data._data)
+        can_equip = await EquipmentService.can_equip(player_id, item_data)
         if not can_equip.can_equip:
             return EquipItemResult(success=False, message=can_equip.reason)
 
@@ -1039,7 +1039,7 @@ class EquipmentService:
                     item_id=item_id,
                     quantity=slot_data.get("quantity", 1),
                     current_durability=slot_data.get("current_durability"),
-                    item_data=item_wrapper._data  # Extract raw dict from ItemWrapper
+                    item_data=item_wrapper  # Raw dict from ItemService
                 )
                 equipped_items.append(eq)
                 
