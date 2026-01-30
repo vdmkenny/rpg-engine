@@ -368,7 +368,7 @@ class EquipmentService:
         if not item_data.get("equipment_slot"):
             return CanEquipResult(can_equip=False, reason="Item is not equipable")
 
-        if not item.required_skill:
+        if not item_data.get("required_skill"):
             return CanEquipResult(can_equip=True, reason="OK")
 
         # Check skill level for equipment requirements
@@ -376,7 +376,7 @@ class EquipmentService:
         
         if gsm.is_online(player_id):
             # Player is online, use cached skills
-            skill_data = await gsm.get_skill(player_id, item.required_skill)
+            skill_data = await gsm.get_skill(player_id, item_data.get("required_skill"))
             if not skill_data:
                 # Player doesn't have skill in cache, assume default level 1
                 current_level = 1
@@ -385,7 +385,7 @@ class EquipmentService:
         else:
             # Player is offline, get skills from database via GSM
             skills_data = await gsm.get_skills_offline(player_id)
-            skill_data = skills_data.get(item.required_skill)
+            skill_data = skills_data.get(item_data.get("required_skill"))
             
             if not skill_data:
                 # Player doesn't have skill in database, assume default level 1
@@ -393,10 +393,10 @@ class EquipmentService:
             else:
                 current_level = skill_data.get("level", 1)
 
-        if current_level < item.required_level:
+        if current_level < item_data.get("required_level", 1):
             return CanEquipResult(
                 can_equip=False,
-                reason=f"Requires {item.required_skill} level {item.required_level} (you have {current_level})",
+                reason=f"Requires {item_data.get('required_skill')} level {item_data.get('required_level')} (you have {current_level})",
             )
 
         return CanEquipResult(can_equip=True, reason="OK")

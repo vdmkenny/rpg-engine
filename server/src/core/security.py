@@ -5,11 +5,8 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.future import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.src.core.config import settings
-from server.src.core.database import get_db
 from server.src.models.player import Player
 from server.src.schemas.token import TokenData
 
@@ -71,31 +68,26 @@ def verify_token(token: str) -> Optional[TokenData]:
         return None
 
 
-async def get_current_user(
-    db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)
-) -> Player:
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> Player:
     """
-    Decodes the JWT token to get the current user.
+    Decodes the JWT token to get the current user using the service layer.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
 
-    result = await db.execute(
-        select(Player).where(Player.username == token_data.username)
-    )
-    user = result.scalar_one_or_none()
-
-    if user is None:
+    # Use AuthenticationService to validate token and get user info
+    from server.src.services.authentication_service import AuthenticationService
+    user_data = await AuthenticationService.validate_jwt_token(token)
+    if not user_data:
         raise credentials_exception
-    return user
+        
+    # Get the actual player using the username
+    from server.src.services.player_service import PlayerService
+    player = await PlayerService.get_player_by_username(user_data["username"])
+    if player is None:
+        raise credentials_exception
+        
+    return player

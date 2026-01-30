@@ -19,14 +19,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, status
 from jose import JWTError, jwt
 from pydantic import ValidationError
 import msgpack
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from glide import GlideClient
 
 # Core dependencies
 from server.src.api.connection_manager import ConnectionManager
 from server.src.core.config import settings
-from server.src.core.database import get_valkey, get_db
+from server.src.core.database import get_valkey
 from server.src.core.logging_config import get_logger
 from server.src.core.metrics import (
     metrics,
@@ -36,7 +35,6 @@ from server.src.core.metrics import (
 )
 
 # Models and schemas
-from server.src.models.player import Player
 from server.src.core.items import InventorySortType, EquipmentSlot
 
 # Services
@@ -195,13 +193,11 @@ class WebSocketHandler:
         websocket: WebSocket,
         username: str,
         player_id: int,
-        db: AsyncSession,
         valkey: GlideClient,
     ):
         self.websocket = websocket
         self.username = username
         self.player_id = player_id
-        self.db = db
         self.valkey = valkey
         self.router = MessageRouter()
         self._setup_message_handlers()
@@ -1242,7 +1238,6 @@ class WebSocketHandler:
 async def websocket_endpoint(
     websocket: WebSocket,
     valkey: GlideClient = Depends(get_valkey),
-    db: AsyncSession = Depends(get_db),
 ):
     """
     WebSocket handler implementing structured message patterns.
@@ -1265,23 +1260,28 @@ async def websocket_endpoint(
         
         # Wait for authentication message
         auth_message = await _receive_auth_message(websocket)
-        username, player_id = await _authenticate_player(auth_message, db)
+        username, player_id = await _authenticate_player(auth_message)
         
         # Initialize player connection and load into GSM
-        await _initialize_player_connection(username, player_id, db, valkey)
+        await _initialize_player_connection(username, player_id, valkey)
         
         # Create handler instance for this connection
-        handler = WebSocketHandler(websocket, username, player_id, db, valkey)
+        handler = WebSocketHandler(websocket, username, player_id, valkey)
         
         # Send welcome message
-        await _send_welcome_message(websocket, username, player_id, db)
+        await _send_welcome_message(websocket, username, player_id)
         
         # Handle player join broadcasting
-        await _handle_player_join_broadcast(websocket, username, player_id, db)
+        await _handle_player_join_broadcast(websocket, username, player_id)
         
         # Register connection with manager
         gsm = get_game_state_manager()
         position = await gsm.get_player_position(player_id)
+        if not position:
+            raise WebSocketDisconnect(
+                code=status.WS_1011_INTERNAL_ERROR,
+                reason="Could not get player position"
+            )
         await manager.connect(websocket, username, position["map_id"])
         
         # Register for game loop
@@ -1365,7 +1365,7 @@ async def websocket_endpoint(
         
         if username:
             # Handle player disconnection
-            await _handle_player_disconnect(username, player_id, db, valkey)
+            await _handle_player_disconnect(username, player_id, valkey)
             
             # Update metrics
             _update_connection_metrics()
@@ -1397,30 +1397,34 @@ async def _receive_auth_message(websocket: WebSocket) -> WSMessage:
         )
 
 
-async def _authenticate_player(auth_message: WSMessage, db: AsyncSession) -> tuple[str, int]:
+async def _authenticate_player(auth_message: WSMessage) -> tuple[str, int]:
     """Authenticate player and return username and player_id"""
     try:
         # Validate authentication payload
         auth_payload = AuthenticatePayload(**auth_message.payload)
         
-        # Decode JWT token
-        payload = jwt.decode(
-            auth_payload.token,
-            settings.JWT_SECRET_KEY,
-            algorithms=[settings.ALGORITHM]
-        )
+        # Use authentication service to validate token and get player
+        auth_service = AuthenticationService()
+        player_data = await auth_service.validate_jwt_token(auth_payload.token)
         
-        username = payload.get("sub")
-        if not username:
+        if not player_data:
             raise WebSocketDisconnect(
                 code=status.WS_1008_POLICY_VIOLATION,
-                reason="Invalid token: username missing"
+                reason="Invalid token"
             )
         
-        # Verify player exists and get player data
-        query = select(Player).where(Player.username == username)
-        result = await db.execute(query)
-        player = result.scalar_one_or_none()
+        username = player_data.get("username")
+        player_id = player_data.get("player_id")
+        
+        if not username or not player_id:
+            raise WebSocketDisconnect(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Invalid token: player data missing"
+            )
+        
+        # Get player details using service layer
+        player_service = PlayerService()
+        player = await player_service.get_player_by_username(username)
         
         if not player:
             raise WebSocketDisconnect(
@@ -1462,13 +1466,12 @@ async def _authenticate_player(auth_message: WSMessage, db: AsyncSession) -> tup
         )
 
 
-async def _initialize_player_connection(username: str, player_id: int, db: AsyncSession, valkey: GlideClient) -> None:
+async def _initialize_player_connection(username: str, player_id: int, valkey: GlideClient) -> None:
     """Initialize player connection state in GSM and services"""
     try:
-        # Get player data from database
-        query = select(Player).where(Player.id == player_id)
-        result = await db.execute(query)
-        player = result.scalar_one_or_none()
+        # Get player data using service layer
+        player_service = PlayerService()
+        player = await player_service.get_player_by_id(player_id)
         
         if not player:
             raise WebSocketDisconnect(
@@ -1481,37 +1484,24 @@ async def _initialize_player_connection(username: str, player_id: int, db: Async
             player.map_id, player.x_coord, player.y_coord
         )
         
-        # Update database if position was corrected
-        if (validated_map != player.map_id or 
-            validated_x != player.x_coord or 
-            validated_y != player.y_coord):
-            
-            logger.info(
-                "Player position corrected during unified initialization",
-                extra={
-                    "username": username,
-                    "original": {"map_id": player.map_id, "x": player.x_coord, "y": player.y_coord},
-                    "corrected": {"map_id": validated_map, "x": validated_x, "y": validated_y}
-                }
-            )
-            
-            player.map_id = validated_map
-            player.x_coord = validated_x
-            player.y_coord = validated_y
-            await db.commit()
-        
         # Calculate max HP and validate current HP
         max_hp = await EquipmentService.get_max_hp(player.id)
         current_hp = min(player.current_hp, max_hp)
-        
-        if current_hp != player.current_hp:
-            player.current_hp = current_hp
-            await db.commit()
         
         # Initialize player in service layer and GSM
         await PlayerService.login_player(player)
         await ConnectionService.initialize_player_connection(
             player.id, username, validated_x, validated_y, validated_map, current_hp, max_hp
+        )
+        
+        logger.info(
+            "Player connection initialized successfully",
+            extra={
+                "username": username,
+                "player_id": player_id,
+                "position": {"x": validated_x, "y": validated_y, "map_id": validated_map},
+                "hp": {"current": current_hp, "max": max_hp}
+            }
         )
         
     except Exception as e:
@@ -1530,7 +1520,7 @@ async def _initialize_player_connection(username: str, player_id: int, db: Async
         )
 
 
-async def _send_welcome_message(websocket: WebSocket, username: str, player_id: int, db: AsyncSession) -> None:
+async def _send_welcome_message(websocket: WebSocket, username: str, player_id: int) -> None:
     """Send EVENT_WELCOME message to newly connected player"""
     try:
         # Get current player state
@@ -1594,11 +1584,14 @@ async def _send_welcome_message(websocket: WebSocket, username: str, player_id: 
         )
 
 
-async def _handle_player_join_broadcast(websocket: WebSocket, username: str, player_id: int, db: AsyncSession) -> None:
+async def _handle_player_join_broadcast(websocket: WebSocket, username: str, player_id: int) -> None:
     """Handle player join broadcasting to existing players"""
     try:
         gsm = get_game_state_manager()
         position = await gsm.get_player_position(player_id)
+        if not position:
+            logger.error("Could not get player position for join broadcast", extra={"player_id": player_id})
+            return
         map_id = position["map_id"]
         
         # Get existing players on this map
@@ -1669,7 +1662,7 @@ async def _handle_player_join_broadcast(websocket: WebSocket, username: str, pla
         )
 
 
-async def _handle_player_disconnect(username: str, player_id: Optional[int], db: AsyncSession, valkey: GlideClient) -> None:
+async def _handle_player_disconnect(username: str, player_id: Optional[int], valkey: GlideClient) -> None:
     """Handle player disconnection cleanup"""
     try:
         if username:

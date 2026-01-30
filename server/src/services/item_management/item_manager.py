@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.src.core.config import settings
 from server.src.core.items import EquipmentSlot, ItemCategory

@@ -26,6 +26,9 @@ class PlayerService:
     @staticmethod
     async def create_player(
         player_data: PlayerCreate, 
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        map_id: Optional[str] = None
     ) -> Player:
         """
         Create a new player with proper initialization using GSM.
@@ -49,9 +52,9 @@ class PlayerService:
             player_complete_data = await gsm.create_player_complete(
                 username=player_data.username,
                 hashed_password=hashed_password,
-                x=getattr(player_data, 'x', 10),
-                y=getattr(player_data, 'y', 10),
-                map_id=getattr(player_data, 'map_id', "samplemap"),
+                x=x or getattr(player_data, 'x', 10),
+                y=y or getattr(player_data, 'y', 10),
+                map_id=map_id or getattr(player_data, 'map_id', "samplemap"),
             )
             
             # Convert GSM data back to Player model

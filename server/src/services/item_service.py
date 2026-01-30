@@ -12,26 +12,78 @@ from .game_state_manager import get_game_state_manager
 logger = get_logger(__name__)
 
 
+class ItemWrapper:
+    """
+    Simple wrapper to provide backward compatibility for item data.
+    
+    Allows dict-based item data to be accessed like an object with .id attribute
+    and also supports dict-like methods like .get().
+    """
+    def __init__(self, item_data: Dict[str, Any]):
+        self._data = item_data
+    
+    def __getattr__(self, name: str) -> Any:
+        """Allow accessing dict keys as attributes."""
+        if name in self._data:
+            return self._data[name]
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+    
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Allow setting attributes."""
+        if name.startswith('_'):
+            super().__setattr__(name, value)
+        else:
+            if not hasattr(self, '_data'):
+                super().__setattr__(name, value)
+            else:
+                self._data[name] = value
+    
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dict-like get method."""
+        return self._data.get(key, default)
+    
+    def __getitem__(self, key: str) -> Any:
+        """Dict-like item access."""
+        return self._data[key]
+    
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Dict-like item setting."""
+        self._data[key] = value
+    
+    def __contains__(self, key: str) -> bool:
+        """Dict-like 'in' operator support."""
+        return key in self._data
+    
+    def keys(self):
+        """Dict-like keys method."""
+        return self._data.keys()
+    
+    def values(self):
+        """Dict-like values method."""
+        return self._data.values()
+    
+    def items(self):
+        """Dict-like items method."""
+        return self._data.items()
+
+
 class ItemService:
     """Service for managing item definitions."""
 
     @staticmethod
-    async def sync_items_to_db() -> list[Item]:
+    async def sync_items_to_db() -> list:
         """
-        DEPRECATED: Architectural violation - direct database access in service layer.
+        Sync items from ItemType enum to database using GSM.
         
-        This method violates GSM architecture by accessing internal database sessions.
-        It should be moved to GSM or removed entirely. Currently disabled.
-        
-        TODO: Refactor this as a GSM method for reference data management.
+        Returns:
+            Empty list for compatibility with existing code
         """
-        raise NotImplementedError(
-            "sync_items_to_db() violates GSM architecture and is disabled. "
-            "Reference data sync should be handled by GSM."
-        )
+        gsm = get_game_state_manager()
+        await gsm.sync_items_to_database()
+        return []
 
     @staticmethod
-    async def get_item_by_name(name: str) -> Optional[Dict[str, Any]]:
+    async def get_item_by_name(name: str) -> Optional[ItemWrapper]:
         """
         Get an item by its internal name using GSM cached methods.
         
@@ -43,7 +95,7 @@ class ItemService:
             name: Internal item name (e.g., "bronze_sword")
 
         Returns:
-            Item data dict if found, None otherwise
+            ItemWrapper object if found, None otherwise
         """
         gsm = get_game_state_manager()
         
@@ -55,7 +107,7 @@ class ItemService:
             # Search through reference items by name
             for item_id, item_data in gsm._item_cache.items():
                 if item_data.get("name") == name_lower:
-                    return item_data  # Return item reference data directly
+                    return ItemWrapper(item_data)  # Return wrapped item data
         
         # Item not found in reference data
         logger.warning(
@@ -65,7 +117,7 @@ class ItemService:
         return None
 
     @staticmethod
-    async def get_item_by_id(item_id: int) -> Optional[Dict[str, Any]]:
+    async def get_item_by_id(item_id: int) -> Optional[ItemWrapper]:
         """
         Get an item by its database ID using GSM cached methods.
 
@@ -73,20 +125,20 @@ class ItemService:
             item_id: Item database ID
 
         Returns:
-            Item data dict if found, None otherwise
+            ItemWrapper object if found, None otherwise
         """
         gsm = get_game_state_manager()
         
         # Check item reference data first (fastest lookup)
         cached_item = gsm.get_cached_item_meta(item_id)
         if cached_item:
-            # Return reference data directly
-            return cached_item
+            # Return wrapped reference data
+            return ItemWrapper(cached_item)
         
         # Retrieve item data from persistent storage
         item_data = await gsm.get_item_meta(item_id)
         if item_data:
-            return item_data
+            return ItemWrapper(item_data)
         
         return None
 
@@ -167,26 +219,6 @@ class ItemService:
             required_level=int(item_data.get("required_level", 1)),
             is_tradeable=bool(item_data.get("is_tradeable", True)),
             value=int(item_data.get("value", 0)),
-            stats=stats,
-        )
-
-        return ItemInfo(
-            id=item.id,
-            name=item.name,
-            display_name=item.display_name,
-            description=item.description or "",
-            category=item.category,
-            rarity=item.rarity,
-            rarity_color=rarity_color,
-            equipment_slot=item.equipment_slot,
-            max_stack_size=item.max_stack_size,
-            is_two_handed=item_data.get("is_two_handed", False),
-            max_durability=item_data.get("max_durability"),
-            is_indestructible=item_data.get("is_indestructible", False),
-            required_skill=item_data.get("required_skill"),
-            required_level=item_data.get("required_level"),
-            is_tradeable=item_data.get("is_tradeable", True),
-            value=item_data.get("value", 0),
             stats=stats,
         )
 

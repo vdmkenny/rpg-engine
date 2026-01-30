@@ -2172,6 +2172,105 @@ class GameStateManager:
             extra={"item_count": len(getattr(self, '_item_cache', {}))}
         )
 
+    async def sync_items_to_database(self) -> int:
+        """
+        Sync items from ItemType enum to database.
+        
+        Creates or updates item records based on the ItemType definitions.
+        This ensures the database has all items defined in code.
+        
+        Returns:
+            Number of items synced
+        """
+        if not self._session_factory:
+            logger.warning("Cannot sync items - no database connection")
+            return 0
+            
+        from server.src.core.items import ItemType
+        from server.src.models.item import Item
+        
+        items_synced = 0
+        
+        async with self._db_session() as db:
+            for item_type in ItemType:
+                item_def = item_type.value
+                
+                # Check if item exists in database
+                result = await db.execute(
+                    select(Item).where(Item.name == item_type.name)
+                )
+                existing_item = result.scalar_one_or_none()
+                
+                if existing_item:
+                    # Update existing item
+                    existing_item.display_name = item_def.display_name
+                    existing_item.description = item_def.description
+                    existing_item.category = item_def.category.value
+                    existing_item.rarity = item_def.rarity.value if item_def.rarity else "common"
+                    existing_item.value = item_def.value
+                    existing_item.equipment_slot = item_def.equipment_slot.value if item_def.equipment_slot else None
+                    existing_item.max_durability = item_def.max_durability
+                    existing_item.max_stack_size = item_def.max_stack_size
+                    existing_item.attack_bonus = item_def.attack_bonus
+                    existing_item.strength_bonus = item_def.strength_bonus
+                    existing_item.ranged_attack_bonus = item_def.ranged_attack_bonus
+                    existing_item.ranged_strength_bonus = item_def.ranged_strength_bonus
+                    existing_item.magic_attack_bonus = item_def.magic_attack_bonus
+                    existing_item.magic_damage_bonus = item_def.magic_damage_bonus
+                    existing_item.physical_defence_bonus = item_def.physical_defence_bonus
+                    existing_item.magic_defence_bonus = item_def.magic_defence_bonus
+                    existing_item.health_bonus = item_def.health_bonus
+                    existing_item.speed_bonus = item_def.speed_bonus
+                    existing_item.mining_bonus = item_def.mining_bonus
+                    existing_item.woodcutting_bonus = item_def.woodcutting_bonus
+                    existing_item.fishing_bonus = item_def.fishing_bonus
+                    existing_item.is_two_handed = item_def.is_two_handed
+                    existing_item.is_indestructible = item_def.is_indestructible
+                    existing_item.is_tradeable = item_def.is_tradeable
+                    existing_item.required_skill = item_def.required_skill.value if item_def.required_skill else None
+                    existing_item.required_level = item_def.required_level
+                    existing_item.ammo_type = item_def.ammo_type.value if item_def.ammo_type else None
+                else:
+                    # Create new item
+                    new_item = Item(
+                        name=item_type.name,
+                        display_name=item_def.display_name,
+                        description=item_def.description,
+                        category=item_def.category.value,
+                        rarity=item_def.rarity.value if item_def.rarity else "common",
+                        value=item_def.value,
+                        equipment_slot=item_def.equipment_slot.value if item_def.equipment_slot else None,
+                        max_durability=item_def.max_durability,
+                        max_stack_size=item_def.max_stack_size,
+                        attack_bonus=item_def.attack_bonus,
+                        strength_bonus=item_def.strength_bonus,
+                        ranged_attack_bonus=item_def.ranged_attack_bonus,
+                        ranged_strength_bonus=item_def.ranged_strength_bonus,
+                        magic_attack_bonus=item_def.magic_attack_bonus,
+                        magic_damage_bonus=item_def.magic_damage_bonus,
+                        physical_defence_bonus=item_def.physical_defence_bonus,
+                        magic_defence_bonus=item_def.magic_defence_bonus,
+                        health_bonus=item_def.health_bonus,
+                        speed_bonus=item_def.speed_bonus,
+                        mining_bonus=item_def.mining_bonus,
+                        woodcutting_bonus=item_def.woodcutting_bonus,
+                        fishing_bonus=item_def.fishing_bonus,
+                        is_two_handed=item_def.is_two_handed,
+                        is_indestructible=item_def.is_indestructible,
+                        is_tradeable=item_def.is_tradeable,
+                        required_skill=item_def.required_skill.value if item_def.required_skill else None,
+                        required_level=item_def.required_level,
+                        ammo_type=item_def.ammo_type.value if item_def.ammo_type else None,
+                    )
+                    db.add(new_item)
+                
+                items_synced += 1
+                
+            await db.commit()
+            
+        logger.info(f"Synced {items_synced} items to database")
+        return items_synced
+
     # =========================================================================
     # COMPLETE PLAYER DATA MANAGEMENT
     # =========================================================================

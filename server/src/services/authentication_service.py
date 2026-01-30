@@ -7,7 +7,7 @@ Handles JWT validation, player authentication, and session management.
 from typing import Dict, Optional, Any
 from datetime import datetime, timezone
 
-from ..core.security import verify_token
+from ..core.security import verify_token, verify_password
 from ..core.logging_config import get_logger
 from ..models.player import Player
 from .player_service import PlayerService
@@ -17,7 +17,78 @@ logger = get_logger(__name__)
 
 
 class AuthenticationService:
-    """Service for managing WebSocket authentication operations."""
+    """Service for managing authentication operations."""
+
+    @staticmethod
+    async def authenticate_with_password(
+        username: str, password: str
+    ) -> Optional[Player]:
+        """
+        Authenticate a user with username and password.
+
+        Args:
+            username: User's username
+            password: User's password
+
+        Returns:
+            Player instance if authenticated, None otherwise
+        """
+        try:
+            # Get player by username
+            player = await PlayerService.get_player_by_username(username)
+            if not player:
+                logger.debug(
+                    "Authentication failed - player not found",
+                    extra={"username": username}
+                )
+                return None
+
+            # Verify password
+            if not verify_password(password, player.hashed_password):
+                logger.debug(
+                    "Authentication failed - invalid password",
+                    extra={"username": username}
+                )
+                return None
+
+            # Check if player is banned
+            if player.is_banned:
+                logger.warning(
+                    "Authentication failed - player banned",
+                    extra={"username": username, "player_id": player.id}
+                )
+                return None
+
+            # Check if player is timed out
+            if player.timeout_until:
+                # Handle both timezone-aware and naive datetimes
+                timeout_until = player.timeout_until
+                if timeout_until.tzinfo is None:
+                    timeout_until = timeout_until.replace(tzinfo=timezone.utc)
+                if timeout_until > datetime.now(timezone.utc):
+                    logger.warning(
+                        "Authentication failed - player timed out",
+                        extra={
+                            "username": username,
+                            "player_id": player.id,
+                            "timeout_until": str(player.timeout_until)
+                        }
+                    )
+                    return None
+
+            logger.info(
+                "User authentication successful",
+                extra={"username": username, "player_id": player.id}
+            )
+
+            return player
+
+        except Exception as e:
+            logger.error(
+                "Error during user authentication",
+                extra={"username": username, "error": str(e)}
+            )
+            return None
 
     @staticmethod
     async def validate_jwt_token(token: str) -> Optional[Dict[str, Any]]:

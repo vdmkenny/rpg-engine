@@ -8,12 +8,9 @@ from typing import List, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.src.core.database import get_db
 from server.src.core.logging_config import get_logger
 from server.src.core.security import get_current_user
-from server.src.models.player import Player
 from server.src.services.map_service import get_map_manager
 from server.src.core.config import settings
 
@@ -29,8 +26,7 @@ logger = get_logger(__name__)
 )
 async def get_map_tilesets(
     map_id: str,
-    current_user: Player = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user = Depends(get_current_user),
 ) -> List[Dict]:
     """
     Get tileset metadata for a map. Requires authentication.
@@ -81,8 +77,7 @@ async def get_map_tilesets(
 )
 async def get_tileset_metadata(
     tileset_id: str,
-    current_user: Player = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user = Depends(get_current_user),
 ) -> Dict:
     """
     Get detailed metadata for a specific tileset. Requires authentication.
@@ -133,8 +128,7 @@ async def get_tileset_metadata(
 )
 async def get_tileset_image(
     image_filename: str,
-    current_user: Player = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user = Depends(get_current_user),
 ) -> FileResponse:
     """
     Serve tileset image files. Requires authentication for security.
