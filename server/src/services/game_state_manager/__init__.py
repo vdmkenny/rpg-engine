@@ -1730,20 +1730,22 @@ class GameStateManager:
             result = await db.execute(select(Skill))
             return {s.name: s.id for s in result.scalars().all()}
     
-    async def grant_all_skills_to_player_offline(self, player_id: int) -> list:
+    async def grant_all_skills_to_player_offline(self, player_id: int, db_session: Optional[AsyncSession] = None) -> list:
         """
         Create PlayerSkill rows for all skills for offline players.
         
         Args:
             player_id: The players database ID
+            db_session: Optional database session to use (for transaction sharing)
             
         Returns:
             List of all PlayerSkill records for the player
         """
         if not self._session_factory:
             return []
-            
-        async with self._db_session() as db:
+        
+        # Use provided session or create new one
+        async def _execute_with_session():
             from server.src.models.skill import PlayerSkill, Skill
             from server.src.core.skills import (
                 SkillType, get_skill_xp_multiplier, xp_for_level, HITPOINTS_START_LEVEL
@@ -1789,7 +1791,10 @@ class GameStateManager:
             stmt = pg_insert(PlayerSkill).values(values)
             stmt = stmt.on_conflict_do_nothing(constraint="_player_skill_uc")
             await db.execute(stmt)
-            await self._commit_if_not_test_session(db)
+            
+            # Only commit if we created our own session
+            if not db_session:
+                await self._commit_if_not_test_session(db)
             
             # Fetch and return all player skills
             result = await db.execute(
@@ -1803,6 +1808,15 @@ class GameStateManager:
             )
             
             return player_skills
+        
+        if db_session:
+            # Use provided session (transaction sharing)
+            db = db_session
+            return await _execute_with_session()
+        else:
+            # Create our own session
+            async with self._db_session() as db:
+                return await _execute_with_session()
     
     async def get_player_skills_offline(self, player_id: int) -> list:
         """
@@ -2302,7 +2316,6 @@ class GameStateManager:
             
         async with self._db_session() as db:
             from server.src.models.player import Player
-            from server.src.services.skill_service import SkillService
             
             # Create player record
             player = Player(
@@ -2316,8 +2329,8 @@ class GameStateManager:
             db.add(player)
             await db.flush()  # Get player ID
             
-            # Initialize player skills with default values
-            await SkillService.grant_all_skills_to_player(player.id)
+            # Initialize player skills with default values (using same session)
+            await self.grant_all_skills_to_player_offline(player.id, db)
             
             await db.commit()
             await db.refresh(player)
@@ -2326,7 +2339,10 @@ class GameStateManager:
             await self.load_player_state(player.id)
             
             # Return complete player data
-            return await self.get_player_complete(player.id)
+            player_data = await self.get_player_complete(player.id)
+            if not player_data:
+                raise RuntimeError(f"Failed to load player data after creation: {player.id}")
+            return player_data
     
     async def get_player_complete(self, player_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -2362,8 +2378,24 @@ class GameStateManager:
             # Load into cache with TTL (offline player)
             await self.load_player_state(player_id)
             
-            # Return the cached data
-            return await self.get_player_full_state(player_id)
+            # For offline players, build the data manually since cache requires online status
+            player_data = {
+                "id": player.id,
+                "username": player.username,
+                "hashed_password": player.hashed_password,
+                "x_coord": player.x_coord,
+                "y_coord": player.y_coord,
+                "map_id": player.map_id,
+                "role": getattr(player, 'role', 'player'),
+                "is_banned": getattr(player, 'is_banned', False),
+                "timeout_until": getattr(player, 'timeout_until', None),
+                "current_hp": player.current_hp,
+                "x": player.x_coord,  # Legacy compatibility 
+                "y": player.y_coord,  # Legacy compatibility
+                "max_hp": player.current_hp,  # Will be calculated properly by services
+            }
+            
+            return player_data
     
     async def get_player_by_username_complete(self, username: str) -> Optional[Dict[str, Any]]:
         """

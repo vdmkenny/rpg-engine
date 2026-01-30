@@ -96,21 +96,26 @@ class TestAtomicTransactionOptimization:
         call_count = 0
         retry_times = []
         
+        original_multi = valkey_ops.valkey.multi
+        
         def mock_multi():
             nonlocal call_count
             call_count += 1
             retry_times.append(time.time())
             if call_count <= 2:
                 raise Exception("Simulated failure")
-            return valkey_ops.valkey.multi()
+            # Call the original multi function, not the replaced one
+            return original_multi()
         
-        original_multi = valkey_ops.valkey.multi  
         sleep_durations = []
+        
+        # Store the original sleep to avoid recursion
+        original_sleep = asyncio.sleep
         
         async def mock_sleep(duration):
             sleep_durations.append(duration)
-            # Use the real sleep but with minimal delay to speed up test
-            await asyncio.sleep(0.001)
+            # Use the original sleep function to avoid recursion
+            await original_sleep(0.001)
         
         valkey_ops.valkey.multi = mock_multi
         
