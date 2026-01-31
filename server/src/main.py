@@ -63,6 +63,31 @@ async def lifespan(app: FastAPI):
         logger.info(f"Loaded {items_cached} items to cache")
     except Exception as e:
         logger.warning(f"Could not load item cache: {e}")
+        
+    # Sync entities to database (mirroring code definitions)
+    try:
+        from server.src.services.entity_service import EntityService
+        await EntityService.sync_entities_to_db()
+        logger.info("Entities synced to database")
+    except Exception as e:
+        logger.warning(f"Could not sync entities to database: {e}")
+    
+    # Clear stale entity instances and spawn entities from Tiled maps
+    try:
+        # Clear any stale entity instances from previous server run
+        await gsm.clear_all_entity_instances()
+        logger.info("Cleared stale entity instances from Valkey")
+        
+        # Spawn entities for all loaded maps
+        from server.src.services.entity_spawn_service import EntitySpawnService
+        total_spawned = 0
+        for map_id in map_manager.maps.keys():
+            spawned = await EntitySpawnService.spawn_map_entities(gsm, map_id)
+            total_spawned += spawned
+        
+        logger.info(f"Spawned {total_spawned} entity instances from Tiled maps")
+    except Exception as e:
+        logger.warning(f"Could not spawn entity instances: {e}")
     
     # Load ground items from database to Valkey via GSM
     try:

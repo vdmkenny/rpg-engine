@@ -43,6 +43,9 @@ class TileMap:
         self.tile_height = 32
         self.walkable_tiles: Set[int] = set()
         self.collision_layers: List[pytmx.TiledTileLayer] = []
+        self._collision_grid: Optional[List[List[bool]]] = None  # Cached collision grid
+        self.entity_spawn_points: List[Dict[str, Any]] = []  # Entity spawn points from Tiled
+        self.player_spawn_point: Optional[Dict[str, Any]] = None  # Player spawn from Tiled
 
         self._load_map()
 
@@ -81,6 +84,9 @@ class TileMap:
                         if hasattr(layer, "data") and layer.name.lower() in settings.COLLISION_LAYER_NAMES:
                             self.collision_layers.append(layer)
 
+            # Parse object layers for spawn points
+            self._parse_object_layers()
+
             logger.info(
                 "Map loaded successfully",
                 extra={
@@ -89,6 +95,8 @@ class TileMap:
                     "tile_size": f"{self.tile_width}x{self.tile_height}",
                     "walkable_tiles": len(self.walkable_tiles),
                     "collision_layers": [layer.name for layer in self.collision_layers],
+                    "entity_spawns": len(self.entity_spawn_points),
+                    "player_spawn": self.player_spawn_point is not None,
                     "tilesets": len(self.tmx_data.tilesets) if self.tmx_data else 0,
                 },
             )
@@ -98,6 +106,102 @@ class TileMap:
                 "Failed to load map", extra={"map_path": self.map_path, "error": str(e)}
             )
             raise
+
+    def _parse_object_layers(self):
+        """Parse object layers from Tiled map for spawn points."""
+        if not self.tmx_data or not hasattr(self.tmx_data, "objects"):
+            return
+
+        for obj in self.tmx_data.objects:
+            obj_type = getattr(obj, "type", "").lower()
+            
+            if obj_type == "entity_spawn":
+                self._parse_entity_spawn(obj)
+            elif obj_type == "player_spawn":
+                self._parse_player_spawn(obj)
+
+    def _parse_entity_spawn(self, obj):
+        """
+        Parse an entity spawn point from a Tiled object.
+        
+        Args:
+            obj: Tiled object representing an entity spawn point
+        """
+        # Convert pixel coordinates to tile coordinates
+        tile_x = int(obj.x // self.tile_width)
+        tile_y = int(obj.y // self.tile_height)
+        
+        # Extract custom properties
+        entity_id = None
+        wander_radius = 0
+        aggro_override = None
+        disengage_override = None
+        patrol_route = None
+        
+        if hasattr(obj, "properties"):
+            entity_id = obj.properties.get("entity_id")
+            wander_radius = obj.properties.get("wander_radius", 0)
+            aggro_override = obj.properties.get("aggro_override")
+            disengage_override = obj.properties.get("disengage_override")
+            patrol_route = obj.properties.get("patrol_route")
+        
+        # Validate required fields
+        if not entity_id:
+            logger.warning(
+                "Entity spawn missing entity_id",
+                extra={"object_name": obj.name, "position": (tile_x, tile_y)}
+            )
+            return
+        
+        spawn_point = {
+            "id": getattr(obj, "id", len(self.entity_spawn_points)),
+            "name": getattr(obj, "name", f"spawn_{tile_x}_{tile_y}"),
+            "entity_id": entity_id,
+            "x": tile_x,
+            "y": tile_y,
+            "wander_radius": wander_radius,
+            "aggro_override": aggro_override,
+            "disengage_override": disengage_override,
+            "patrol_route": patrol_route,
+        }
+        
+        self.entity_spawn_points.append(spawn_point)
+        
+        logger.debug(
+            "Parsed entity spawn point",
+            extra={"spawn_point": spawn_point}
+        )
+
+    def _parse_player_spawn(self, obj):
+        """
+        Parse a player spawn point from a Tiled object.
+        
+        Args:
+            obj: Tiled object representing a player spawn point
+        """
+        # Only use the first player spawn found
+        if self.player_spawn_point is not None:
+            logger.debug(
+                "Ignoring additional player spawn",
+                extra={"object_name": obj.name}
+            )
+            return
+        
+        # Convert pixel coordinates to tile coordinates
+        tile_x = int(obj.x // self.tile_width)
+        tile_y = int(obj.y // self.tile_height)
+        
+        self.player_spawn_point = {
+            "id": getattr(obj, "id", 0),
+            "name": getattr(obj, "name", "default_spawn"),
+            "x": tile_x,
+            "y": tile_y,
+        }
+        
+        logger.info(
+            "Parsed player spawn point",
+            extra={"spawn_point": self.player_spawn_point}
+        )
 
     def get_tileset_metadata(self) -> List[Dict]:
         """
@@ -426,6 +530,32 @@ class TileMap:
         # Fallback to (1, 1) if no walkable tile found
         return (1, 1)
 
+    def get_collision_grid(self) -> List[List[bool]]:
+        """
+        Get cached collision grid for pathfinding.
+        
+        Grid is built once and cached. True = blocked, False = walkable.
+        Grid is indexed as [y][x] to match collision_grid convention.
+        
+        Returns:
+            2D list where True indicates a blocked tile
+        """
+        if self._collision_grid is not None:
+            return self._collision_grid
+        
+        # Build collision grid
+        grid = []
+        for y in range(self.height):
+            row = []
+            for x in range(self.width):
+                # True if blocked, False if walkable
+                row.append(not self.is_walkable(x, y))
+            grid.append(row)
+        
+        # Cache for future use
+        self._collision_grid = grid
+        return grid
+
     def get_tile_info(self, x: int, y: int) -> Dict:
         """Get detailed information about a tile."""
         if x < 0 or x >= self.width or y < 0 or y >= self.height:
@@ -657,6 +787,8 @@ class MapManager:
         """
         Get the default spawn position for new players.
         
+        Uses Tiled player_spawn object if available, otherwise falls back to config.yml.
+        
         Returns:
             A tuple of (map_id, x, y).
         """
@@ -679,7 +811,22 @@ class MapManager:
             # Fallback to hardcoded values if default map is not found
             return "test_map", settings.DEFAULT_SPAWN_X, settings.DEFAULT_SPAWN_Y
 
-        spawn_x, spawn_y = tile_map.get_spawn_position()
+        # Try Tiled player spawn first
+        if tile_map.player_spawn_point:
+            spawn_x = tile_map.player_spawn_point["x"]
+            spawn_y = tile_map.player_spawn_point["y"]
+            logger.debug(
+                "Using Tiled player spawn",
+                extra={"map_id": default_map_id, "x": spawn_x, "y": spawn_y}
+            )
+            return default_map_id, spawn_x, spawn_y
+
+        # Fall back to config.yml settings
+        spawn_x, spawn_y = settings.DEFAULT_SPAWN_X, settings.DEFAULT_SPAWN_Y
+        logger.debug(
+            "Using config.yml player spawn (no Tiled spawn found)",
+            extra={"map_id": default_map_id, "x": spawn_x, "y": spawn_y}
+        )
         return default_map_id, spawn_x, spawn_y
 
     def get_player_spawn_position(
@@ -705,15 +852,17 @@ class MapManager:
 
         # For now, just use the default spawn of the target map
         # This can be extended to support multiple named spawn points
-        spawn_point = tile_map.get_spawn_point()
-        if not spawn_point:
-            logger.warning(
-                "No spawn point found on map, falling back to default",
-                extra={"map_id": map_id},
-            )
-            return self.get_default_spawn_position()
-
-        return map_id, spawn_point.x, spawn_point.y
+        if tile_map.player_spawn_point:
+            spawn_x = tile_map.player_spawn_point["x"]
+            spawn_y = tile_map.player_spawn_point["y"]
+            return map_id, spawn_x, spawn_y
+        
+        # No player spawn on this map, fall back to default
+        logger.warning(
+            "No spawn point found on map, falling back to default",
+            extra={"map_id": map_id},
+        )
+        return self.get_default_spawn_position()
 
     def validate_player_position(
         self, map_id: str, x: int, y: int

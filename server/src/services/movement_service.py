@@ -277,6 +277,9 @@ class MovementService:
                 "timestamp": current_time
             }
 
+            # Break combat on movement
+            await state_manager.clear_player_combat_state(player_id)
+            
             logger.info(
                 "Player movement executed successfully",
                 extra={

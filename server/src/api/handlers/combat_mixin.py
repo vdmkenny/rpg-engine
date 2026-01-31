@@ -1,0 +1,303 @@
+"""
+Combat command handler mixin.
+
+Handles attack and auto-retaliate commands.
+"""
+
+from typing import Any
+
+import msgpack
+from pydantic import ValidationError
+
+from server.src.core.config import settings, game_config
+from server.src.core.logging_config import get_logger
+from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.combat_service import CombatService
+from server.src.api.helpers.rate_limiter import OperationRateLimiter
+
+from common.src.protocol import (
+    WSMessage,
+    MessageType,
+    ErrorCodes,
+    AttackPayload,
+    ToggleAutoRetaliatePayload,
+    PROTOCOL_VERSION,
+)
+
+logger = get_logger(__name__)
+
+
+class CombatHandlerMixin:
+    """Handles CMD_ATTACK and CMD_TOGGLE_AUTO_RETALIATE."""
+    
+    websocket: Any
+    username: str
+    player_id: int
+    
+    async def _handle_cmd_attack(self, message: WSMessage) -> None:
+        """Handle CMD_ATTACK - player attacks entity or player."""
+        try:
+            operation_rate_limiter = OperationRateLimiter()
+            if not operation_rate_limiter.check_rate_limit(
+                self.username,
+                "combat_attack",
+                settings.game.security.combat_attack_cooldown
+            ):
+                await self._send_error_response(
+                    message.id,
+                    ErrorCodes.MOVE_RATE_LIMITED,
+                    "rate_limit",
+                    "Attack on cooldown"
+                )
+                return
+            
+            payload = AttackPayload(**message.payload)
+            gsm = get_game_state_manager()
+            
+            # Validate attacker state
+            attacker_pos = await gsm.get_player_position(self.player_id)
+            if not attacker_pos:
+                await self._send_error_response(
+                    message.id,
+                    ErrorCodes.SYS_INTERNAL_ERROR,
+                    "system",
+                    "Could not determine player position"
+                )
+                return
+            
+            attacker_hp = await gsm.get_player_hp(self.player_id)
+            if not attacker_hp or attacker_hp["current_hp"] <= 0:
+                await self._send_error_response(
+                    message.id,
+                    ErrorCodes.SYS_INTERNAL_ERROR,
+                    "validation",
+                    "You cannot attack while dead"
+                )
+                return
+            
+            # Validate target
+            if payload.target_type == "entity":
+                entity_id = int(payload.target_id)
+                entity_data = await gsm.get_entity_instance(entity_id)
+                
+                if not entity_data:
+                    await self._send_error_response(
+                        message.id,
+                        ErrorCodes.SYS_INTERNAL_ERROR,
+                        "validation",
+                        "Target entity not found"
+                    )
+                    return
+                
+                if not entity_data.get("is_attackable", True):
+                    await self._send_error_response(
+                        message.id,
+                        ErrorCodes.SYS_INTERNAL_ERROR,
+                        "validation",
+                        "Target cannot be attacked"
+                    )
+                    return
+                
+                if entity_data["map_id"] != attacker_pos["map_id"]:
+                    await self._send_error_response(
+                        message.id,
+                        ErrorCodes.SYS_INTERNAL_ERROR,
+                        "validation",
+                        "Target is not on the same map"
+                    )
+                    return
+                
+                defender_pos = {
+                    "x": entity_data["x"],
+                    "y": entity_data["y"],
+                    "map_id": entity_data["map_id"]
+                }
+                
+            else:  # player target
+                await self._send_error_response(
+                    message.id,
+                    ErrorCodes.SYS_INTERNAL_ERROR,
+                    "validation",
+                    "Player vs player combat is not yet implemented"
+                )
+                return
+            
+            # Check range - must be adjacent (within 1 tile)
+            dx = abs(attacker_pos["x"] - defender_pos["x"])
+            dy = abs(attacker_pos["y"] - defender_pos["y"])
+            
+            if dx > 1 or dy > 1:
+                await self._send_error_response(
+                    message.id,
+                    ErrorCodes.SYS_INTERNAL_ERROR,
+                    "validation",
+                    "Target is too far away (must be within 1 tile)",
+                    details={
+                        "distance": {"x": dx, "y": dy},
+                        "your_position": {"x": attacker_pos["x"], "y": attacker_pos["y"]},
+                        "target_position": {"x": defender_pos["x"], "y": defender_pos["y"]}
+                    }
+                )
+                return
+            
+            # Perform combat
+            result = await CombatService.perform_attack(
+                attacker_type="player",
+                attacker_id=self.player_id,
+                defender_type=payload.target_type,
+                defender_id=int(payload.target_id),
+            )
+            
+            if result.success:
+                await self._send_success_response(
+                    message.id,
+                    {
+                        "message": result.message,
+                        "hit": result.hit,
+                        "damage": result.damage,
+                        "defender_hp": result.defender_hp,
+                        "defender_died": result.defender_died,
+                        "xp_gained": {skill.name.lower(): xp for skill, xp in result.xp_gained.items()}
+                    }
+                )
+                
+                # Broadcast combat event
+                from server.src.api.websockets import manager
+                combat_event = WSMessage(
+                    id=None,
+                    type=MessageType.EVENT_COMBAT_ACTION,
+                    payload={
+                        "attacker_type": "player",
+                        "attacker_id": self.player_id,
+                        "attacker_name": self.username,
+                        "defender_type": payload.target_type,
+                        "defender_id": int(payload.target_id),
+                        "defender_name": entity_data.get("display_name", "Unknown"),
+                        "hit": result.hit,
+                        "damage": result.damage,
+                        "defender_hp": result.defender_hp,
+                        "defender_died": result.defender_died,
+                        "message": result.message
+                    },
+                    version=PROTOCOL_VERSION
+                )
+                
+                packed_event = msgpack.packb(combat_event.model_dump(), use_bin_type=True)
+                await manager.broadcast_to_map(attacker_pos["map_id"], packed_event)
+                
+                # Set combat state for auto-attack
+                from server.src.game.game_loop import _global_tick_counter
+                
+                equipment = await gsm.get_equipment(self.player_id)
+                weapon_item = equipment.get("weapon")
+                base_attack_speed = game_config.get("game", {}).get("combat", {}).get("base_attack_speed", 3.0)
+                
+                if weapon_item and weapon_item.get("item_id"):
+                    weapon_meta = gsm.get_cached_item_meta(weapon_item["item_id"])
+                    attack_speed = weapon_meta.get("attack_speed", base_attack_speed) if weapon_meta else base_attack_speed
+                else:
+                    attack_speed = base_attack_speed
+                
+                await gsm.set_player_combat_state(
+                    player_id=self.player_id,
+                    target_type=payload.target_type,
+                    target_id=int(payload.target_id),
+                    last_attack_tick=_global_tick_counter,
+                    attack_speed=attack_speed
+                )
+                
+                logger.info(
+                    "Combat action executed",
+                    extra={
+                        "attacker": self.username,
+                        "target_type": payload.target_type,
+                        "target_id": payload.target_id,
+                        "hit": result.hit,
+                        "damage": result.damage,
+                        "defender_died": result.defender_died
+                    }
+                )
+            else:
+                await self._send_error_response(
+                    message.id,
+                    ErrorCodes.SYS_INTERNAL_ERROR,
+                    "validation",
+                    result.error or "Attack failed"
+                )
+                
+        except ValidationError as e:
+            logger.info(
+                "Attack command validation failed",
+                extra={"username": self.username, "validation_errors": str(e)}
+            )
+            await self._send_error_response(
+                message.id,
+                ErrorCodes.SYS_INTERNAL_ERROR,
+                "validation",
+                "Invalid attack command"
+            )
+            
+        except Exception as e:
+            logger.error(
+                "Error handling attack command",
+                extra={
+                    "username": self.username,
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                }
+            )
+            await self._send_error_response(
+                message.id,
+                ErrorCodes.SYS_INTERNAL_ERROR,
+                "system",
+                "Attack processing failed"
+            )
+    
+    async def _handle_cmd_toggle_auto_retaliate(self, message: WSMessage) -> None:
+        """Handle CMD_TOGGLE_AUTO_RETALIATE - toggle auto-retaliation setting."""
+        try:
+            payload = ToggleAutoRetaliatePayload(**message.payload)
+            
+            gsm = get_game_state_manager()
+            await gsm.set_player_setting(self.player_id, "auto_retaliate", payload.enabled)
+            
+            await self._send_success_response(
+                message.id,
+                {
+                    "message": f"Auto-retaliate {'enabled' if payload.enabled else 'disabled'}",
+                    "auto_retaliate": payload.enabled
+                }
+            )
+            
+            logger.info(
+                "Auto-retaliate toggled",
+                extra={"username": self.username, "enabled": payload.enabled}
+            )
+            
+        except ValidationError as e:
+            logger.info(
+                "Toggle auto-retaliate validation failed",
+                extra={"username": self.username, "validation_errors": str(e)}
+            )
+            await self._send_error_response(
+                message.id,
+                ErrorCodes.SYS_INTERNAL_ERROR,
+                "validation",
+                "Invalid toggle command"
+            )
+            
+        except Exception as e:
+            logger.error(
+                "Error handling toggle auto-retaliate command",
+                extra={
+                    "username": self.username,
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                }
+            )
+            await self._send_error_response(
+                message.id,
+                ErrorCodes.SYS_INTERNAL_ERROR,
+                "system",
+                "Toggle auto-retaliate failed"
+            )

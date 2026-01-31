@@ -496,6 +496,9 @@ class EquipmentService:
                     },
                 )
                 
+                # Equipment change breaks combat
+                await state_manager.clear_player_combat_state(player_id)
+                
                 return EquipItemResult(
                     success=True,
                     message=f"Added {add_qty} {item_data.get('display_name')} (now {new_total})",
@@ -526,6 +529,9 @@ class EquipmentService:
                         "remaining_in_inv": remaining_qty,
                     },
                 )
+                
+                # Equipment change breaks combat
+                await state_manager.clear_player_combat_state(player_id)
                 
                 return EquipItemResult(
                     success=True,
@@ -638,6 +644,9 @@ class EquipmentService:
             },
         )
 
+        # Equipment change breaks combat
+        await state_manager.clear_player_combat_state(player_id)
+
         return EquipItemResult(
             success=True,
             message=f"Equipped {item_data.get('display_name')}" + (f" x{equip_quantity}" if is_stackable_ammo and equip_quantity > 1 else ""),
@@ -725,6 +734,9 @@ class EquipmentService:
                 },
             )
 
+            # Equipment change breaks combat
+            await state_manager.clear_player_combat_state(player_id)
+
             return UnequipItemResult(
                 success=True,
                 message=f"Unequipped {item_wrapper.get('display_name')}" + (f" x{quantity}" if quantity > 1 else ""),
@@ -774,6 +786,10 @@ class EquipmentService:
                             "dropped_qty": dropped_quantity,
                         },
                     )
+                    
+                    # Equipment change breaks combat
+                    await state_manager.clear_player_combat_state(player_id)
+                    
                     return UnequipItemResult(
                         success=True,
                         message=f"Unequipped {item_wrapper.get('display_name')} ({quantity - dropped_quantity} to inventory, {dropped_quantity} dropped)",
@@ -791,6 +807,10 @@ class EquipmentService:
                             "quantity": dropped_quantity,
                         },
                     )
+                    
+                    # Equipment change breaks combat
+                    await state_manager.clear_player_combat_state(player_id)
+                    
                     return UnequipItemResult(
                         success=True,
                         message=f"Inventory full - {item_wrapper.get('display_name')} dropped to ground",

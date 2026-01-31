@@ -58,6 +58,19 @@ game:
     inventory_operation_cooldown: 0.1
     # Minimum time between equipment operations (equip, unequip) in seconds
     equipment_operation_cooldown: 0.1
+    # Minimum time between combat attacks in seconds (600ms = 100 attacks per minute)
+    combat_attack_cooldown: 0.6
+
+  # Combat configuration
+  combat:
+    # Unarmed attack speed (seconds between attacks)
+    base_attack_speed: 3.0
+    # Melee attacks require target to be within this many tiles
+    melee_max_range: 1
+    # Auto-stop combat if target moves this far away (tiles)
+    combat_break_distance: 3
+    # Ticks before entity despawns after death (10 ticks = 0.5s @ 20 TPS)
+    death_animation_ticks: 10
 
   # Authentication/session configuration
   auth:

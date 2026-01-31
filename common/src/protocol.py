@@ -48,6 +48,8 @@ class MessageType(str, Enum):
     CMD_ITEM_PICKUP = "cmd_item_pickup"
     CMD_ITEM_EQUIP = "cmd_item_equip"
     CMD_ITEM_UNEQUIP = "cmd_item_unequip"
+    CMD_ATTACK = "cmd_attack"
+    CMD_TOGGLE_AUTO_RETALIATE = "cmd_toggle_auto_retaliate"
     
     # Client → Server: Queries (Data Retrieval)
     QUERY_INVENTORY = "query_inventory"
@@ -71,6 +73,7 @@ class MessageType(str, Enum):
     EVENT_PLAYER_RESPAWN = "event_player_respawn"
     EVENT_GAME_STATE_UPDATE = "event_game_state_update"
     EVENT_SERVER_SHUTDOWN = "event_server_shutdown"
+    EVENT_COMBAT_ACTION = "event_combat_action"
     
 
 
@@ -142,6 +145,17 @@ class ItemEquipPayload(BaseModel):
 class ItemUnequipPayload(BaseModel):
     """Payload for CMD_ITEM_UNEQUIP"""
     equipment_slot: str = Field(..., description="Equipment slot to unequip from")
+
+
+class AttackPayload(BaseModel):
+    """Payload for CMD_ATTACK"""
+    target_type: Literal["entity", "player"] = Field(..., description="Type of target (entity or player)")
+    target_id: Union[int, str] = Field(..., description="Entity instance ID (int) or player username (str)")
+
+
+class ToggleAutoRetaliatePayload(BaseModel):
+    """Payload for CMD_TOGGLE_AUTO_RETALIATE"""
+    enabled: bool = Field(..., description="Enable or disable auto-retaliation")
 
 
 # =============================================================================
@@ -399,7 +413,8 @@ COMMAND_TYPES = {
     MessageType.CMD_ITEM_DROP,
     MessageType.CMD_ITEM_PICKUP,
     MessageType.CMD_ITEM_EQUIP,
-    MessageType.CMD_ITEM_UNEQUIP
+    MessageType.CMD_ITEM_UNEQUIP,
+    MessageType.CMD_ATTACK
 }
 
 # Queries that expect RESP_DATA responses  
@@ -418,7 +433,8 @@ EVENT_TYPES = {
     MessageType.EVENT_CHAT_MESSAGE,
     MessageType.EVENT_PLAYER_JOINED,
     MessageType.EVENT_PLAYER_LEFT,
-    MessageType.EVENT_SERVER_SHUTDOWN
+    MessageType.EVENT_SERVER_SHUTDOWN,
+    MessageType.EVENT_COMBAT_ACTION
 }
 
 # Response types (server only)

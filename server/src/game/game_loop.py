@@ -112,6 +112,72 @@ def get_visible_entities(
     return visible
 
 
+def get_visible_npc_entities(
+    player_x: int, player_y: int,
+    all_entity_instances: List[Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Get NPC/monster entities visible to a player based on chunk range.
+    
+    Args:
+        player_x, player_y: Player's tile position
+        all_entity_instances: All entity instances on the map
+        
+    Returns:
+        Dict of {entity_key: entity_data} for visible entities
+    """
+    from server.src.core.entities import EntityID
+    
+    visible = {}
+    for entity in all_entity_instances:
+        entity_state = entity.get("state", "idle")
+        
+        # Show entities in "dying" state (10-tick death animation)
+        # Skip entities fully despawned (state == "dead")
+        if entity_state == "dead":
+            continue
+            
+        entity_x = int(entity.get("x", 0))
+        entity_y = int(entity.get("y", 0))
+        
+        if is_in_visible_range(player_x, player_y, entity_x, entity_y):
+            entity_id = entity.get("id")
+            entity_name = entity.get("entity_name", "")
+            
+            # Get entity definition for display name and behavior
+            entity_enum = EntityID.from_name(entity_name)
+            display_name = entity_name
+            behavior_type = "PASSIVE"
+            sprite_info = ""
+            is_attackable = True
+            
+            if entity_enum:
+                entity_def = entity_enum.value
+                display_name = entity_def.display_name
+                behavior_type = entity_def.behavior.name
+                sprite_info = ""  # Empty for now, will be populated later
+                is_attackable = entity_def.is_attackable and entity_state != "dying"  # Can't attack dying entities
+            else:
+                is_attackable = entity_state != "dying"  # Can't attack dying entities
+            
+            visible[f"entity_{entity_id}"] = {
+                "type": "entity",
+                "id": entity_id,
+                "entity_name": entity_name,
+                "display_name": display_name,
+                "behavior_type": behavior_type,
+                "sprite_info": sprite_info,
+                "x": entity_x,
+                "y": entity_y,
+                "current_hp": int(entity.get("current_hp", 0)),
+                "max_hp": int(entity.get("max_hp", 0)),
+                "state": entity_state,
+                "is_attackable": is_attackable,
+            }
+    
+    return visible
+
+
 def compute_entity_diff(
     current_visible: Dict[str, Dict[str, Any]], 
     last_visible: Dict[str, Dict[str, Any]]
@@ -193,6 +259,156 @@ def compute_ground_item_diff(
             updated.append(current)
     
     return {"added": added, "updated": updated, "removed": removed}
+
+
+async def _process_auto_attacks(
+    gsm,
+    manager: ConnectionManager,
+    tick_counter: int
+) -> None:
+    """
+    Process all players in combat and execute auto-attacks.
+    
+    Called every game tick (20 TPS = 50ms per tick).
+    
+    For each player in combat:
+    1. Check if enough ticks passed (attack_speed * 20 ticks/second)
+    2. Validate target still exists and in range
+    3. Execute CombatService.perform_attack()
+    4. Update last_attack_tick
+    5. Broadcast EVENT_COMBAT_ACTION
+    6. Clear combat state if target died or out of range
+    
+    Args:
+        gsm: GameStateManager instance
+        manager: ConnectionManager for broadcasting
+        tick_counter: Current tick number
+    """
+    from ..services.combat_service import CombatService
+    from ..services.connection_service import ConnectionService
+    from common.src.protocol import WSMessage, MessageType, PROTOCOL_VERSION
+    
+    players_in_combat = await gsm.get_all_players_in_combat()
+    
+    for combat_entry in players_in_combat:
+        player_id = combat_entry["player_id"]
+        combat_state = combat_entry["combat_state"]
+        
+        try:
+            # Calculate ticks since last attack
+            last_attack_tick = combat_state["last_attack_tick"]
+            attack_speed = combat_state["attack_speed"]
+            ticks_required = int(attack_speed * 20)  # Convert seconds to ticks
+            
+            ticks_since_last_attack = tick_counter - last_attack_tick
+            
+            if ticks_since_last_attack < ticks_required:
+                continue  # Not ready to attack yet
+            
+            # Get player position
+            player_pos = await gsm.get_player_position(player_id)
+            if not player_pos:
+                await gsm.clear_player_combat_state(player_id)
+                continue
+            
+            # Check if player is still alive
+            player_hp = await gsm.get_player_hp(player_id)
+            if not player_hp or player_hp["current_hp"] <= 0:
+                await gsm.clear_player_combat_state(player_id)
+                continue
+            
+            # Get target position and validate
+            target_type = combat_state["target_type"]
+            target_id = combat_state["target_id"]
+            
+            if target_type == "entity":
+                target_data = await gsm.get_entity_instance(target_id)
+                if not target_data:
+                    await gsm.clear_player_combat_state(player_id)
+                    continue
+                
+                target_x = target_data["x"]
+                target_y = target_data["y"]
+                target_map_id = target_data["map_id"]
+                
+                # Check if target is on same map
+                if target_map_id != player_pos["map_id"]:
+                    await gsm.clear_player_combat_state(player_id)
+                    continue
+                
+                # Check range (melee = 1 tile)
+                distance = max(
+                    abs(target_x - player_pos["x"]),
+                    abs(target_y - player_pos["y"])
+                )
+                
+                if distance > 1:  # Melee range
+                    await gsm.clear_player_combat_state(player_id)
+                    continue
+                
+                # Execute attack
+                result = await CombatService.perform_attack(
+                    attacker_type="player",
+                    attacker_id=player_id,
+                    defender_type="entity",
+                    defender_id=target_id,
+                )
+                
+                if result.success:
+                    # Update last attack tick
+                    await gsm.set_player_combat_state(
+                        player_id=player_id,
+                        target_type=target_type,
+                        target_id=target_id,
+                        last_attack_tick=tick_counter,
+                        attack_speed=attack_speed,
+                    )
+                    
+                    # Broadcast combat event
+                    username = ConnectionService.get_online_username_by_player_id(player_id)
+                    if username:
+                        combat_event = WSMessage(
+                            id=None,
+                            type=MessageType.EVENT_COMBAT_ACTION,
+                            payload={
+                                "attacker_type": "player",
+                                "attacker_id": player_id,
+                                "attacker_name": username,
+                                "defender_type": "entity",
+                                "defender_id": target_id,
+                                "defender_name": target_data.get("display_name", "Unknown"),
+                                "hit": result.hit,
+                                "damage": result.damage,
+                                "defender_hp": result.defender_hp,
+                                "defender_died": result.defender_died,
+                                "message": result.message
+                            },
+                            version=PROTOCOL_VERSION
+                        )
+                        
+                        packed_event = msgpack.packb(combat_event.model_dump(), use_bin_type=True)
+                        await manager.broadcast_to_map(player_pos["map_id"], packed_event)
+                    
+                    # Clear combat if target died
+                    if result.defender_died:
+                        await gsm.clear_player_combat_state(player_id)
+                else:
+                    # Attack failed, clear combat state
+                    await gsm.clear_player_combat_state(player_id)
+            
+            # TODO: Handle player vs player combat when implemented
+            
+        except Exception as e:
+            logger.error(
+                "Error processing auto-attack",
+                extra={
+                    "player_id": player_id,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                }
+            )
+            # Clear combat state on error
+            await gsm.clear_player_combat_state(player_id)
 
 
 async def send_chunk_update_if_needed(
@@ -425,6 +641,18 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 if hp_updates:
                     await gsm.state_access.batch_update_player_hp(hp_updates)
 
+                # Process dying entities (death animation completion)
+                entity_instances = await gsm.get_map_entities(map_id)
+                for entity in entity_instances:
+                    if entity.get("state") == "dying":
+                        death_tick = int(entity.get("death_tick", 0))
+                        if _global_tick_counter >= death_tick:
+                            # Death animation complete, finalize death
+                            await gsm.finalize_entity_death(entity["id"])
+
+                # Process auto-attacks for all players in combat
+                await _process_auto_attacks(gsm, manager, _global_tick_counter)
+
                 # For each connected player, compute and send their personalized diff
                 for username in player_usernames:
                     if username not in player_positions:
@@ -439,6 +667,12 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     # Get player entities currently visible to this player
                     current_visible_players = get_visible_entities(
                         player_x, player_y, all_player_data, username
+                    )
+                    
+                    # Get entity instances visible to this player
+                    entity_instances = await gsm.get_map_entities(map_id)
+                    current_visible_entities = get_visible_npc_entities(
+                        player_x, player_y, entity_instances
                     )
                     
                     # Get ground items visible to this player
@@ -485,6 +719,10 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     # Add ground items directly (they already have unique IDs)
                     for ground_item_id, ground_item_data in current_visible_ground_items.items():
                         combined_visible_entities[f"ground_item_{ground_item_id}"] = ground_item_data
+                    
+                    # Add entity instances (already has entity_ prefix from helper function)
+                    for entity_key, entity_data in current_visible_entities.items():
+                        combined_visible_entities[entity_key] = entity_data
                     
                     # Use VisibilityService to compute diff and update state
                     diff = await visibility_service.update_player_visible_entities(username, combined_visible_entities)

@@ -200,6 +200,7 @@ class ItemDefinition:
     # Other stats
     health_bonus: int = 0
     speed_bonus: int = 0
+    attack_speed: float = 3.0  # Seconds between attacks (default: standard speed)
 
     # Gathering stats
     mining_bonus: int = 0
@@ -234,6 +235,7 @@ class ItemType(Enum):
         value=20,
         attack_bonus=4,
         strength_bonus=3,
+        attack_speed=3.0,
     )
 
     IRON_SWORD = ItemDefinition(
@@ -247,6 +249,7 @@ class ItemType(Enum):
         value=50,
         attack_bonus=10,
         strength_bonus=7,
+        attack_speed=3.0,
     )
 
     BRONZE_2H_SWORD = ItemDefinition(
@@ -261,6 +264,7 @@ class ItemType(Enum):
         value=30,
         attack_bonus=6,
         strength_bonus=8,
+        attack_speed=3.6,
     )
 
     # =========================================================================
@@ -278,6 +282,7 @@ class ItemType(Enum):
         value=25,
         ranged_attack_bonus=4,
         ranged_strength_bonus=3,
+        attack_speed=2.4,
     )
 
     OAK_SHORTBOW = ItemDefinition(
@@ -292,6 +297,7 @@ class ItemType(Enum):
         value=60,
         ranged_attack_bonus=10,
         ranged_strength_bonus=6,
+        attack_speed=2.4,
     )
 
     # =========================================================================
@@ -427,6 +433,7 @@ class ItemType(Enum):
         mining_bonus=5,
         attack_bonus=2,  # Can be used as weak weapon
         strength_bonus=1,
+        attack_speed=3.6,
     )
 
     IRON_PICKAXE = ItemDefinition(
@@ -441,6 +448,7 @@ class ItemType(Enum):
         mining_bonus=10,
         attack_bonus=4,
         strength_bonus=2,
+        attack_speed=3.6,
     )
 
     BRONZE_AXE = ItemDefinition(
@@ -455,6 +463,7 @@ class ItemType(Enum):
         woodcutting_bonus=5,
         attack_bonus=3,  # Better weapon than pickaxe
         strength_bonus=2,
+        attack_speed=3.6,
     )
 
     IRON_AXE = ItemDefinition(
@@ -469,6 +478,7 @@ class ItemType(Enum):
         woodcutting_bonus=10,
         attack_bonus=6,
         strength_bonus=4,
+        attack_speed=3.6,
     )
 
     FISHING_NET = ItemDefinition(
