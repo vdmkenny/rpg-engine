@@ -36,11 +36,19 @@ PLAYER_KEY = "player:{player_id}"
 INVENTORY_KEY = "inventory:{player_id}"
 EQUIPMENT_KEY = "equipment:{player_id}"
 SKILLS_KEY = "skills:{player_id}"
+PLAYER_SETTINGS_KEY = "player_settings:{player_id}"
+PLAYER_COMBAT_STATE_KEY = "player_combat_state:{player_id}"
 
 # Ground item keys
 GROUND_ITEM_KEY = "ground_item:{ground_item_id}"
 GROUND_ITEMS_MAP_KEY = "ground_items:map:{map_id}"
 GROUND_ITEMS_NEXT_ID_KEY = "ground_items:next_id"
+
+# Entity instance keys (ephemeral, Valkey-only)
+ENTITY_INSTANCE_KEY = "entity_instance:{instance_id}"
+MAP_ENTITIES_KEY = "map_entities:{map_id}"
+ENTITY_INSTANCE_COUNTER_KEY = "entity_instance_counter"
+ENTITY_RESPAWN_QUEUE_KEY = "entity_respawn_queue"
 
 # Dirty tracking keys (for batch sync)
 DIRTY_POSITION_KEY = "dirty:position"
@@ -175,6 +183,49 @@ class GameStateManager:
                 await session.rollback()
                 raise
     
+    # =========================================================================
+    # ENTITY DEFINITION OPERATIONS
+    # =========================================================================
+    
+    async def sync_entities_to_database(self) -> None:
+        """
+        Sync EntityID enum definitions to the 'entities' database table.
+        Mirroring the pattern used for Items.
+        """
+        from server.src.core.entities import EntityID
+        from server.src.services.entity_service import EntityService
+
+        logger.info("Syncing entities to database...")
+        
+        if not self._session_factory:
+            logger.warning("Cannot sync entities - no database connection")
+            return
+
+        async with self._db_session() as db:
+            from server.src.models.entity import Entity
+            from sqlalchemy.dialects.postgresql import insert
+            
+            count = 0
+            for entity_enum in EntityID:
+                entity_def = entity_enum.value
+                entity_name = entity_enum.name
+                
+                # Convert definition to dict
+                entity_data = EntityService._entity_def_to_dict(entity_name, entity_def)
+                
+                # Upsert
+                stmt = insert(Entity).values(**entity_data)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=['name'],
+                    set_=entity_data
+                )
+                
+                await db.execute(stmt)
+                count += 1
+            
+            await self._commit_if_not_test_session(db)
+        logger.info(f"Synced {count} entities to database.")
+
     # =========================================================================
     # ITEM CACHE MANAGEMENT
     # =========================================================================
@@ -461,6 +512,162 @@ class GameStateManager:
         
         await self._valkey.hset(key, update_data)
         await self._valkey.sadd(DIRTY_POSITION_KEY, [str(player_id)])
+    
+    async def get_player_settings(self, player_id: int) -> Dict[str, Any]:
+        """
+        Get player's game settings (auto-retaliate, etc).
+        
+        Args:
+            player_id: Player's database ID
+            
+        Returns:
+            Dict with settings, defaults if not found
+        """
+        if not settings.USE_VALKEY or not self._valkey:
+            return {"auto_retaliate": True}
+        
+        key = PLAYER_SETTINGS_KEY.format(player_id=player_id)
+        raw = await self._valkey.hgetall(key)
+        
+        if not raw:
+            return {"auto_retaliate": True}
+        
+        player_settings = {}
+        for field, value in raw.items():
+            field_str = _decode_bytes(field)
+            value_str = _decode_bytes(value)
+            
+            if field_str == "auto_retaliate":
+                player_settings[field_str] = value_str.lower() == "true"
+            else:
+                player_settings[field_str] = value_str
+        
+        return player_settings
+    
+    async def set_player_setting(
+        self, player_id: int, setting_key: str, value: Any
+    ) -> None:
+        """
+        Update a specific player setting.
+        
+        Args:
+            player_id: Player's database ID
+            setting_key: Setting name (e.g., "auto_retaliate")
+            value: New value
+        """
+        if not settings.USE_VALKEY or not self._valkey:
+            return
+        
+        key = PLAYER_SETTINGS_KEY.format(player_id=player_id)
+        
+        if isinstance(value, bool):
+            str_value = "true" if value else "false"
+        else:
+            str_value = str(value)
+        
+        await self._valkey.hset(key, {setting_key: str_value})
+    
+    async def set_player_combat_state(
+        self,
+        player_id: int,
+        target_type: str,
+        target_id: int,
+        last_attack_tick: int,
+        attack_speed: float,
+    ) -> None:
+        """
+        Set player's active combat target.
+        
+        Args:
+            player_id: Player's database ID
+            target_type: "entity" or "player"
+            target_id: Target's ID
+            last_attack_tick: Tick when last attack occurred
+            attack_speed: Weapon attack speed in seconds
+        """
+        if not settings.USE_VALKEY or not self._valkey:
+            return
+        
+        key = PLAYER_COMBAT_STATE_KEY.format(player_id=player_id)
+        combat_state = {
+            "target_type": target_type,
+            "target_id": str(target_id),
+            "last_attack_tick": str(last_attack_tick),
+            "attack_speed": str(attack_speed),
+            "started_at_tick": str(last_attack_tick),
+        }
+        
+        await self._valkey.hset(key, combat_state)
+    
+    async def get_player_combat_state(self, player_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get player's combat state or None if not in combat.
+        
+        Args:
+            player_id: Player's database ID
+            
+        Returns:
+            Combat state dict or None
+        """
+        if not settings.USE_VALKEY or not self._valkey:
+            return None
+        
+        key = PLAYER_COMBAT_STATE_KEY.format(player_id=player_id)
+        raw = await self._valkey.hgetall(key)
+        
+        if not raw:
+            return None
+        
+        combat_state = {}
+        for field, value in raw.items():
+            field_str = _decode_bytes(field)
+            value_str = _decode_bytes(value)
+            
+            if field_str in ["target_id", "last_attack_tick", "started_at_tick"]:
+                combat_state[field_str] = int(value_str)
+            elif field_str == "attack_speed":
+                combat_state[field_str] = float(value_str)
+            else:
+                combat_state[field_str] = value_str
+        
+        return combat_state
+    
+    async def clear_player_combat_state(self, player_id: int) -> None:
+        """
+        Stop player's auto-attack (clear combat state).
+        
+        Args:
+            player_id: Player's database ID
+        """
+        if not settings.USE_VALKEY or not self._valkey:
+            return
+        
+        key = PLAYER_COMBAT_STATE_KEY.format(player_id=player_id)
+        await self._valkey.delete([key])
+    
+    async def get_all_players_in_combat(self) -> List[Dict[str, Any]]:
+        """
+        Get all online players currently in combat.
+        
+        Used by game loop to process auto-attacks.
+        
+        Returns:
+            List of {player_id, combat_state} dicts
+        """
+        if not settings.USE_VALKEY or not self._valkey:
+            return []
+        
+        players_in_combat = []
+        
+        for player_id in self._online_players:
+            combat_state = await self.get_player_combat_state(player_id)
+            if combat_state:
+                players_in_combat.append({
+                    "player_id": player_id,
+                    "combat_state": combat_state,
+                })
+        
+        return players_in_combat
     
     async def get_player_full_state(self, player_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -980,7 +1187,8 @@ class GameStateManager:
                 PLAYER_KEY.format(player_id=player_id),
                 INVENTORY_KEY.format(player_id=player_id),
                 EQUIPMENT_KEY.format(player_id=player_id),
-                SKILLS_KEY.format(player_id=player_id)
+                SKILLS_KEY.format(player_id=player_id),
+                PLAYER_COMBAT_STATE_KEY.format(player_id=player_id),
             ]
             
             await self._valkey.delete(keys_to_delete)
@@ -1394,6 +1602,330 @@ class GameStateManager:
         except Exception as e:
             logger.error("Failed to load ground items", extra={"error": str(e)})
             raise
+    
+    # =========================================================================
+    # ENTITY INSTANCE OPERATIONS (Valkey-only, ephemeral)
+    # =========================================================================
+    
+    async def spawn_entity_instance(
+        self,
+        entity_name: str,
+        map_id: str,
+        x: int,
+        y: int,
+        spawn_x: int,
+        spawn_y: int,
+        max_hp: int,
+        wander_radius: int,
+        spawn_point_id: int,
+        aggro_radius: Optional[int] = None,
+        disengage_radius: Optional[int] = None,
+    ) -> int:
+        """
+        Spawn a new entity instance.
+        
+        Args:
+            entity_name: Entity type name (e.g., "GOBLIN")
+            map_id: Map identifier
+            x, y: Current tile position
+            spawn_x, spawn_y: Original spawn position
+            max_hp: Maximum HP
+            wander_radius: Wander distance from spawn
+            spawn_point_id: ID of spawn point in Tiled map
+            aggro_radius: Override aggro radius (optional)
+            disengage_radius: Override disengage radius (optional)
+            
+        Returns:
+            Entity instance ID
+        """
+        if not self._valkey:
+            raise RuntimeError("Valkey required for entity instances")
+        
+        # Get next entity instance ID
+        instance_id = await self._valkey.incr(ENTITY_INSTANCE_COUNTER_KEY)
+        
+        # Create entity instance data
+        entity_data = {
+            "id": str(instance_id),
+            "entity_name": entity_name,
+            "map_id": map_id,
+            "x": str(x),
+            "y": str(y),
+            "spawn_x": str(spawn_x),
+            "spawn_y": str(spawn_y),
+            "current_hp": str(max_hp),
+            "max_hp": str(max_hp),
+            "state": "idle",
+            "wander_radius": str(wander_radius),
+            "spawn_point_id": str(spawn_point_id),
+            "last_move_tick": "0",
+        }
+        
+        # Add optional overrides
+        if aggro_radius is not None:
+            entity_data["aggro_radius"] = str(aggro_radius)
+        if disengage_radius is not None:
+            entity_data["disengage_radius"] = str(disengage_radius)
+        
+        # Store entity instance
+        instance_key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
+        await self._valkey.hset(instance_key, entity_data)
+        
+        # Add to map entity list
+        map_key = MAP_ENTITIES_KEY.format(map_id=map_id)
+        await self._valkey.sadd(map_key, [str(instance_id)])
+        
+        logger.debug(
+            "Entity instance spawned",
+            extra={
+                "instance_id": instance_id,
+                "entity_name": entity_name,
+                "map_id": map_id,
+                "position": (x, y),
+            }
+        )
+        
+        return instance_id
+    
+    async def get_entity_instance(self, instance_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get entity instance data.
+        
+        Args:
+            instance_id: Entity instance ID
+            
+        Returns:
+            Entity instance data or None if not found
+        """
+        if not self._valkey:
+            return None
+        
+        instance_key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
+        raw = await self._valkey.hgetall(instance_key)
+        
+        if not raw:
+            return None
+        
+        # Parse entity data
+        entity_data = {}
+        for field, value in raw.items():
+            field_str = _decode_bytes(field)
+            value_str = _decode_bytes(value)
+            
+            # Convert numeric fields
+            if field_str in ["id", "x", "y", "spawn_x", "spawn_y", "current_hp", "max_hp", 
+                             "wander_radius", "spawn_point_id", "target_player_id", 
+                             "last_move_tick", "los_lost_at_tick", "los_lost_position_x", 
+                             "los_lost_position_y", "aggro_radius", "disengage_radius"]:
+                try:
+                    entity_data[field_str] = int(value_str)
+                except ValueError:
+                    entity_data[field_str] = 0
+            else:
+                entity_data[field_str] = value_str
+        
+        return entity_data
+    
+    async def get_map_entities(self, map_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all entity instances on a map.
+        
+        Args:
+            map_id: Map identifier
+            
+        Returns:
+            List of entity instance data
+        """
+        if not self._valkey:
+            return []
+        
+        map_key = MAP_ENTITIES_KEY.format(map_id=map_id)
+        instance_ids_raw = await self._valkey.smembers(map_key)
+        
+        if not instance_ids_raw:
+            return []
+        
+        entities = []
+        for instance_id_raw in instance_ids_raw:
+            instance_id = int(_decode_bytes(instance_id_raw))
+            entity_data = await self.get_entity_instance(instance_id)
+            if entity_data:
+                entities.append(entity_data)
+        
+        return entities
+    
+    async def update_entity_position(self, instance_id: int, x: int, y: int) -> None:
+        """
+        Update entity position.
+        
+        Args:
+            instance_id: Entity instance ID
+            x, y: New tile position
+        """
+        if not self._valkey:
+            return
+        
+        instance_key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
+        await self._valkey.hset(instance_key, {"x": str(x), "y": str(y)})
+    
+    async def update_entity_hp(self, instance_id: int, current_hp: int) -> None:
+        """
+        Update entity HP.
+        
+        Args:
+            instance_id: Entity instance ID
+            current_hp: New current HP
+        """
+        if not self._valkey:
+            return
+        
+        instance_key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
+        await self._valkey.hset(instance_key, {"current_hp": str(current_hp)})
+    
+    async def set_entity_state(
+        self,
+        instance_id: int,
+        state: str,
+        target_player_id: Optional[int] = None,
+        los_lost_at_tick: Optional[int] = None,
+        los_lost_position_x: Optional[int] = None,
+        los_lost_position_y: Optional[int] = None,
+    ) -> None:
+        """
+        Update entity state and target.
+        
+        Args:
+            instance_id: Entity instance ID
+            state: New state (idle, wander, combat, returning, dead)
+            target_player_id: Target player ID (None to clear)
+            los_lost_at_tick: Tick when LOS was lost (optional)
+            los_lost_position_x, los_lost_position_y: Last known position (optional)
+        """
+        if not self._valkey:
+            return
+        
+        instance_key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
+        update_data = {"state": state}
+        
+        if target_player_id is not None:
+            update_data["target_player_id"] = str(target_player_id)
+        else:
+            # Clear target if None
+            await self._valkey.hdel(instance_key, ["target_player_id"])
+        
+        if los_lost_at_tick is not None:
+            update_data["los_lost_at_tick"] = str(los_lost_at_tick)
+            if los_lost_position_x is not None and los_lost_position_y is not None:
+                update_data["los_lost_position_x"] = str(los_lost_position_x)
+                update_data["los_lost_position_y"] = str(los_lost_position_y)
+        else:
+            # Clear LOS data if None
+            await self._valkey.hdel(instance_key, [
+                "los_lost_at_tick", "los_lost_position_x", "los_lost_position_y"
+            ])
+        
+        await self._valkey.hset(instance_key, update_data)
+    
+    async def despawn_entity(self, instance_id: int, death_tick: int, respawn_delay_seconds: int = 30) -> None:
+        """
+        Mark entity as dying (for animation) then transition to dead state.
+        
+        The entity goes through two phases:
+        1. "dying" state - visible until death_tick is reached
+        2. "dead" state - invisible, added to respawn queue
+        
+        Args:
+            instance_id: Entity instance ID
+            death_tick: Global tick when entity should transition to "dead" state
+            respawn_delay_seconds: Seconds until respawn (default 30)
+        """
+        if not self._valkey:
+            return
+        
+        instance_key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
+        
+        # Set entity to "dying" state with death tick timestamp
+        await self._valkey.hset(instance_key, {
+            "state": "dying",
+            "death_tick": str(death_tick),
+            "respawn_delay": str(respawn_delay_seconds),
+            "current_hp": "0"  # Ensure HP is 0 during dying state
+        })
+        
+        # Clear combat target
+        await self._valkey.hdel(instance_key, ["target_player_id", "los_lost_at_tick", 
+                                                "los_lost_position_x", "los_lost_position_y"])
+        
+        logger.debug(
+            "Entity entering dying state",
+            extra={"instance_id": instance_id, "death_tick": death_tick}
+        )
+    
+    async def finalize_entity_death(self, instance_id: int) -> None:
+        """
+        Transition entity from "dying" to "dead" and queue for respawn.
+        Called by game loop when death_tick is reached.
+        
+        Args:
+            instance_id: Entity instance ID
+        """
+        if not self._valkey:
+            return
+        
+        instance_key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
+        
+        # Get respawn delay from entity data
+        entity_data = await self.get_entity_instance(instance_id)
+        if not entity_data:
+            return
+        
+        respawn_delay_seconds = int(entity_data.get("respawn_delay", 30))
+        
+        # Mark entity as dead (invisible)
+        await self._valkey.hset(instance_key, {"state": "dead"})
+        
+        # Add to respawn queue
+        respawn_at = _utc_timestamp() + respawn_delay_seconds
+        await self._valkey.zadd(
+            ENTITY_RESPAWN_QUEUE_KEY,
+            {str(instance_id): respawn_at}
+        )
+        
+        logger.debug(
+            "Entity death finalized, queued for respawn",
+            extra={"instance_id": instance_id, "respawn_in": respawn_delay_seconds}
+        )
+    
+    async def clear_all_entity_instances(self) -> None:
+        """Clear all entity instances from Valkey (server startup)."""
+        if not self._valkey:
+            return
+        
+        # Reset counter
+        await self._valkey.set(ENTITY_INSTANCE_COUNTER_KEY, "0")
+        
+        # Clear respawn queue
+        await self._valkey.delete([ENTITY_RESPAWN_QUEUE_KEY])
+        
+        logger.info("All entity instances cleared from Valkey")
+    
+    async def clear_player_as_entity_target(self, player_id: int) -> None:
+        """
+        Clear player as target from all entities (player death/logout).
+        
+        Args:
+            player_id: Player ID to clear from entity targets
+        """
+        if not self._valkey:
+            return
+        
+        # This would require scanning all entity instances
+        # For now, we'll implement this in the entity AI service
+        # when it processes entities - it should check if target player is still online
+        logger.debug(
+            "Player target clear requested (handled by AI service)",
+            extra={"player_id": player_id}
+        )
     
     # =========================================================================
     # BATCH SYNC OPERATIONS (Delegate to helper)

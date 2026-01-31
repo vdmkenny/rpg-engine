@@ -2,13 +2,14 @@
 Test fixtures and configuration for the RPG server tests.
 """
 
+import asyncio
 import pytest
 import pytest_asyncio
 import msgpack
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, Callable, Awaitable, Dict, Any, Optional, List
+from typing import AsyncGenerator, Callable, Awaitable, Dict, Any, Optional, List, Generator
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -707,6 +708,7 @@ async def map_manager_loaded() -> None:
             self.height = 10
             self.tile_width = 32 
             self.tile_height = 32
+            self.player_spawn_point = {"x": 5, "y": 5}  # Default spawn point
             
         def get_spawn_position(self):
             return (5, 5)  # Center of mock map
@@ -1064,19 +1066,11 @@ async def test_client(
             async def override_get_db():
                 yield session
             
-            app.dependency_overrides[get_db] = override_get_db
+            async def override_get_valkey():
+                return fake_valkey
             
-            # For integration tests, use real Valkey; for unit tests, use fake
-            import os
-            if os.getenv("RUN_INTEGRATION_TESTS") == "1":
-                # Use real Valkey connection for integration tests
-                from server.src.core.database import get_valkey as real_get_valkey
-                app.dependency_overrides[get_valkey] = real_get_valkey
-            else:
-                # Use fake Valkey for unit tests
-                async def override_get_valkey():
-                    return fake_valkey
-                app.dependency_overrides[get_valkey] = override_get_valkey
+            app.dependency_overrides[get_db] = override_get_db
+            app.dependency_overrides[get_valkey] = override_get_valkey
             
             # Create test player with unique username to avoid conflicts
             from server.src.core.security import get_password_hash, create_access_token
@@ -1111,11 +1105,6 @@ async def test_client(
             # Create JWT token
             token = create_access_token(data={"sub": username})
             
-            # Reset Valkey client for TestClient compatibility
-            # TestClient creates new event loop, old Valkey client becomes invalid
-            from server.src.core.database import reset_valkey
-            reset_valkey()
-            
             # Create test client and connect to WebSocket endpoint
             with TestClient(app) as test_client:
                 with test_client.websocket_connect("/ws") as websocket:
@@ -1132,10 +1121,11 @@ async def test_client(
                     
                     # Send auth message
                     packed_auth = msgpack.packb(auth_message.model_dump(), use_bin_type=True)
-                    websocket.send_bytes(packed_auth)
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, websocket.send_bytes, packed_auth)
                     
                     # Wait for auth response
-                    auth_response_bytes = websocket.receive_bytes()
+                    auth_response_bytes = await loop.run_in_executor(None, websocket.receive_bytes)
                     auth_response_data = msgpack.unpackb(auth_response_bytes, raw=False)
                     auth_response = WSMessage(**auth_response_data)
                     
@@ -1143,7 +1133,7 @@ async def test_client(
                         raise Exception(f"Authentication failed: expected WELCOME but got {auth_response.type}")
                     
                     # After EVENT_WELCOME, server sends a EVENT_CHAT_MESSAGE welcome - consume it
-                    chat_response_bytes = websocket.receive_bytes()
+                    chat_response_bytes = await loop.run_in_executor(None, websocket.receive_bytes)
                     chat_response_data = msgpack.unpackb(chat_response_bytes, raw=False)
                     chat_response = WSMessage(**chat_response_data)
                     
@@ -1173,14 +1163,14 @@ async def test_client(
                 await session.commit()
                 
             except Exception as cleanup_error:
-                logger.warning(f"Integration test cleanup failed: {cleanup_error}")
+                logger.warning(f"Error during test cleanup: {cleanup_error}")
                 try:
                     await session.rollback()
                 except Exception:
                     pass
-            
-            # Clean up dependency overrides
-            app.dependency_overrides.clear()
+            finally:
+                # Clear dependency overrides
+                app.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture

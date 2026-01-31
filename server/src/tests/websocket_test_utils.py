@@ -91,12 +91,20 @@ class WebSocketTestClient:
         self.message_log: List[WSMessage] = []
         self.running = True
         
-        # Detect if WebSocket is sync (TestClient) or async (httpx)
-        # TestClient WebSocket has sync methods, httpx has async methods
-        self.is_async_websocket = hasattr(websocket, '__aenter__') or asyncio.iscoroutinefunction(getattr(websocket, 'receive_bytes', None))
+        # Detect WebSocket type:
+        # - websockets library: has recv() method
+        # - Starlette TestClient: has receive_bytes() sync method
+        # - httpx/other: has receive_bytes() async method
+        self.has_recv = hasattr(websocket, 'recv')  # websockets library
+        self.has_receive_bytes = hasattr(websocket, 'receive_bytes')
+        self.is_async_websocket = self.has_recv or asyncio.iscoroutinefunction(getattr(websocket, 'receive_bytes', None))
         
-        # Start message processing task
-        self._process_task = asyncio.create_task(self._process_messages())
+        # Start message processing task only for async websockets
+        # For sync TestClient, we'll use synchronous request-response pattern
+        if self.is_async_websocket:
+            self._process_task = asyncio.create_task(self._process_messages())
+        else:
+            self._process_task = None
         
     async def __aenter__(self):
         return self
@@ -130,26 +138,19 @@ class WebSocketTestClient:
         try:
             while self.running:
                 try:
-                    # Handle both sync (TestClient) and async (httpx) WebSocket interfaces
-                    if self.is_async_websocket:
+                    # Handle different WebSocket library types
+                    if self.has_recv:
+                        # websockets library
+                        raw_message = await self.websocket.recv()
+                        # websockets returns bytes directly
+                        if isinstance(raw_message, str):
+                            raw_message = raw_message.encode()
+                    elif self.is_async_websocket:
+                        # httpx or other async client with receive_bytes
                         raw_message = await self.websocket.receive_bytes()
                     else:
-                        # For sync TestClient, use executor with reasonable timeout
-                        loop = asyncio.get_event_loop()
-                        try:
-                            # Use a single timeout attempt that should be sufficient
-                            raw_message = await asyncio.wait_for(
-                                loop.run_in_executor(None, self.websocket.receive_bytes),
-                                timeout=1.0  # Generous 1 second timeout
-                            )
-                        except asyncio.TimeoutError:
-                            # If no message available, continue loop
-                            await asyncio.sleep(0.05)  # Longer pause between attempts
-                            continue
-                        except Exception as e:
-                            # Handle connection errors gracefully
-                            print(f"WebSocket receive error: {e}")
-                            break
+                        # Sync TestClient - shouldn't reach here as task not created
+                        break
                     
                     message_data = msgpack.unpackb(raw_message, raw=False)
                     message = WSMessage(**message_data)
@@ -200,20 +201,49 @@ class WebSocketTestClient:
         
         raw_message = msgpack.packb(message.model_dump(), use_bin_type=True)
         
-        # Handle both sync (TestClient) and async (httpx) WebSocket interfaces
-        if self.is_async_websocket:
+        # Handle different WebSocket library types
+        if self.has_recv:
+            # websockets library uses send()
+            await self.websocket.send(raw_message)
+        elif self.is_async_websocket:
+            # httpx or other async client
             await self.websocket.send_bytes(raw_message)
         else:
-            # For sync TestClient, use improved error handling
+            # Sync TestClient - run in thread pool to avoid blocking event loop
             loop = asyncio.get_event_loop()
-            try:
-                await loop.run_in_executor(None, self.websocket.send_bytes, raw_message)
-            except Exception as e:
-                print(f"WebSocket send error: {e}")
-                raise
+            await loop.run_in_executor(None, self.websocket.send_bytes, raw_message)
         
     async def _wait_for_response(self, correlation_id: str, expected_type: MessageType, timeout: float) -> WSMessage:
         """Wait for a correlated response"""
+        # For sync TestClient, directly receive the response (no background task)
+        if not self.is_async_websocket:
+            try:
+                print(f"[DEBUG] Waiting for sync response for correlation_id={correlation_id}, expected={expected_type}")
+                # Run sync receive_bytes in thread pool to avoid blocking event loop
+                loop = asyncio.get_event_loop()
+                raw_message = await loop.run_in_executor(None, self.websocket.receive_bytes)
+                print(f"[DEBUG] Received raw message: {len(raw_message)} bytes")
+                message_data = msgpack.unpackb(raw_message, raw=False)
+                message = WSMessage(**message_data)
+                self.message_log.append(message)
+                print(f"[DEBUG] Parsed message: type={message.type}, id={message.id}")
+                
+                # Validate response
+                if message.type == MessageType.RESP_ERROR:
+                    raise ErrorResponseError(message.payload)
+                elif message.type != expected_type:
+                    raise UnexpectedResponseError(
+                        f"Expected {expected_type}, got {message.type}"
+                    )
+                
+                return message
+            except Exception as e:
+                print(f"[DEBUG] Exception in _wait_for_response: {e}")
+                if isinstance(e, (ErrorResponseError, UnexpectedResponseError)):
+                    raise
+                raise ResponseTimeoutError(f"Failed to receive response: {e}")
+        
+        # For async websockets, use the background task approach
         future = asyncio.Future()
         timeout_task = asyncio.create_task(self._handle_response_timeout(correlation_id, timeout))
         
