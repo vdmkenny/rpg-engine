@@ -6,6 +6,7 @@ file sizes manageable while maintaining clear separation of concerns.
 """
 
 import json
+import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
@@ -288,7 +289,13 @@ class GameStateManager:
                 return len(self._item_cache)
                 
         except Exception as e:
-            logger.error("Failed to load item cache", extra={"error": str(e)})
+            logger.error(
+                "Failed to load item cache",
+                extra={
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
+            )
             raise
     
     def get_cached_item_meta(self, item_id: int) -> Optional[Dict[str, Any]]:
@@ -362,7 +369,12 @@ class GameStateManager:
         except Exception as e:
             logger.error(
                 "Failed to sync player data on logout", 
-                extra={"player_id": player_id, "username": username, "error": str(e)}
+                extra={
+                    "player_id": player_id,
+                    "username": username,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
             # Continue with cleanup even if sync fails
         
@@ -376,7 +388,12 @@ class GameStateManager:
         except Exception as e:
             logger.error(
                 "Failed to cleanup player cache on logout",
-                extra={"player_id": player_id, "username": username, "error": str(e)}
+                extra={
+                    "player_id": player_id,
+                    "username": username,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
         
         logger.debug(
@@ -914,7 +931,12 @@ class GameStateManager:
         except ValueError as e:
             logger.error(
                 "Failed to parse inventory slot data", 
-                extra={"player_id": player_id, "slot": slot, "error": str(e)}
+                extra={
+                    "player_id": player_id,
+                    "slot": slot,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
             return None
         except json.JSONDecodeError as e:
@@ -1140,7 +1162,11 @@ class GameStateManager:
         except Exception as e:
             logger.error(
                 "Failed to load player state",
-                extra={"player_id": player_id, "error": str(e)}
+                extra={
+                    "player_id": player_id,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
             raise
     
@@ -1167,7 +1193,12 @@ class GameStateManager:
         except Exception as e:
             logger.error(
                 "Failed to sync player to database",
-                extra={"player_id": player_id, "username": username, "error": str(e)}
+                extra={
+                    "player_id": player_id,
+                    "username": username,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
             raise
     
@@ -1198,7 +1229,11 @@ class GameStateManager:
         except Exception as e:
             logger.error(
                 "Failed to cleanup player state",
-                extra={"player_id": player_id, "error": str(e)}
+                extra={
+                    "player_id": player_id,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
     
     # =========================================================================
@@ -1600,7 +1635,13 @@ class GameStateManager:
                 return items_loaded
                 
         except Exception as e:
-            logger.error("Failed to load ground items", extra={"error": str(e)})
+            logger.error(
+                "Failed to load ground items",
+                extra={
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
+            )
             raise
     
     # =========================================================================
@@ -3170,7 +3211,11 @@ class GameStateManager:
         except Exception as e:
             logger.error(
                 "Failed to delete player from database",
-                extra={"player_id": player_id, "error": str(e)}
+                extra={
+                    "player_id": player_id,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
             raise
     
@@ -3224,7 +3269,13 @@ class GameStateManager:
                 logger.debug("Cleared all Valkey state")
                 
             except Exception as e:
-                logger.error("Failed to clear Valkey state", extra={"error": str(e)})
+                logger.error(
+                    "Failed to clear Valkey state",
+                    extra={
+                        "error": str(e),
+                        "traceback": traceback.format_exc(),
+                    }
+                )
         
         # 3. Optionally clear database tables
         if clear_database and self._session_factory:
@@ -3246,7 +3297,13 @@ class GameStateManager:
                     logger.warning("Cleared all player data from database")
                     
             except Exception as e:
-                logger.error("Failed to clear database state", extra={"error": str(e)})
+                logger.error(
+                    "Failed to clear database state",
+                    extra={
+                        "error": str(e),
+                        "traceback": traceback.format_exc(),
+                    }
+                )
                 raise
         
         logger.info("Game state reset complete")

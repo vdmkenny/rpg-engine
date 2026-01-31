@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import traceback
 
 from sqlalchemy import select
 
@@ -415,6 +416,7 @@ class ItemManager(IItemManager):
                             "transaction_id": transaction_id,
                             "operation": rollback_op,
                             "error": str(e),
+                            "traceback": traceback.format_exc(),
                         }
                     )
             
@@ -467,6 +469,7 @@ class ItemManager(IItemManager):
                     "player_id": player_id,
                     "item_id": item_id,
                     "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return False
@@ -511,6 +514,7 @@ class ItemManager(IItemManager):
                     "player_id": player_id,
                     "item_id": item_id,
                     "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return False

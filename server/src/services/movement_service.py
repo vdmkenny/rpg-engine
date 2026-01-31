@@ -5,6 +5,7 @@ Handles movement validation, cooldown management, position calculations, and mov
 """
 
 import time
+import traceback
 from typing import Dict, List, Optional, Tuple, Any
 
 from ..core.config import settings
@@ -86,7 +87,8 @@ class MovementService:
                 "Error validating movement cooldown",
                 extra={
                     "player_id": player_id,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
                 }
             )
             return {
@@ -172,7 +174,8 @@ class MovementService:
                     "map_id": map_id,
                     "from": {"x": from_x, "y": from_y},
                     "to": {"x": to_x, "y": to_y},
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
                 }
             )
             return {
@@ -305,7 +308,8 @@ class MovementService:
                     "player_id": player_id,
                     "direction": direction,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             return {
@@ -353,7 +357,8 @@ class MovementService:
                 "Error getting movement state",
                 extra={
                     "player_id": player_id,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
                 }
             )
             return {
@@ -418,7 +423,8 @@ class MovementService:
                 extra={
                     "player_id": player_id,
                     "position": {"x": x, "y": y, "map_id": map_id},
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
                 }
             )
             return False
@@ -509,7 +515,8 @@ class MovementService:
                 extra={
                     "player_id": player_id,
                     "destination": {"x": x, "y": y, "map_id": map_id},
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
                 }
             )
             return {
@@ -563,7 +570,8 @@ class MovementService:
                 extra={
                     "map_id": map_id,
                     "position": {"x": x, "y": y},
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
                 }
             )
             return {

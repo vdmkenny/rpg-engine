@@ -1,3 +1,4 @@
+import traceback
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -68,7 +69,11 @@ async def register_player(*, player_in: PlayerCreate):
     except Exception as e:
         logger.error(
             "Unexpected error during player registration",
-            extra={"username": player_in.username, "error": str(e)}
+            extra={
+                "username": player_in.username,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
         )
         metrics.track_auth_attempt("register", "failure")
         raise HTTPException(

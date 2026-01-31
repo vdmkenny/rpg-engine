@@ -4,6 +4,7 @@ Service for managing player operations.
 Handles player creation, login/logout, and core player state management.
 """
 
+import traceback
 from typing import Optional, TYPE_CHECKING, Dict, Any, List
 from fastapi import HTTPException, status
 
@@ -155,6 +156,7 @@ class PlayerService:
                     "player_id": player_id,
                     "username": username,
                     "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             raise
@@ -332,6 +334,7 @@ class PlayerService:
                     "player_id": player_id,
                     "range_tiles": range_tiles,
                     "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return []
@@ -428,6 +431,7 @@ class PlayerService:
                 extra={
                     "player_id": player_id,
                     "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return None
@@ -465,6 +469,7 @@ class PlayerService:
                 extra={
                     "player_id": player_id,
                     "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return False
@@ -539,6 +544,10 @@ class PlayerService:
         except Exception as e:
             logger.error(
                 "Error deleting player",
-                extra={"player_id": player_id, "error": str(e)}
+                extra={
+                    "player_id": player_id,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
             raise

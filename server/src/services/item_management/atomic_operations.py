@@ -8,6 +8,7 @@ multi-step operations while maintaining data consistency via GameStateManager.
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import traceback
 import uuid
 
 from server.src.core.logging_config import get_logger
@@ -131,6 +132,7 @@ class AtomicOperationExecutor:
                     "transaction_id": transaction_id,
                     "error": str(e),
                     "executed_operations": len(executed_operations),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return False
@@ -224,6 +226,7 @@ class AtomicOperationExecutor:
                     "operation_id": operation.operation_id,
                     "operation_type": operation.operation_type,
                     "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return False
@@ -269,6 +272,7 @@ class AtomicOperationExecutor:
                     extra={
                         "operation_id": operation.operation_id,
                         "error": str(e),
+                        "traceback": traceback.format_exc(),
                     }
                 )
 

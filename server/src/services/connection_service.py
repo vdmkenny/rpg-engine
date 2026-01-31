@@ -5,6 +5,7 @@ Handles player connection initialization, disconnection cleanup, and broadcastin
 """
 
 from typing import Dict, List, Optional, Any
+import traceback
 
 from ..core.logging_config import get_logger
 from .game_state_manager import get_game_state_manager
@@ -97,7 +98,8 @@ class ConnectionService:
                 extra={
                     "player_id": player_id,
                     "username": username,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             raise
@@ -144,7 +146,8 @@ class ConnectionService:
                 extra={
                     "player_id": player_id,
                     "username": username,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return []
@@ -230,7 +233,8 @@ class ConnectionService:
                 extra={
                     "player_id": player_id,
                     "username": username,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             # Still try to clean up even on error
@@ -242,7 +246,8 @@ class ConnectionService:
                         "Error during cleanup after disconnect error",
                         extra={
                             "player_id": player_id,
-                            "cleanup_error": str(cleanup_error)
+                            "cleanup_error": str(cleanup_error),
+                            "traceback": traceback.format_exc(),
                         }
                     )
             
@@ -337,6 +342,7 @@ class ConnectionService:
                     "username": username,
                     "error": str(e),
                     "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc(),
                 }
             )
             return {
@@ -424,6 +430,7 @@ class ConnectionService:
                     "exclude_username": exclude_username,
                     "error": str(e),
                     "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc(),
                 }
             )
             return []

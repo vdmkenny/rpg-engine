@@ -57,7 +57,7 @@ async def get_map_tilesets(
     tile_map = map_manager.maps[map_id]
     tilesets = tile_map.get_tileset_metadata()
     
-    logger.info(
+    logger.debug(
         "Tileset metadata requested",
         extra={
             "map_id": map_id,
@@ -100,7 +100,7 @@ async def get_tileset_metadata(
         tilesets = tile_map.get_tileset_metadata()
         for tileset in tilesets:
             if tileset.get("id") == tileset_id:
-                logger.info(
+                logger.debug(
                     "Tileset metadata requested",
                     extra={
                         "tileset_id": tileset_id,
@@ -197,7 +197,7 @@ async def get_tileset_image(
             detail="Only image files are allowed"
         )
     
-    logger.info(
+    logger.debug(
         "Tileset image served",
         extra={
             "image_file": image_filename,

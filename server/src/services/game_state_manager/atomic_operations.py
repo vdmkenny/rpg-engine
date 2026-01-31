@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Any, Tuple, Callable
 from contextlib import asynccontextmanager
 import json
 import time
+import traceback
 
 from server.src.core.logging_config import get_logger
 from server.src.core.concurrency import get_valkey_atomic_operations
@@ -155,7 +156,8 @@ class GSMAtomicOperations:
                 extra={
                     "player_id": player_id,
                     "new_hp": new_hp,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return False
@@ -219,7 +221,8 @@ class GSMAtomicOperations:
                     "x": x,
                     "y": y,
                     "map_id": map_id,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return False

@@ -4,6 +4,7 @@ Inventory command handler mixin.
 Handles inventory management operations like moving and sorting items.
 """
 
+import traceback
 from typing import Any
 
 from server.src.core.logging_config import get_logger
@@ -57,7 +58,8 @@ class InventoryHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(
@@ -109,7 +111,8 @@ class InventoryHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(

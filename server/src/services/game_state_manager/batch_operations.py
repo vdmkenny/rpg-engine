@@ -5,6 +5,7 @@ Handles batch sync operations, multi-player operations, and cleanup tasks.
 Keeps batch logic separate from core state management.
 """
 
+import traceback
 from typing import Any, Dict, List, Optional, Set
 from contextlib import asynccontextmanager
 from glide import GlideClient
@@ -50,7 +51,7 @@ class GSMBatchOps:
             logger.debug("Batch sync completed successfully")
             
         except Exception as e:
-            logger.error("Batch sync failed", extra={"error": str(e)})
+            logger.error("Batch sync failed", extra={"error": str(e), "traceback": traceback.format_exc()})
             raise
     
     async def sync_all_on_shutdown(self) -> None:
@@ -78,7 +79,7 @@ class GSMBatchOps:
             )
             
         except Exception as e:
-            logger.error("Shutdown sync failed", extra={"error": str(e)})
+            logger.error("Shutdown sync failed", extra={"error": str(e), "traceback": traceback.format_exc()})
             raise
     
     async def _sync_player_positions(self) -> None:
@@ -139,7 +140,7 @@ class GSMBatchOps:
             )
             
         except Exception as e:
-            logger.error("Failed to sync player positions", extra={"error": str(e)})
+            logger.error("Failed to sync player positions", extra={"error": str(e), "traceback": traceback.format_exc()})
             raise
     
     async def _sync_inventories(self) -> None:
@@ -196,7 +197,7 @@ class GSMBatchOps:
         except Exception as e:
             logger.error(
                 "Failed to sync inventories",
-                extra={"error": str(e)}
+                extra={"error": str(e), "traceback": traceback.format_exc()}
             )
             raise
 
@@ -252,7 +253,7 @@ class GSMBatchOps:
         except Exception as e:
             logger.error(
                 "Failed to sync equipment",
-                extra={"error": str(e)}
+                extra={"error": str(e), "traceback": traceback.format_exc()}
             )
             raise
 
@@ -308,7 +309,7 @@ class GSMBatchOps:
         except Exception as e:
             logger.error(
                 "Failed to sync skills",
-                extra={"error": str(e)}
+                extra={"error": str(e), "traceback": traceback.format_exc()}
             )
             raise
 
@@ -372,7 +373,7 @@ class GSMBatchOps:
         except Exception as e:
             logger.error(
                 "Failed to sync ground items",
-                extra={"error": str(e)}
+                extra={"error": str(e), "traceback": traceback.format_exc()}
             )
             raise
 
@@ -459,6 +460,6 @@ class GSMBatchOps:
         except Exception as e:
             logger.error(
                 "Failed to sync single player",
-                extra={"player_id": player_id, "error": str(e)}
+                extra={"player_id": player_id, "error": str(e), "traceback": traceback.format_exc()}
             )
             raise

@@ -6,6 +6,7 @@ Handles chat message validation, channel routing, permission checking, and broad
 
 from typing import Dict, List, Optional, Any
 import time
+import traceback
 
 from ..core.logging_config import get_logger
 from ..core.config import settings
@@ -102,6 +103,7 @@ class ChatService:
                 extra={
                     "player_id": player_id,
                     "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return {
@@ -248,7 +250,8 @@ class ChatService:
                 "Error getting local chat recipients",
                 extra={
                     "sender_id": sender_id,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return []
@@ -294,7 +297,8 @@ class ChatService:
                 "Error getting DM recipient",
                 extra={
                     "recipient_username": recipient_username,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             return None
@@ -315,7 +319,10 @@ class ChatService:
         except Exception as e:
             logger.error(
                 "Error getting global chat recipients",
-                extra={"error": str(e)}
+                extra={
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
             return []
 
@@ -487,6 +494,7 @@ class ChatService:
                     "username": username,
                     "error": str(e),
                     "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc(),
                 }
             )
             return {

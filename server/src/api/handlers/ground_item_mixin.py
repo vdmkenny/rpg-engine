@@ -4,6 +4,7 @@ Ground item command handler mixin.
 Handles dropping and picking up items from the ground.
 """
 
+import traceback
 from typing import Any
 
 from server.src.core.logging_config import get_logger
@@ -80,7 +81,8 @@ class GroundItemHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(
@@ -139,7 +141,8 @@ class GroundItemHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(

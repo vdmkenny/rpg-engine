@@ -78,12 +78,11 @@ class ConnectionManager:
             self.connections_by_map[map_id][client_id] = websocket
             self.client_to_map[client_id] = map_id
             
-            logger.info(
+            logger.debug(
                 "Client connected to map",
                 extra={
                     "client_id": client_id,
                     "map_id": map_id,
-                    "total_connections": sum(len(conns) for conns in self.connections_by_map.values())
                 }
             )
 
@@ -103,12 +102,11 @@ class ConnectionManager:
                 if not self.connections_by_map[map_id]:
                     del self.connections_by_map[map_id]
                 
-                logger.info(
+                logger.debug(
                     "Client disconnected from map",
                     extra={
                         "client_id": client_id,
                         "map_id": map_id,
-                        "remaining_connections": sum(len(conns) for conns in self.connections_by_map.values())
                     }
                 )
             else:
@@ -175,13 +173,11 @@ class ConnectionManager:
                         if not self.connections_by_map[map_id]:
                             del self.connections_by_map[map_id]
             
-            logger.info(
+            logger.debug(
                 "Broadcast completed with cleanup",
                 extra={
                     "map_id": map_id,
-                    "successful_sends": successful_sends,
                     "failed_connections": len(failed_connections),
-                    "total_attempted": len(connections_snapshot)
                 }
             )
 

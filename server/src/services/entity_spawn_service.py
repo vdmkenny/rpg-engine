@@ -5,6 +5,7 @@ Handles spawning entities from Tiled map object layers and managing
 entity respawn logic.
 """
 
+import traceback
 from typing import Dict, List, Optional
 
 from server.src.core.entities import EntityID
@@ -57,6 +58,7 @@ class EntitySpawnService:
                         "map_id": map_id,
                         "spawn_point": spawn_point,
                         "error": str(e),
+                        "traceback": traceback.format_exc(),
                     }
                 )
         
@@ -91,7 +93,11 @@ class EntitySpawnService:
         except KeyError:
             logger.error(
                 "Unknown entity ID in spawn point",
-                extra={"entity_id": entity_id_str, "spawn_point": spawn_point}
+                extra={
+                    "entity_id": entity_id_str,
+                    "spawn_point": spawn_point,
+                    "traceback": traceback.format_exc(),
+                }
             )
             raise ValueError(f"Unknown entity ID: {entity_id_str}")
         

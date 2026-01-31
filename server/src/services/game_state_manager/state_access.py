@@ -6,6 +6,8 @@ Keeps the main GSM class focused on core CRUD operations.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
+import traceback
+
 from glide import GlideClient
 from server.src.core.logging_config import get_logger
 
@@ -237,7 +239,8 @@ class GSMStateAccess:
                 extra={
                     "player_id": player_id,
                     "updates": updates,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             raise
@@ -262,6 +265,10 @@ class GSMStateAccess:
         except Exception as e:
             logger.error(
                 "Failed to check player state existence",
-                extra={"player_id": player_id, "error": str(e)}
+                extra={
+                    "player_id": player_id,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
             return False

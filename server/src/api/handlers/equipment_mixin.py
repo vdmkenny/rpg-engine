@@ -4,6 +4,7 @@ Equipment command handler mixin.
 Handles equipping and unequipping items.
 """
 
+import traceback
 from typing import Any
 
 from server.src.core.logging_config import get_logger
@@ -57,7 +58,8 @@ class EquipmentHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(
@@ -106,7 +108,8 @@ class EquipmentHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(

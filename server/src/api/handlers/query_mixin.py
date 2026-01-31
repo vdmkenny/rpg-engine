@@ -4,6 +4,7 @@ Query handler mixin.
 Handles all QUERY_* message types for data retrieval.
 """
 
+import traceback
 from typing import Any
 
 from server.src.core.logging_config import get_logger
@@ -46,7 +47,8 @@ class QueryHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(
@@ -85,7 +87,8 @@ class QueryHandlerMixin:
                     "username": self.username,
                     "correlation_id": message.id,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(
@@ -114,7 +117,8 @@ class QueryHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(
@@ -187,7 +191,8 @@ class QueryHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(

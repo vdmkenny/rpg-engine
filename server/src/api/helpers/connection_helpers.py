@@ -4,6 +4,8 @@ Connection lifecycle helper functions.
 Handles player connection initialization and disconnection cleanup.
 """
 
+import traceback
+
 from fastapi import WebSocketDisconnect, status
 
 from server.src.core.logging_config import get_logger
@@ -56,7 +58,7 @@ async def initialize_player_connection(
             player.id, username, validated_x, validated_y, validated_map, current_hp, max_hp
         )
         
-        logger.info(
+        logger.debug(
             "Player connection initialized",
             extra={
                 "username": username,
@@ -75,7 +77,8 @@ async def initialize_player_connection(
                 "username": username,
                 "player_id": player_id,
                 "error": str(e),
-                "error_type": type(e).__name__
+                "error_type": type(e).__name__,
+                "traceback": traceback.format_exc()
             }
         )
         raise WebSocketDisconnect(
@@ -106,7 +109,7 @@ async def handle_player_disconnect(
             username, player_map, connection_manager, rate_limiter
         )
         
-        logger.info(
+        logger.debug(
             "Player disconnection handled",
             extra={"username": username, "player_map": player_map}
         )
@@ -117,6 +120,7 @@ async def handle_player_disconnect(
             extra={
                 "username": username,
                 "error": str(e),
-                "error_type": type(e).__name__
+                "error_type": type(e).__name__,
+                "traceback": traceback.format_exc()
             }
         )

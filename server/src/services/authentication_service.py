@@ -4,6 +4,7 @@ Service for managing WebSocket authentication operations.
 Handles JWT validation, player authentication, and session management.
 """
 
+import traceback
 from typing import Dict, Optional, Any
 from datetime import datetime, timezone
 
@@ -93,7 +94,11 @@ class AuthenticationService:
         except Exception as e:
             logger.error(
                 "Error during user authentication",
-                extra={"username": username, "error": str(e)}
+                extra={
+                    "username": username,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
             return None
 
@@ -194,7 +199,10 @@ class AuthenticationService:
         except Exception as e:
             logger.error(
                 "Error during WebSocket authentication",
-                extra={"error": str(e)}
+                extra={
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
             )
             return None
 
@@ -253,7 +261,8 @@ class AuthenticationService:
                 extra={
                     "player_id": player.id,
                     "username": player.username,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
             )
             # Return minimal session data on error

@@ -4,6 +4,7 @@ Chat command handler mixin.
 Handles chat message processing and broadcasting.
 """
 
+import traceback
 from typing import Any
 
 from pydantic import ValidationError
@@ -47,13 +48,11 @@ class ChatHandlerMixin:
                     }
                 )
                 
-                logger.info(
+                logger.debug(
                     "Chat message processed",
                     extra={
                         "username": self.username,
                         "channel": chat_result["channel"],
-                        "recipient_count": len(chat_result.get("recipients", [])),
-                        "message_id": chat_result.get("message_id")
                     }
                 )
             else:
@@ -66,9 +65,9 @@ class ChatHandlerMixin:
                 )
                 
         except ValidationError as e:
-            logger.info(
+            logger.debug(
                 "Chat message validation failed",
-                extra={"username": self.username, "validation_errors": str(e)}
+                extra={"username": self.username}
             )
             await self._send_error_response(
                 message.id,
@@ -83,7 +82,8 @@ class ChatHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(

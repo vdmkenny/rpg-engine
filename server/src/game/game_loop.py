@@ -7,6 +7,7 @@ updates about entities within their visible chunk range.
 
 import asyncio
 import time
+import traceback
 import msgpack
 from typing import Dict, List, Optional, Set, Tuple, Any
 from glide import GlideClient
@@ -405,6 +406,7 @@ async def _process_auto_attacks(
                     "player_id": player_id,
                     "error": str(e),
                     "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc(),
                 }
             )
             # Clear combat state on error
@@ -483,7 +485,12 @@ async def send_chunk_update_if_needed(
 
     except Exception as e:
         logger.error(
-            "Error sending chunk update", extra={"username": username, "error": str(e)}
+            "Error sending chunk update",
+            extra={
+                "username": username,
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+            }
         )
 
 
@@ -528,7 +535,11 @@ async def send_diff_update(
     except Exception as e:
         logger.error(
             "Error sending diff update", 
-            extra={"username": username, "error": str(e)}
+            extra={
+                "username": username,
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+            }
         )
 
 
@@ -583,6 +594,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         extra={
                             "error": str(sync_error),
                             "tick": _global_tick_counter,
+                            "traceback": traceback.format_exc(),
                         },
                     )
 
@@ -745,7 +757,6 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
             await asyncio.sleep(tick_interval)
 
         except Exception as e:
-            import traceback
             logger.error(
                 "Error in game loop",
                 extra={

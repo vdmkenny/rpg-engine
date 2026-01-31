@@ -4,6 +4,7 @@ Base handler mixin providing shared response and state update methods.
 All domain handler mixins inherit from this to access common utilities.
 """
 
+import traceback
 from typing import Optional, Dict, Any
 
 import msgpack
@@ -127,7 +128,8 @@ class BaseHandlerMixin:
                     "message_type": message.type,
                     "correlation_id": message.id,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
     
@@ -156,7 +158,8 @@ class BaseHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
     
@@ -189,6 +192,7 @@ class BaseHandlerMixin:
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )

@@ -207,13 +207,12 @@ class CombatHandlerMixin:
                     attack_speed=attack_speed
                 )
                 
-                logger.info(
+                logger.debug(
                     "Combat action executed",
                     extra={
                         "attacker": self.username,
                         "target_type": payload.target_type,
                         "target_id": payload.target_id,
-                        "hit": result.hit,
                         "damage": result.damage,
                         "defender_died": result.defender_died
                     }
@@ -227,9 +226,9 @@ class CombatHandlerMixin:
                 )
                 
         except ValidationError as e:
-            logger.info(
+            logger.debug(
                 "Attack command validation failed",
-                extra={"username": self.username, "validation_errors": str(e)}
+                extra={"username": self.username}
             )
             await self._send_error_response(
                 message.id,
@@ -242,14 +241,14 @@ class CombatHandlerMixin:
             import traceback
             tb = traceback.format_exc()
             logger.error(
-                f"Error handling attack command: {e}",
+                "Attack command failed",
                 extra={
                     "username": self.username,
                     "error": str(e),
                     "error_type": type(e).__name__,
+                    "traceback": tb
                 }
             )
-            logger.error(f"Combat handler traceback: {tb}")
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
@@ -273,15 +272,15 @@ class CombatHandlerMixin:
                 }
             )
             
-            logger.info(
+            logger.debug(
                 "Auto-retaliate toggled",
                 extra={"username": self.username, "enabled": payload.enabled}
             )
             
         except ValidationError as e:
-            logger.info(
+            logger.debug(
                 "Toggle auto-retaliate validation failed",
-                extra={"username": self.username, "validation_errors": str(e)}
+                extra={"username": self.username}
             )
             await self._send_error_response(
                 message.id,
@@ -291,12 +290,14 @@ class CombatHandlerMixin:
             )
             
         except Exception as e:
+            import traceback
             logger.error(
                 "Error handling toggle auto-retaliate command",
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(

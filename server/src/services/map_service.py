@@ -9,6 +9,7 @@ interact with the game world.
 import logging
 import os
 import asyncio
+import traceback
 from typing import Dict, Optional, Tuple, Set, Union, List, Any
 from pathlib import Path
 
@@ -89,23 +90,19 @@ class TileMap:
             # Parse object layers for spawn points
             self._parse_object_layers()
 
-            logger.info(
-                "Map loaded successfully",
+            logger.debug(
+                "Map loaded",
                 extra={
                     "map_path": self.map_path,
                     "dimensions": f"{self.width}x{self.height}",
-                    "tile_size": f"{self.tile_width}x{self.tile_height}",
-                    "walkable_tiles": len(self.walkable_tiles),
                     "collision_layers": [layer.name for layer in self.collision_layers],
                     "entity_spawns": len(self.entity_spawn_points),
-                    "player_spawn": self.player_spawn_point is not None,
-                    "tilesets": len(self.tmx_data.tilesets) if self.tmx_data else 0,
                 },
             )
 
         except Exception as e:
             logger.error(
-                "Failed to load map", extra={"map_path": self.map_path, "error": str(e)}
+                "Failed to load map", extra={"map_path": self.map_path, "error": str(e), "traceback": traceback.format_exc()}
             )
             raise
 
@@ -200,7 +197,7 @@ class TileMap:
             "y": tile_y,
         }
         
-        logger.info(
+        logger.debug(
             "Parsed player spawn point",
             extra={"spawn_point": self.player_spawn_point}
         )
@@ -218,8 +215,7 @@ class TileMap:
         tilesets = []
         for tileset in self.tmx_data.tilesets:
             # pytmx automatically resolves external .tsx files, so we can treat all tilesets uniformly
-            logger.info(f"Processing tileset: name={getattr(tileset, 'name', 'unnamed')}, "
-                       f"source={getattr(tileset, 'source', 'none')}, "
+            logger.debug(f"Processing tileset: name={getattr(tileset, 'name', 'unnamed')}, "
                        f"firstgid={getattr(tileset, 'firstgid', 'none')}")
             
             image_source = None
@@ -249,7 +245,7 @@ class TileMap:
                 "margin": getattr(tileset, 'margin', 0),
             }
             
-            logger.info(f"Tileset metadata: {tileset_info}")
+            logger.debug(f"Tileset metadata: {tileset_info}")
             tilesets.append(tileset_info)
         
         return tilesets
@@ -405,7 +401,7 @@ class TileMap:
         try:
             # Build path to .tsx file
             tsx_path = Path(self.map_path).parent / tileset.source
-            logger.info(f"Looking for external tileset at: {tsx_path}")
+            logger.debug(f"Looking for external tileset at: {tsx_path}")
             
             if not tsx_path.exists():
                 logger.warning(f"External tileset file not found: {tsx_path}")
@@ -443,7 +439,7 @@ class TileMap:
             return tileset_info
             
         except Exception as e:
-            logger.error(f"Failed to parse external tileset {tileset.source}: {e}")
+            logger.error(f"Failed to parse external tileset {tileset.source}: {e}", extra={"traceback": traceback.format_exc()})
             return None
 
     def is_walkable(self, x: int, y: int) -> bool:
@@ -746,7 +742,7 @@ class MapManager:
         """
         Discover and load all .tmx maps from the maps directory asynchronously.
         """
-        logger.info(f"Searching for maps in: {self.maps_path}")
+        logger.debug(f"Searching for maps in: {self.maps_path}")
         map_files = list(self.maps_path.glob("*.tmx"))
 
         if not map_files:
@@ -767,7 +763,7 @@ class MapManager:
                     f"Failed to load map {map_path.name}", extra={"error": result}
                 )
             else:
-                logger.info(f"Successfully loaded map: {map_path.name}")
+                logger.debug(f"Successfully loaded map: {map_path.name}")
 
     def _load_map_sync(self, map_path: Path, map_id: str):
         """Synchronous helper to load a single map. To be run in a thread."""

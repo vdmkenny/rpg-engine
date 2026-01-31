@@ -76,7 +76,7 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
         packed_chat = msgpack.packb(welcome_chat.model_dump(), use_bin_type=True)
         await websocket.send_bytes(packed_chat)
         
-        logger.info(
+        logger.debug(
             "Welcome messages sent",
             extra={"username": username, "player_id": player_id}
         )
@@ -87,7 +87,8 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
             extra={
                 "username": username,
                 "error": str(e),
-                "error_type": type(e).__name__
+                "error_type": type(e).__name__,
+                "traceback": traceback.format_exc()
             }
         )
 
@@ -167,7 +168,7 @@ async def handle_player_join_broadcast(
         if other_players:
             await connection_manager.broadcast_to_users(other_players, packed_join)
         
-        logger.info(
+        logger.debug(
             "Player join broadcast completed",
             extra={
                 "username": username,
@@ -233,6 +234,7 @@ async def broadcast_player_left(
             extra={
                 "username": username,
                 "error": str(e),
-                "error_type": type(e).__name__
+                "error_type": type(e).__name__,
+                "traceback": traceback.format_exc()
             }
         )

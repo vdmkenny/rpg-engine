@@ -199,21 +199,13 @@ async def websocket_endpoint(
     handler: Optional[WebSocketHandler] = None
     
     try:
-        logger.debug("Attempting to accept WebSocket connection")
         await websocket.accept()
-        logger.debug("WebSocket connection accepted successfully")
         metrics.track_websocket_connection("accepted")
         connection_start_time = time.time()
         
-        logger.info("WebSocket unified connection accepted")
-        
         # Wait for authentication message
-        logger.debug("Waiting for authentication message")
         auth_message = await receive_auth_message(websocket)
-        logger.debug("Authentication message received", extra={"message_type": auth_message.type})
-        
         username, player_id = await authenticate_player(auth_message)
-        logger.debug("Player authenticated", extra={"username": username, "player_id": player_id})
         
         # Initialize player connection and load into GSM
         await initialize_player_connection(username, player_id, valkey)
@@ -244,11 +236,10 @@ async def websocket_endpoint(
         _update_connection_metrics()
         
         logger.info(
-            "Player connected to WebSocket unified",
+            "Player connected",
             extra={
                 "username": username,
                 "player_id": player_id,
-                "initial_position": position
             }
         )
         
@@ -273,14 +264,14 @@ async def websocket_endpoint(
                 continue
                 
     except WebSocketDisconnect as e:
-        logger.info(
-            "Client disconnected from WebSocket unified",
+        logger.debug(
+            "Player disconnected",
             extra={"username": username, "reason": e.reason or "Normal disconnect"}
         )
         metrics.track_websocket_connection("disconnected")
         
     except JWTError:
-        logger.warning("JWT validation failed for WebSocket unified connection")
+        logger.warning("JWT validation failed")
         metrics.track_websocket_connection("auth_failed")
         try:
             await websocket.close(
@@ -292,12 +283,12 @@ async def websocket_endpoint(
             
     except Exception as e:
         logger.error(
-            "Unexpected error in WebSocket unified handler",
+            "WebSocket error",
             extra={
                 "username": username,
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "traceback": traceback.format_exc()
+                "traceback": traceback.format_exc(),
             }
         )
         metrics.track_websocket_connection("error")
@@ -328,9 +319,9 @@ async def _handle_player_disconnect(username: str, player_id: Optional[int]) -> 
         if player_map:
             await broadcast_player_left(username, player_map, manager)
         
-        logger.info(
+        logger.debug(
             "Player disconnection handled",
-            extra={"username": username, "player_map": player_map}
+            extra={"username": username}
         )
         
     except Exception as e:
@@ -339,7 +330,8 @@ async def _handle_player_disconnect(username: str, player_id: Optional[int]) -> 
             extra={
                 "username": username,
                 "error": str(e),
-                "error_type": type(e).__name__
+                "error_type": type(e).__name__,
+                "traceback": traceback.format_exc(),
             }
         )
 

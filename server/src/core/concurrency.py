@@ -7,6 +7,7 @@ and ensure data consistency in multiplayer scenarios.
 
 import asyncio
 import time
+import traceback
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Set, Any, AsyncGenerator, Callable
 from dataclasses import dataclass, field
@@ -214,7 +215,8 @@ class PlayerLockManager:
                         "player_id": player_id,
                         "operation": operation_name,
                         "lock_type": lock_type.value,
-                        "timeout": context.timeout
+                        "timeout": context.timeout,
+                        "traceback": traceback.format_exc()
                     }
                 )
                 raise
@@ -289,8 +291,8 @@ class PlayerLockManager:
                     if len(acquired_locks) < len(sorted_player_ids):
                         continue
                         
-            logger.info(
-                "Multiple player locks acquired successfully",
+            logger.debug(
+                "Multiple player locks acquired",
                 extra={
                     "player_ids": sorted_player_ids,
                     "operation": operation_name,
@@ -306,7 +308,8 @@ class PlayerLockManager:
                 extra={
                     "player_ids": sorted_player_ids,
                     "operation": operation_name,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
                 }
             )
             raise
@@ -416,7 +419,8 @@ class ValkeyAtomicOperations:
                             "description": description,
                             "duration": duration,
                             "error": str(e),
-                            "total_attempts": attempt + 1
+                            "total_attempts": attempt + 1,
+                            "traceback": traceback.format_exc()
                         }
                     )
                     raise
