@@ -6,6 +6,7 @@ correlation ID handling and message pattern support.
 """
 
 import asyncio
+import os
 import uuid
 import msgpack
 from typing import Dict, Any, Optional, List, Callable
@@ -19,6 +20,23 @@ from common.src.protocol import (
     get_expected_response_type
 )
 from common.src.websocket_utils import BroadcastTarget
+
+
+# =============================================================================
+# Test Constants
+# =============================================================================
+
+# Skip marker for integration tests that require RUN_INTEGRATION_TESTS=1
+SKIP_WS_INTEGRATION = pytest.mark.skipif(
+    os.getenv("RUN_INTEGRATION_TESTS", "").lower() not in ("1", "true", "yes"),
+    reason="Integration tests require RUN_INTEGRATION_TESTS=1"
+)
+
+# Common sleep durations used in tests
+CHAT_RATE_LIMIT_WAIT = 1.1  # Wait for chat rate limit to reset (1.0s limit)
+MOVEMENT_COOLDOWN_WAIT = 0.6  # Wait for movement cooldown (0.5s cooldown)
+ENTITY_SPAWN_WAIT = 0.2  # Wait for entity to appear in game state
+GAME_TICK_WAIT = 0.05  # One game tick at 20 TPS
 
 
 # =============================================================================
@@ -73,7 +91,7 @@ class EventCapture:
 
 class WebSocketTestClient:
     """
-    Enhanced WebSocket test client
+    Async WebSocket test client for httpx-ws
     
     Supports:
     - Command/query correlation with automatic response handling
@@ -91,20 +109,8 @@ class WebSocketTestClient:
         self.message_log: List[WSMessage] = []
         self.running = True
         
-        # Detect WebSocket type:
-        # - websockets library: has recv() method
-        # - Starlette TestClient: has receive_bytes() sync method
-        # - httpx/other: has receive_bytes() async method
-        self.has_recv = hasattr(websocket, 'recv')  # websockets library
-        self.has_receive_bytes = hasattr(websocket, 'receive_bytes')
-        self.is_async_websocket = self.has_recv or asyncio.iscoroutinefunction(getattr(websocket, 'receive_bytes', None))
-        
-        # Start message processing task only for async websockets
-        # For sync TestClient, we'll use synchronous request-response pattern
-        if self.is_async_websocket:
-            self._process_task = asyncio.create_task(self._process_messages())
-        else:
-            self._process_task = None
+        # Start background message processing task
+        self._process_task = asyncio.create_task(self._process_messages())
         
     async def __aenter__(self):
         return self
@@ -115,12 +121,11 @@ class WebSocketTestClient:
     async def close(self):
         """Clean up the test client"""
         self.running = False
-        if self._process_task:
-            self._process_task.cancel()
-            try:
-                await self._process_task
-            except asyncio.CancelledError:
-                pass
+        self._process_task.cancel()
+        try:
+            await self._process_task
+        except asyncio.CancelledError:
+            pass
                 
         # Cancel pending operations
         for response in self.pending_responses.values():
@@ -134,23 +139,12 @@ class WebSocketTestClient:
                 capture.future.cancel()
                 
     async def _process_messages(self):
-        """Process incoming WebSocket messages with improved sync/async handling"""
+        """Process incoming WebSocket messages"""
         try:
             while self.running:
                 try:
-                    # Handle different WebSocket library types
-                    if self.has_recv:
-                        # websockets library
-                        raw_message = await self.websocket.recv()
-                        # websockets returns bytes directly
-                        if isinstance(raw_message, str):
-                            raw_message = raw_message.encode()
-                    elif self.is_async_websocket:
-                        # httpx or other async client with receive_bytes
-                        raw_message = await self.websocket.receive_bytes()
-                    else:
-                        # Sync TestClient - shouldn't reach here as task not created
-                        break
+                    # httpx-ws async receive
+                    raw_message = await self.websocket.receive_bytes()
                     
                     message_data = msgpack.unpackb(raw_message, raw=False)
                     message = WSMessage(**message_data)
@@ -201,49 +195,11 @@ class WebSocketTestClient:
         
         raw_message = msgpack.packb(message.model_dump(), use_bin_type=True)
         
-        # Handle different WebSocket library types
-        if self.has_recv:
-            # websockets library uses send()
-            await self.websocket.send(raw_message)
-        elif self.is_async_websocket:
-            # httpx or other async client
-            await self.websocket.send_bytes(raw_message)
-        else:
-            # Sync TestClient - run in thread pool to avoid blocking event loop
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.websocket.send_bytes, raw_message)
+        # httpx-ws async send
+        await self.websocket.send_bytes(raw_message)
         
     async def _wait_for_response(self, correlation_id: str, expected_type: MessageType, timeout: float) -> WSMessage:
-        """Wait for a correlated response"""
-        # For sync TestClient, directly receive the response (no background task)
-        if not self.is_async_websocket:
-            try:
-                print(f"[DEBUG] Waiting for sync response for correlation_id={correlation_id}, expected={expected_type}")
-                # Run sync receive_bytes in thread pool to avoid blocking event loop
-                loop = asyncio.get_event_loop()
-                raw_message = await loop.run_in_executor(None, self.websocket.receive_bytes)
-                print(f"[DEBUG] Received raw message: {len(raw_message)} bytes")
-                message_data = msgpack.unpackb(raw_message, raw=False)
-                message = WSMessage(**message_data)
-                self.message_log.append(message)
-                print(f"[DEBUG] Parsed message: type={message.type}, id={message.id}")
-                
-                # Validate response
-                if message.type == MessageType.RESP_ERROR:
-                    raise ErrorResponseError(message.payload)
-                elif message.type != expected_type:
-                    raise UnexpectedResponseError(
-                        f"Expected {expected_type}, got {message.type}"
-                    )
-                
-                return message
-            except Exception as e:
-                print(f"[DEBUG] Exception in _wait_for_response: {e}")
-                if isinstance(e, (ErrorResponseError, UnexpectedResponseError)):
-                    raise
-                raise ResponseTimeoutError(f"Failed to receive response: {e}")
-        
-        # For async websockets, use the background task approach
+        """Wait for a correlated response using background message processor"""
         future = asyncio.Future()
         timeout_task = asyncio.create_task(self._handle_response_timeout(correlation_id, timeout))
         
@@ -551,68 +507,10 @@ class WebSocketTestClient:
             # Return the full WSMessage object, not just payload
             return await future
         except asyncio.TimeoutError:
-            raise ResponseTimeoutError(f"Event timeout for {event_type}")
+                raise ResponseTimeoutError(f"Event timeout for {event_type}")
         finally:
             if capture in self.event_captures:
                 self.event_captures.remove(capture)
-                
-
-
-
-# =============================================================================
-# Test Fixtures and Helpers
-# =============================================================================
-
-@pytest.fixture
-async def websocket_client(authenticated_websocket):
-    """Create a WebSocket test client"""
-    async with WebSocketTestClient(authenticated_websocket) as client:
-        yield client
-
-
-async def create_test_player(websocket_client: WebSocketTestClient, username: str = None) -> Dict[str, Any]:
-    """Create and authenticate a test player"""
-    from server.src.tests.conftest import create_test_token
-    
-    if not username:
-        username = f"test_player_{int(time.time() * 1000)}"
-        
-    token = await create_test_token(username)
-    auth_result = await websocket_client.authenticate(token)
-    
-    return {
-        "username": username,
-        "token": token,
-        "auth_result": auth_result
-    }
-
-
-# =============================================================================
-# Test Fixtures and Helpers
-# =============================================================================
-
-@pytest.fixture
-async def websocket_client(authenticated_websocket):
-    """Create a WebSocket test client"""
-    async with WebSocketTestClient(authenticated_websocket) as client:
-        yield client
-
-
-async def create_test_player(websocket_client: WebSocketTestClient, username: str = None) -> Dict[str, Any]:
-    """Create and authenticate a test player"""
-    from server.src.tests.conftest import create_test_token
-    
-    if not username:
-        username = f"test_player_{int(time.time() * 1000)}"
-        
-    token = await create_test_token(username)
-    auth_result = await websocket_client.authenticate(token)
-    
-    return {
-        "username": username,
-        "token": token,
-        "auth_result": auth_result
-    }
 
 
 # =============================================================================

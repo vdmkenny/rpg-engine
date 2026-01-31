@@ -3091,6 +3091,166 @@ class GameStateManager:
         player_data = await self.get_player_by_username_complete(username)
         return player_data.get("id") if player_data else None
 
+    # =========================================================================
+    # PLAYER DELETION (Complete removal from cache and database)
+    # =========================================================================
+    
+    async def delete_player_complete(self, player_id: int) -> bool:
+        """
+        Completely delete a player from both cache and database.
+        
+        Removes:
+        - Player from online registry (if online)
+        - All Valkey keys (position, inventory, equipment, skills, combat state, settings)
+        - All database records (PlayerSkill, PlayerInventory, PlayerEquipment, GroundItem, Player)
+        
+        Args:
+            player_id: Player ID to delete
+            
+        Returns:
+            True if player was deleted, False if player didn't exist
+        """
+        logger.info("Deleting player completely", extra={"player_id": player_id})
+        
+        # 1. Remove from online registry if present
+        username = self._id_to_username.get(player_id)
+        if self.is_online(player_id):
+            self._online_players.discard(player_id)
+            if username:
+                self._username_to_id.pop(username, None)
+            self._id_to_username.pop(player_id, None)
+            logger.debug("Removed player from online registry", extra={"player_id": player_id})
+        
+        # 2. Clean up all Valkey keys for this player
+        await self.cleanup_player_state(player_id)
+        
+        # Also clean up settings key which cleanup_player_state doesn't handle
+        if self._valkey:
+            settings_key = PLAYER_SETTINGS_KEY.format(player_id=player_id)
+            await self._valkey.delete([settings_key])
+        
+        # 3. Delete all database records
+        if not self._session_factory:
+            logger.warning("No database session factory for player deletion")
+            return False
+            
+        try:
+            async with self._db_session() as db:
+                from server.src.models.player import Player
+                from server.src.models.skill import PlayerSkill
+                from server.src.models.item import PlayerInventory, PlayerEquipment, GroundItem
+                
+                # Check if player exists first
+                result = await db.execute(
+                    select(Player).where(Player.id == player_id)
+                )
+                player = result.scalar_one_or_none()
+                
+                if not player:
+                    logger.debug("Player not found in database", extra={"player_id": player_id})
+                    return False
+                
+                # Delete related records first (foreign key constraints)
+                await db.execute(delete(PlayerSkill).where(PlayerSkill.player_id == player_id))
+                await db.execute(delete(PlayerInventory).where(PlayerInventory.player_id == player_id))
+                await db.execute(delete(PlayerEquipment).where(PlayerEquipment.player_id == player_id))
+                await db.execute(delete(GroundItem).where(GroundItem.dropped_by == player_id))
+                
+                # Delete the player record
+                await db.execute(delete(Player).where(Player.id == player_id))
+                
+                await self._commit_if_not_test_session(db)
+                
+                logger.info(
+                    "Player deleted completely",
+                    extra={"player_id": player_id, "username": username}
+                )
+                return True
+                
+        except Exception as e:
+            logger.error(
+                "Failed to delete player from database",
+                extra={"player_id": player_id, "error": str(e)}
+            )
+            raise
+    
+    # =========================================================================
+    # STATE RESET (For testing and server maintenance)
+    # =========================================================================
+    
+    async def reset_all_state(self, clear_database: bool = False) -> None:
+        """
+        Reset all game state. Primarily used for testing.
+        
+        Clears:
+        - All online player registries (in-memory)
+        - All player-related Valkey keys
+        - All entity instance keys
+        - All ground item keys
+        - Optionally: All player-related database tables
+        
+        Args:
+            clear_database: If True, also clears database tables (destructive!)
+        """
+        logger.warning(
+            "Resetting all game state",
+            extra={"clear_database": clear_database}
+        )
+        
+        # 1. Clear in-memory registries
+        self._online_players.clear()
+        self._username_to_id.clear()
+        self._id_to_username.clear()
+        
+        # 2. Clear all Valkey state
+        if self._valkey:
+            try:
+                # Clear entity instances and respawn queue
+                await self.clear_all_entity_instances()
+                
+                # Clear dirty tracking sets
+                dirty_keys = [
+                    DIRTY_POSITION_KEY,
+                    DIRTY_INVENTORY_KEY,
+                    DIRTY_EQUIPMENT_KEY,
+                    DIRTY_SKILLS_KEY,
+                    DIRTY_GROUND_ITEMS_KEY,
+                ]
+                await self._valkey.delete(dirty_keys)
+                
+                # Clear ground items next ID counter
+                await self._valkey.delete([GROUND_ITEMS_NEXT_ID_KEY])
+                
+                logger.debug("Cleared all Valkey state")
+                
+            except Exception as e:
+                logger.error("Failed to clear Valkey state", extra={"error": str(e)})
+        
+        # 3. Optionally clear database tables
+        if clear_database and self._session_factory:
+            try:
+                async with self._db_session() as db:
+                    from server.src.models.player import Player
+                    from server.src.models.skill import PlayerSkill
+                    from server.src.models.item import PlayerInventory, PlayerEquipment, GroundItem
+                    
+                    # Delete in order to respect foreign key constraints
+                    await db.execute(delete(PlayerSkill))
+                    await db.execute(delete(PlayerInventory))
+                    await db.execute(delete(PlayerEquipment))
+                    await db.execute(delete(GroundItem))
+                    await db.execute(delete(Player))
+                    
+                    await self._commit_if_not_test_session(db)
+                    
+                    logger.warning("Cleared all player data from database")
+                    
+            except Exception as e:
+                logger.error("Failed to clear database state", extra={"error": str(e)})
+                raise
+        
+        logger.info("Game state reset complete")
+
 
 # =============================================================================
 # SINGLETON MANAGEMENT

@@ -25,6 +25,11 @@ class TestMultiplayerMovement:
     @pytest.mark.asyncio
     async def test_player_movement_creates_game_state_update(self, test_client: WebSocketTestClient):
         """Moving player should receive RESP_SUCCESS, then potentially see game updates via events."""
+        import asyncio
+        
+        # Wait for movement cooldown after authentication (0.5s cooldown)
+        await asyncio.sleep(0.6)
+        
         # Send move command and expect success response
         response = await test_client.send_command(
             MessageType.CMD_MOVE,
@@ -41,6 +46,9 @@ class TestMultiplayerMovement:
     async def test_multiple_movements(self, test_client: WebSocketTestClient):
         """Multiple movements should produce success responses."""
         import asyncio
+        
+        # Wait for movement cooldown after authentication (0.5s cooldown)
+        await asyncio.sleep(0.6)
         
         # Move multiple times and verify each produces a success response
         success_count = 0
@@ -70,6 +78,11 @@ class TestGameStateUpdateFormat:
     @pytest.mark.asyncio
     async def test_game_state_update_has_correct_structure(self, test_client: WebSocketTestClient):
         """Movement command should return success with position data."""
+        import asyncio
+        
+        # Wait for movement cooldown after authentication (0.5s cooldown)
+        await asyncio.sleep(0.6)
+        
         # Send move to get success response
         response = await test_client.send_command(
             MessageType.CMD_MOVE,
@@ -103,6 +116,11 @@ class TestPlayerDisconnect:
     @pytest.mark.asyncio
     async def test_player_data_synced_on_disconnect(self, test_client: WebSocketTestClient):
         """Player position should be synced to database on disconnect."""
+        import asyncio
+        
+        # Wait for movement cooldown after authentication (0.5s cooldown)
+        await asyncio.sleep(0.6)
+        
         # Move the player
         await test_client.send_command(
             MessageType.CMD_MOVE,

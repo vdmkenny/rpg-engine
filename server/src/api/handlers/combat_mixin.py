@@ -38,10 +38,11 @@ class CombatHandlerMixin:
         """Handle CMD_ATTACK - player attacks entity or player."""
         try:
             operation_rate_limiter = OperationRateLimiter()
+            combat_cooldown = game_config.get("game", {}).get("security", {}).get("combat_attack_cooldown", 0.6)
             if not operation_rate_limiter.check_rate_limit(
                 self.username,
                 "combat_attack",
-                settings.game.security.combat_attack_cooldown
+                combat_cooldown
             ):
                 await self._send_error_response(
                     message.id,
@@ -238,14 +239,17 @@ class CombatHandlerMixin:
             )
             
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
             logger.error(
-                "Error handling attack command",
+                f"Error handling attack command: {e}",
                 extra={
                     "username": self.username,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
                 }
             )
+            logger.error(f"Combat handler traceback: {tb}")
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,

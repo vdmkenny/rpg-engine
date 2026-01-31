@@ -509,3 +509,36 @@ class PlayerService:
         # Use GSM's auto-loading capability for offline players
         player_state = await state_manager.get_player_full_state(player_id)
         return player_state.get("username") if player_state else None
+
+    @staticmethod
+    async def delete_player(player_id: int) -> bool:
+        """
+        Completely delete a player from the game.
+        
+        Removes player from cache, online registry, and database.
+        This is a destructive operation and cannot be undone.
+
+        Args:
+            player_id: Player ID to delete
+
+        Returns:
+            True if player was deleted, False if player didn't exist
+        """
+        gsm = get_game_state_manager()
+        
+        try:
+            result = await gsm.delete_player_complete(player_id)
+            
+            if result:
+                logger.info("Player deleted via service", extra={"player_id": player_id})
+            else:
+                logger.debug("Player not found for deletion", extra={"player_id": player_id})
+            
+            return result
+            
+        except Exception as e:
+            logger.error(
+                "Error deleting player",
+                extra={"player_id": player_id, "error": str(e)}
+            )
+            raise

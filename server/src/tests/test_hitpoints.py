@@ -14,7 +14,7 @@ import uuid
 import pytest
 import pytest_asyncio
 import msgpack
-from starlette.testclient import TestClient
+from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -463,47 +463,54 @@ class TestWebSocketHpIntegration:
         reset_engine()
         reset_valkey()
 
-    def test_welcome_message_includes_hp(self):
+    @pytest.mark.asyncio
+    async def test_welcome_message_includes_hp(self):
         """WELCOME message should include current_hp and max_hp."""
-        with TestClient(app) as client:
+        from httpx_ws import aconnect_ws
+        from httpx_ws.transport import ASGIWebSocketTransport
+        
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
             # Create user via API
             username = unique_username("hptest")
-            response = client.post(
+            response = await client.post(
                 "/auth/register",
                 json={"username": username, "password": "password123"},
             )
             assert response.status_code == 201
             
             # Login to get token
-            response = client.post(
+            response = await client.post(
                 "/auth/login",
                 data={"username": username, "password": "password123"},
             )
             assert response.status_code == 200
             token = response.json()["access_token"]
             
-            # Connect via WebSocket and authenticate
-            with client.websocket_connect("/ws") as websocket:
-                auth_message = {
-                    "type": MessageType.CMD_AUTHENTICATE,
-                    "payload": {"token": token},
-                }
-                websocket.send_bytes(msgpack.packb(auth_message, use_bin_type=True))
-                
-                response_bytes = websocket.receive_bytes()
-                response = msgpack.unpackb(response_bytes, raw=False)
-                
-                assert response["type"] == MessageType.EVENT_WELCOME
-                assert "player" in response["payload"]
-                player_data = response["payload"]["player"]
-                
-                # Check HP fields are present in nested hp object
-                assert "hp" in player_data
-                hp_data = player_data["hp"]
-                assert "current_hp" in hp_data
-                assert "max_hp" in hp_data
-                assert hp_data["current_hp"] == HITPOINTS_START_LEVEL
-                assert hp_data["max_hp"] == HITPOINTS_START_LEVEL
+            # Connect via WebSocket and authenticate using httpx-ws
+            ws_transport = ASGIWebSocketTransport(app)
+            async with AsyncClient(transport=ws_transport, base_url="http://test") as ws_client:
+                async with aconnect_ws("http://test/ws", ws_client) as websocket:
+                    auth_message = {
+                        "type": MessageType.CMD_AUTHENTICATE,
+                        "payload": {"token": token},
+                    }
+                    await websocket.send_bytes(msgpack.packb(auth_message, use_bin_type=True))
+                    
+                    response_bytes = await websocket.receive_bytes()
+                    response = msgpack.unpackb(response_bytes, raw=False)
+                    
+                    assert response["type"] == MessageType.EVENT_WELCOME
+                    assert "player" in response["payload"]
+                    player_data = response["payload"]["player"]
+                    
+                    # Check HP fields are present in nested hp object
+                    assert "hp" in player_data
+                    hp_data = player_data["hp"]
+                    assert "current_hp" in hp_data
+                    assert "max_hp" in hp_data
+                    assert hp_data["current_hp"] == HITPOINTS_START_LEVEL
+                    assert hp_data["max_hp"] == HITPOINTS_START_LEVEL
 
 
 # =============================================================================

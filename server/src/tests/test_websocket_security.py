@@ -59,13 +59,8 @@ class TestInvalidMessages:
         # Send raw message to test server robustness
         raw_message = msgpack.packb(unknown_message, use_bin_type=True)
         
-        # Send using WebSocketTestClient's internal websocket
-        if test_client.is_async_websocket:
-            await test_client.websocket.send_bytes(raw_message)
-        else:
-            await asyncio.get_event_loop().run_in_executor(
-                None, test_client.websocket.send_bytes, raw_message
-            )
+        # Send using WebSocketTestClient's internal websocket (async)
+        await test_client.websocket.send_bytes(raw_message)
         
         # Wait briefly - server should handle gracefully without crashing
         await asyncio.sleep(0.1)
@@ -87,13 +82,8 @@ class TestInvalidMessages:
         
         raw_message = msgpack.packb(bad_message, use_bin_type=True)
         
-        # Send using WebSocketTestClient's internal websocket
-        if test_client.is_async_websocket:
-            await test_client.websocket.send_bytes(raw_message)
-        else:
-            await asyncio.get_event_loop().run_in_executor(
-                None, test_client.websocket.send_bytes, raw_message
-            )
+        # Send using WebSocketTestClient's internal websocket (async)
+        await test_client.websocket.send_bytes(raw_message)
         
         # Server should handle gracefully
         await asyncio.sleep(0.1)

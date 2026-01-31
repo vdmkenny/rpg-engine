@@ -84,14 +84,14 @@ async def authenticate_player(auth_message: WSMessage) -> Tuple[str, int]:
             )
         
         username = player_data.get("username")
-        player_id = player_data.get("player_id")
         
-        if not username or not player_id:
+        if not username:
             raise WebSocketDisconnect(
                 code=status.WS_1008_POLICY_VIOLATION,
-                reason="Invalid token: player data missing"
+                reason="Invalid token: username missing"
             )
         
+        # Get player from database to validate existence and get player_id
         player_service = PlayerService()
         player = await player_service.get_player_by_username(username)
         

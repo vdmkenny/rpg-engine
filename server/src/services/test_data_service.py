@@ -75,8 +75,12 @@ class TestDataService:
         """
         try:
             # Sync items to database - this is the main cause of test skips
-            items = await ItemService.sync_items_to_db()
-            item_count = len(items)
+            await ItemService.sync_items_to_db()
+            
+            # Get item count from GSM cache
+            gsm = get_game_state_manager()
+            cached_items = gsm.get_all_cached_items()
+            item_count = len(cached_items) if cached_items else 0
             
             logger.info(
                 "Game data synchronized for tests",

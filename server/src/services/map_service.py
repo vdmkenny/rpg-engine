@@ -6,12 +6,15 @@ Provides an interface for the game logic to validate player movements and
 interact with the game world.
 """
 
+import logging
 import os
 import asyncio
 from typing import Dict, Optional, Tuple, Set, Union, List, Any
 from pathlib import Path
 
 try:
+    # Suppress pytmx's pygame import error (server doesn't need pygame)
+    logging.getLogger("pytmx").setLevel(logging.CRITICAL)
     import pytmx
 
     PYTMX_AVAILABLE = True
@@ -56,7 +59,6 @@ class TileMap:
             raise ImportError("pytmx library is required for map loading")
 
         try:
-            # Load TMX file with pygame support
             self.tmx_data = pytmx.TiledMap(self.map_path)
             self.width = self.tmx_data.width
             self.height = self.tmx_data.height

@@ -194,9 +194,13 @@ class TestInventoryProtocol:
 
     async def test_inventory_operations_protocol_compliance(self, test_client: WebSocketTestClient):
         """Inventory operations should follow protocol message format."""
+        from server.src.tests.websocket_test_utils import ErrorResponseError
+        from common.src.protocol import WSMessage
+        
         client = test_client
         
         # Test that commands follow proper message structure
+        # Note: Some commands will fail (empty inventory) - that's expected
         commands_to_test = [
             (MessageType.CMD_INVENTORY_MOVE, {"from_slot": 0, "to_slot": 1}),
             (MessageType.CMD_INVENTORY_SORT, {"sort_type": "name"}),
@@ -204,8 +208,12 @@ class TestInventoryProtocol:
         ]
         
         for message_type, payload in commands_to_test:
-            response = await client.send_command(message_type, payload)
-            # Should have proper WSMessage response structure
-            from common.src.protocol import WSMessage
-            assert isinstance(response, WSMessage)
-            assert response.type in [MessageType.RESP_SUCCESS, MessageType.RESP_ERROR]
+            try:
+                response = await client.send_command(message_type, payload)
+                # Should have proper WSMessage response structure
+                assert isinstance(response, WSMessage)
+                assert response.type == MessageType.RESP_SUCCESS
+            except ErrorResponseError:
+                # Error responses are valid protocol responses - test passes
+                # Commands on empty inventory slots return errors as expected
+                pass

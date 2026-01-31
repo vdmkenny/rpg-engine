@@ -387,7 +387,7 @@ class CombatService:
             
             # Award XP
             for skill_type, xp_amount in xp_gained.items():
-                await SkillService.add_experience(attacker_id, skill_type.name.lower(), xp_amount)
+                await SkillService.add_experience(attacker_id, skill_type, xp_amount)
         
         # Build combat message
         if did_hit:
