@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import traceback
 import uuid
 
+from server.src.core.items import EquipmentSlot
 from server.src.core.logging_config import get_logger
 from server.src.services.game_state_manager import get_game_state_manager
 
@@ -163,18 +164,24 @@ class AtomicOperationExecutor:
                 )
             
             elif operation.operation_type == "set_equipment_slot":
+                slot = operation.execute_params["slot"]
+                if isinstance(slot, str):
+                    slot = EquipmentSlot(slot)
                 await gsm.set_equipment_slot(
                     operation.execute_params["player_id"],
-                    operation.execute_params["slot"],
+                    slot,
                     operation.execute_params["item_id"],
                     operation.execute_params["quantity"],
-                    operation.execute_params.get("durability"),
+                    operation.execute_params.get("durability") or 1.0,
                 )
             
             elif operation.operation_type == "delete_equipment_slot":
+                slot = operation.execute_params["slot"]
+                if isinstance(slot, str):
+                    slot = EquipmentSlot(slot)
                 await gsm.delete_equipment_slot(
                     operation.execute_params["player_id"],
-                    operation.execute_params["slot"],
+                    slot,
                 )
             
             elif operation.operation_type == "add_ground_item":

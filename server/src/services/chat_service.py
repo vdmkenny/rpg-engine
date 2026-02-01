@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Any
 import time
 import traceback
 
+from common.src.protocol import ChatChannel
+
 from ..core.logging_config import get_logger
 from ..core.config import settings
 from .game_state_manager import get_game_state_manager
@@ -31,11 +33,11 @@ class ChatService:
             Maximum message length for the channel
         """
         channel = channel.lower()
-        if channel == "local":
+        if channel == ChatChannel.LOCAL.value:
             return settings.CHAT_MAX_MESSAGE_LENGTH_LOCAL
-        elif channel == "global":
+        elif channel == ChatChannel.GLOBAL.value:
             return settings.CHAT_MAX_MESSAGE_LENGTH_GLOBAL
-        elif channel == "dm":
+        elif channel == ChatChannel.DM.value:
             return settings.CHAT_MAX_MESSAGE_LENGTH_DM
         else:
             # Default to local chat limit for unknown channels
@@ -179,7 +181,7 @@ class ChatService:
             return validation_result
 
         # Channel-specific validation
-        if channel == "global":
+        if channel == ChatChannel.GLOBAL.value:
             # Check global chat permissions
             permission_result = await ChatService.validate_global_chat_permission(player_id)
             if not permission_result["valid"]:
@@ -349,7 +351,7 @@ class ChatService:
         from common.src.protocol import WSMessage, MessageType
         
         try:
-            channel = payload.get("channel", "local").lower()
+            channel = payload.get("channel", ChatChannel.LOCAL.value).lower()
             message = payload.get("message", "").strip()
             
             # Validate message using enhanced service with permission checking
@@ -401,13 +403,13 @@ class ChatService:
             
             recipients = []
             
-            if channel == "global":
+            if channel == ChatChannel.GLOBAL.value:
                 # Broadcast to all connected players
                 packed_message = msgpack.packb(chat_response.model_dump(), use_bin_type=True)
                 await connection_manager.broadcast_to_all(packed_message)
                 recipients = ["all_players"]  # Placeholder for metrics
                 
-            elif channel == "local":
+            elif channel == ChatChannel.LOCAL.value:
                 # Get player's current map for local chat
                 from .game_state_manager import get_game_state_manager
                 gsm = get_game_state_manager()
@@ -436,7 +438,7 @@ class ChatService:
                         extra={"username": username, "player_id": player_id}
                     )
                     
-            elif channel == "dm":
+            elif channel == ChatChannel.DM.value:
                 # Handle direct message
                 target_username = payload.get("recipient")
                 if target_username:
@@ -529,7 +531,7 @@ class ChatService:
             "timestamp": None  # Will be set by WebSocket handler
         }
 
-        if channel_type == "dm" and recipient_username:
+        if channel_type == ChatChannel.DM.value and recipient_username:
             formatted_message["recipient"] = recipient_username
 
         return formatted_message
@@ -545,5 +547,8 @@ class ChatService:
         Returns:
             True if valid channel type
         """
-        valid_channels = {"local", "global", "dm"}
-        return channel_type in valid_channels
+        try:
+            ChatChannel(channel_type.lower())
+            return True
+        except ValueError:
+            return False

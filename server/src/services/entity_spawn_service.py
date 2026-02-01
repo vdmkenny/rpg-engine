@@ -8,7 +8,7 @@ entity respawn logic.
 import traceback
 from typing import Dict, List, Optional
 
-from server.src.core.entities import EntityID
+from server.src.core.entities import EntityID, EntityState
 from server.src.core.logging_config import get_logger
 from server.src.services.game_state_manager import GameStateManager
 from server.src.services.map_service import get_map_manager
@@ -184,7 +184,7 @@ class EntitySpawnService:
             # Respawn entity at spawn position
             await gsm.update_entity_position(instance_id, entity_data["spawn_x"], entity_data["spawn_y"])
             await gsm.update_entity_hp(instance_id, entity_data["max_hp"])
-            await gsm.set_entity_state(instance_id, "idle")
+            await gsm.set_entity_state(instance_id, EntityState.IDLE)
             
             # Remove from respawn queue
             await gsm.valkey.zrem(ENTITY_RESPAWN_QUEUE_KEY, [str(instance_id)])

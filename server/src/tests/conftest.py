@@ -75,6 +75,10 @@ class FakeValkeyTransaction:
         """Queue an increment operation."""
         self.queued_operations.append(('incr', key))
     
+    async def srem(self, key: str, member: str) -> None:
+        """Queue a set remove operation."""
+        self.queued_operations.append(('srem', key, member))
+    
     async def exec(self) -> list:
         """Execute all queued operations atomically and return results."""
         results = []
@@ -91,6 +95,8 @@ class FakeValkeyTransaction:
                 result = await self.valkey.delete(args[0])
             elif operation == 'incr':
                 result = await self.valkey.incr(args[0])
+            elif operation == 'srem':
+                result = await self.valkey.srem(args[0], [args[1]])
             results.append(result)
         return results
 

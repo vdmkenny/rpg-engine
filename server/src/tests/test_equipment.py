@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from server.src.core.items import ItemType, EquipmentSlot
+from server.src.core.skills import SkillType
 from server.src.core.config import settings
 from server.src.models.item import Item, PlayerInventory, PlayerEquipment
 from server.src.models.skill import Skill, PlayerSkill
@@ -58,15 +59,15 @@ async def give_player_skill_level(
 ):
     """Set player skill level for testing equipment requirements."""
     from server.src.services.game_state_manager import get_game_state_manager
+    from server.src.core.skills import SkillType
     
-    # Get skill ID from database for GSM
-    result = await session.execute(select(Skill).where(Skill.name == skill_name))
-    skill = result.scalar_one_or_none()
-    if not skill:
-        raise ValueError(f"Skill {skill_name} not found")
+    # Get skill type from name
+    skill_type = SkillType.from_name(skill_name)
+    if not skill_type:
+        raise ValueError(f"Skill {skill_name} not found in SkillType enum")
     
     gsm = get_game_state_manager()
-    await gsm.set_skill(player_id, skill_name, skill.id, level, 0)
+    await gsm.set_skill(player_id, skill_type, level, 0)
 
 
 # =============================================================================
@@ -110,7 +111,7 @@ class TestGetEquipment:
         all_skills = await gsm.get_all_skills(player.id)
         print(f"All skills in GSM: {all_skills}")
         
-        attack_skill = await gsm.get_skill(player.id, "attack")
+        attack_skill = await gsm.get_skill(player.id, SkillType.ATTACK)
         print(f"Attack skill from GSM: {attack_skill}")
         
         add_result = await InventoryService.add_item(player.id, item.id)

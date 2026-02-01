@@ -10,6 +10,7 @@ import pytest
 
 from server.src.models.player import Player
 from server.src.core.security import get_password_hash
+from server.src.core.items import EquipmentSlot
 
 
 @pytest.mark.asyncio
@@ -106,7 +107,7 @@ class TestRaceConditionDetection:
         for slot in range(5):
             await gsm.set_inventory_slot(player_id, slot, 200 + slot, 1, 1.0)
         
-        equipment_slot = "weapon"
+        equipment_slot = EquipmentSlot.WEAPON
         operations_results = []
 
         async def equipment_swap_operation(operation_id: int):
@@ -125,7 +126,7 @@ class TestRaceConditionDetection:
                 
                 # Check final state
                 equipment = await gsm.get_equipment(player_id)
-                equipped_item = equipment.get(equipment_slot, {}).get('item_id')
+                equipped_item = equipment.get(equipment_slot.value, {}).get('item_id')
                 
                 operations_results.append({
                     'operation_id': operation_id,

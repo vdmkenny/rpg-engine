@@ -21,6 +21,7 @@ from server.src.models.skill import Skill, PlayerSkill
 from server.src.services.item_service import ItemService
 from server.src.services.ground_item_service import GroundItemService
 from server.src.services.game_state_manager import GameStateManager
+from server.src.core.items import EquipmentSlot
 
 
 # =============================================================================
@@ -80,6 +81,8 @@ async def give_player_skill_level(
     session: AsyncSession, gsm: GameStateManager, player_id: int, skill_name: str, level: int
 ):
     """Helper to give a player a specific skill level."""
+    from server.src.core.skills import SkillType
+    
     result = await session.execute(select(Skill).where(Skill.name == skill_name))
     skill = result.scalar_one_or_none()
     if not skill:
@@ -106,7 +109,11 @@ async def give_player_skill_level(
         session.add(player_skill)
 
     await session.commit()
-    await gsm.set_skill(player_id, skill_name, skill.id, level, 0)
+    
+    # Update skill in GSM using SkillType enum
+    skill_type = SkillType.from_name(skill_name)
+    if skill_type:
+        await gsm.set_skill(player_id, skill_type, level, 0)
 
 
 # =============================================================================
@@ -733,7 +740,7 @@ class TestDropPlayerItemsOnDeath:
         
         await gsm.set_equipment_slot(
             player.id,
-            slot="weapon",
+            slot=EquipmentSlot.WEAPON,
             item_id=sword.id,
             quantity=1,
             durability=sword.max_durability,
@@ -769,7 +776,7 @@ class TestDropPlayerItemsOnDeath:
         
         await gsm.set_equipment_slot(
             player.id,
-            slot="weapon",
+            slot=EquipmentSlot.WEAPON,
             item_id=sword.id,
             quantity=1,
             durability=sword.max_durability,

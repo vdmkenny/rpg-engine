@@ -301,11 +301,17 @@ class TestChannelValidation:
         assert ChatService.is_valid_channel_type("global") is True
         assert ChatService.is_valid_channel_type("dm") is True
 
+    def test_is_valid_channel_type_case_insensitive(self):
+        """Channel type validation should be case insensitive."""
+        assert ChatService.is_valid_channel_type("LOCAL") is True
+        assert ChatService.is_valid_channel_type("Global") is True
+        assert ChatService.is_valid_channel_type("DM") is True
+
     def test_is_valid_channel_type_invalid_channels(self):
         """Should reject invalid channel types."""
         assert ChatService.is_valid_channel_type("invalid") is False
         assert ChatService.is_valid_channel_type("") is False
-        assert ChatService.is_valid_channel_type("LOCAL") is False  # Case sensitive
+        assert ChatService.is_valid_channel_type("whisper") is False  # Not a valid channel
 
     def test_format_chat_message_basic(self):
         """Should format chat message correctly."""

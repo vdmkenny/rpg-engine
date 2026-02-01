@@ -14,6 +14,7 @@ from server.src.services.ground_item_service import GroundItemService
 from common.src.protocol import (
     WSMessage,
     ErrorCodes,
+    ErrorCategory,
     ItemDropPayload,
     ItemPickupPayload,
 )
@@ -40,7 +41,7 @@ class GroundItemHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.INV_CANNOT_STACK,
-                    "system",
+                    ErrorCategory.SYSTEM,
                     "Could not determine player position"
                 )
                 return
@@ -70,7 +71,7 @@ class GroundItemHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.INV_INSUFFICIENT_QUANTITY,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     result.message,
                     details={"inventory_slot": payload.inventory_slot}
                 )
@@ -88,7 +89,7 @@ class GroundItemHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Item drop failed"
             )
     
@@ -104,7 +105,7 @@ class GroundItemHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.SYS_INTERNAL_ERROR,
-                    "system",
+                    ErrorCategory.SYSTEM,
                     "Could not determine player position"
                 )
                 return
@@ -130,7 +131,7 @@ class GroundItemHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.GROUND_ITEM_NOT_FOUND,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     result.message,
                     details={"ground_item_id": payload.ground_item_id}
                 )
@@ -148,6 +149,6 @@ class GroundItemHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Item pickup failed"
             )

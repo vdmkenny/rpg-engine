@@ -81,7 +81,7 @@ class TestSkillsAutoLoadingCore:
         player_id = 100
         
         # Get specific skill - should trigger auto-loading of all skills
-        attack_skill = await gsm.get_skill(player_id, "attack")
+        attack_skill = await gsm.get_skill(player_id, SkillType.ATTACK)
         
         # Verify skill data loaded correctly
         assert attack_skill is not None
@@ -223,8 +223,8 @@ class TestSkillsServiceTransparency:
         offline_player = 500
         
         # Access skills using GSM auto-loading methods
-        online_attack = await gsm_singleton.get_skill(online_player, "attack")
-        offline_attack = await gsm_singleton.get_skill(offline_player, "attack")
+        online_attack = await gsm_singleton.get_skill(online_player, SkillType.ATTACK)
+        offline_attack = await gsm_singleton.get_skill(offline_player, SkillType.ATTACK)
         
         # Should return identical data structure and values
         assert online_attack is not None, "Online player skill should be found"

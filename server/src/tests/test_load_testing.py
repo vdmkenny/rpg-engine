@@ -12,6 +12,7 @@ from typing import List, Dict, Any
 
 from server.src.models.player import Player
 from server.src.core.security import get_password_hash
+from server.src.core.items import EquipmentSlot
 
 
 @pytest.mark.asyncio
@@ -138,7 +139,7 @@ class TestConcurrencyLoadTesting:
             """Each player performs mixed operations on different data types."""
             player_id = players[player_index].id
             results = []
-            equipment_slots = ["helmet", "chest", "legs", "weapon", "shield"]
+            equipment_slots = [EquipmentSlot.HEAD, EquipmentSlot.BODY, EquipmentSlot.LEGS, EquipmentSlot.WEAPON, EquipmentSlot.SHIELD]
             
             try:
                 # Perform 100 mixed operations per player

@@ -40,6 +40,7 @@ from common.src.protocol import (
     WSMessage,
     MessageType,
     ErrorCodes,
+    ErrorCategory,
     PROTOCOL_VERSION,
     AuthenticatePayload,
     ErrorPayload,
@@ -167,7 +168,7 @@ class WebSocketHandler(
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Internal server error occurred",
                 suggested_action="Please retry the operation"
             )
@@ -177,7 +178,7 @@ class WebSocketHandler(
         await self._send_error_response(
             message.id,
             ErrorCodes.AUTH_PLAYER_NOT_FOUND,
-            "permission",
+            ErrorCategory.PERMISSION,
             "Already authenticated"
         )
 

@@ -14,6 +14,7 @@ from common.src.constants import (
     MOVEMENT_ANIMATION_DURATION,
     ANIMATION_START,
 )
+from common.src.protocol import Direction
 
 
 class FloatingMessage:
@@ -55,7 +56,7 @@ class Player:
         self.display_x = ANIMATION_START  # Smooth visual position
         self.display_y = ANIMATION_START
         self.is_moving = False
-        self.facing_direction = "DOWN"  # UP, DOWN, LEFT, RIGHT
+        self.facing_direction = Direction.DOWN  # UP, DOWN, LEFT, RIGHT
         self.move_start_time = ANIMATION_START
         self.move_duration = MOVEMENT_ANIMATION_DURATION
         # Floating chat messages

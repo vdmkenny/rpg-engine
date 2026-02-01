@@ -107,7 +107,7 @@ class SkillService:
         skill_name = skill.name.lower()
 
         # Get current skill data using auto-loading GSM
-        current_skill = await gsm.get_skill(player_id, skill_name)
+        current_skill = await gsm.get_skill(player_id, skill)
         if not current_skill:
             logger.warning(
                 "Player skill not found",
@@ -133,9 +133,7 @@ class SkillService:
             new_level = MAX_LEVEL
         
         # Update skill data via GSM (handles online/offline transparently)
-        await gsm.set_skill(
-            player_id, skill_name, current_skill["skill_id"], new_level, new_xp
-        )
+        await gsm.set_skill(player_id, skill, new_level, new_xp)
         
         leveled_up = new_level > previous_level
         if leveled_up:

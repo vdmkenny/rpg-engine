@@ -16,7 +16,7 @@ from typing import Optional, Dict, Any, List
 # Import common protocol
 workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(workspace_root)
-from common.src.protocol import MessageType, WSMessage
+from common.src.protocol import MessageType, WSMessage, Direction, ChatChannel
 
 # Import our separated components
 from game_states import GameState
@@ -659,13 +659,13 @@ class RPGClient:
         """Handle incoming chat messages."""
         chat_username = payload.get("username", "Unknown")
         chat_message = payload.get("message", "")
-        channel = payload.get("channel", "local")
+        channel = payload.get("channel", ChatChannel.LOCAL.value)
 
         # Add to chat window
         self.chat_window.add_message(chat_username, chat_message, channel)
 
         # For local chat, add floating message above player's head
-        if channel == "local":
+        if channel == ChatChannel.LOCAL.value:
             current_time = time.time()
             floating_msg = FloatingMessage(chat_message, current_time)
 
@@ -708,13 +708,13 @@ class RPGClient:
 
         direction = None
         if pygame.K_w in self.keys_pressed or pygame.K_UP in self.keys_pressed:
-            direction = "UP"
+            direction = Direction.UP
         elif pygame.K_s in self.keys_pressed or pygame.K_DOWN in self.keys_pressed:
-            direction = "DOWN"
+            direction = Direction.DOWN
         elif pygame.K_a in self.keys_pressed or pygame.K_LEFT in self.keys_pressed:
-            direction = "LEFT"
+            direction = Direction.LEFT
         elif pygame.K_d in self.keys_pressed or pygame.K_RIGHT in self.keys_pressed:
-            direction = "RIGHT"
+            direction = Direction.RIGHT
 
         if direction:
             try:
@@ -917,13 +917,13 @@ class RPGClient:
 
             # Update facing direction based on movement
             if new_x > old_x:
-                self.player.facing_direction = "RIGHT"
+                self.player.facing_direction = Direction.RIGHT
             elif new_x < old_x:
-                self.player.facing_direction = "LEFT"
+                self.player.facing_direction = Direction.LEFT
             elif new_y > old_y:
-                self.player.facing_direction = "DOWN"
+                self.player.facing_direction = Direction.DOWN
             elif new_y < old_y:
-                self.player.facing_direction = "UP"
+                self.player.facing_direction = Direction.UP
 
             self.update_camera()
 
@@ -967,13 +967,13 @@ class RPGClient:
 
             # Update facing direction
             if new_x > old_x:
-                other_player.facing_direction = "RIGHT"
+                other_player.facing_direction = Direction.RIGHT
             elif new_x < old_x:
-                other_player.facing_direction = "LEFT"
+                other_player.facing_direction = Direction.LEFT
             elif new_y > old_y:
-                other_player.facing_direction = "DOWN"
+                other_player.facing_direction = Direction.DOWN
             elif new_y < old_y:
-                other_player.facing_direction = "UP"
+                other_player.facing_direction = Direction.UP
 
     def handle_player_disconnect(self, payload):
         """Handle player disconnection."""

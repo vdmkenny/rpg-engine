@@ -436,7 +436,7 @@ class ItemManager(IItemManager):
         quantity: int,
         durability: Optional[float],
         from_inventory_slot: int,
-        to_equipment_slot: str,
+        to_equipment_slot: EquipmentSlot,
     ) -> bool:
         """Transfer item from inventory to equipment atomically."""
         gsm = get_game_state_manager()
@@ -447,7 +447,7 @@ class ItemManager(IItemManager):
             
             # Add to equipment
             await gsm.set_equipment_slot(
-                player_id, to_equipment_slot, item_id, quantity, durability
+                player_id, to_equipment_slot, item_id, quantity, durability or 1.0
             )
             
             logger.debug(
@@ -480,7 +480,7 @@ class ItemManager(IItemManager):
         item_id: int,
         quantity: int,
         durability: Optional[float],
-        from_equipment_slot: str,
+        from_equipment_slot: EquipmentSlot,
         to_inventory_slot: int,
     ) -> bool:
         """Transfer item from equipment to inventory atomically."""

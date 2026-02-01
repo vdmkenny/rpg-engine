@@ -14,6 +14,7 @@ from server.src.services.equipment_service import EquipmentService
 from common.src.protocol import (
     WSMessage,
     ErrorCodes,
+    ErrorCategory,
     ItemEquipPayload,
     ItemUnequipPayload,
 )
@@ -47,7 +48,7 @@ class EquipmentHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.EQ_ITEM_NOT_EQUIPABLE,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     result.message,
                     details={"inventory_slot": payload.inventory_slot}
                 )
@@ -65,7 +66,7 @@ class EquipmentHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.EQ_REQUIREMENTS_NOT_MET,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Item equip failed"
             )
     
@@ -80,7 +81,7 @@ class EquipmentHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.EQ_INVALID_SLOT,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     f"Invalid equipment slot: {payload.equipment_slot}"
                 )
                 return
@@ -97,7 +98,7 @@ class EquipmentHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.EQ_CANNOT_UNEQUIP_FULL_INV,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     result.message,
                     details={"equipment_slot": payload.equipment_slot}
                 )
@@ -115,6 +116,6 @@ class EquipmentHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Item unequip failed"
             )

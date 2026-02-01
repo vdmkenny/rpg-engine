@@ -15,7 +15,7 @@ Following GSM architecture:
 
 import random
 from dataclasses import dataclass
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Dict, Any
 from enum import Enum
 
 from server.src.core.logging_config import get_logger
@@ -23,6 +23,7 @@ from server.src.core.skills import SkillType
 from server.src.services.game_state_manager import get_game_state_manager
 from server.src.services.skill_service import SkillService
 from server.src.core.entities import EntityID
+from common.src.protocol import CombatTargetType
 
 logger = get_logger(__name__)
 
@@ -288,25 +289,25 @@ class CombatService:
     
     @staticmethod
     async def perform_attack(
-        attacker_type: Literal["player", "entity"],
+        attacker_type: CombatTargetType,
         attacker_id: int,
-        defender_type: Literal["player", "entity"],
+        defender_type: CombatTargetType,
         defender_id: int,
     ) -> CombatResult:
         """
         Perform a combat attack.
         
         Args:
-            attacker_type: "player" or "entity"
+            attacker_type: CombatTargetType.PLAYER or CombatTargetType.ENTITY
             attacker_id: Attacker's ID (player_id or entity instance_id)
-            defender_type: "player" or "entity"
+            defender_type: CombatTargetType.PLAYER or CombatTargetType.ENTITY
             defender_id: Defender's ID (player_id or entity instance_id)
             
         Returns:
             CombatResult with outcome
         """
         # Get combat stats
-        if attacker_type == "player":
+        if attacker_type == CombatTargetType.PLAYER:
             attacker_stats = await CombatService.get_player_combat_stats(attacker_id)
         else:
             attacker_stats = await CombatService.get_entity_combat_stats(attacker_id)
@@ -324,7 +325,7 @@ class CombatService:
                 error="Attacker not found"
             )
         
-        if defender_type == "player":
+        if defender_type == CombatTargetType.PLAYER:
             defender_stats = await CombatService.get_player_combat_stats(defender_id)
         else:
             defender_stats = await CombatService.get_entity_combat_stats(defender_id)
@@ -369,7 +370,7 @@ class CombatService:
         
         # Update HP via GSM
         gsm = get_game_state_manager()
-        if defender_type == "player":
+        if defender_type == CombatTargetType.PLAYER:
             await gsm.set_player_hp(defender_id, new_defender_hp)
         else:
             await gsm.update_entity_hp(defender_id, new_defender_hp)
@@ -382,7 +383,7 @@ class CombatService:
         
         # Calculate XP (only for player attackers)
         xp_gained = {}
-        if attacker_type == "player":
+        if attacker_type == CombatTargetType.PLAYER:
             xp_gained = CombatService.calculate_combat_xp(damage, defender_died)
             
             # Award XP
@@ -415,7 +416,7 @@ class CombatService:
         )
         
         # Auto-retaliation: If defender is a player and alive, check if they should auto-attack back
-        if defender_type == "player" and not defender_died and new_defender_hp > 0:
+        if defender_type == CombatTargetType.PLAYER and not defender_died and new_defender_hp > 0:
             # Get defender's settings
             defender_settings = await gsm.get_player_settings(defender_id)
             auto_retaliate = defender_settings.get("auto_retaliate", True)

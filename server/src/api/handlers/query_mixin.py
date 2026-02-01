@@ -15,6 +15,7 @@ from server.src.services.map_service import get_map_manager
 from common.src.protocol import (
     WSMessage,
     ErrorCodes,
+    ErrorCategory,
     MapChunksQueryPayload,
 )
 
@@ -54,7 +55,7 @@ class QueryHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Inventory query failed"
             )
     
@@ -94,7 +95,7 @@ class QueryHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Equipment query failed"
             )
     
@@ -124,7 +125,7 @@ class QueryHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Stats query failed"
             )
     
@@ -146,7 +147,7 @@ class QueryHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.MAP_INVALID_COORDS,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     "Invalid chunk request parameters",
                     details={
                         "map_id": payload.map_id,
@@ -198,6 +199,6 @@ class QueryHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.MAP_NOT_FOUND,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Map chunks query failed"
             )

@@ -19,6 +19,7 @@ from common.src.constants import (
     GRAY,
     DARK_GRAY,
 )
+from common.src.protocol import ChatChannel
 
 
 class InputField:
@@ -114,11 +115,11 @@ class ChatWindow:
         self.visible = True
 
         # Chat state
-        self.active_tab = "local"
+        self.active_tab = ChatChannel.LOCAL.value
         self.tabs = {
-            "global": {"messages": [], "hover": False},
-            "local": {"messages": [], "hover": False},
-            "dm": {"messages": [], "hover": False},
+            ChatChannel.GLOBAL.value: {"messages": [], "hover": False},
+            ChatChannel.LOCAL.value: {"messages": [], "hover": False},
+            ChatChannel.DM.value: {"messages": [], "hover": False},
         }
 
         # Input state
@@ -250,13 +251,13 @@ class ChatWindow:
         y_offset = messages_rect.y + 5
         for message in visible_messages:
             # Format message
-            if message.get("channel") == "local":
+            if message.get("channel") == ChatChannel.LOCAL.value:
                 text = f"[Local] {message['username']}: {message['text']}"
                 color = GREEN
-            elif message.get("channel") == "global":
+            elif message.get("channel") == ChatChannel.GLOBAL.value:
                 text = f"[Global] {message['username']}: {message['text']}"
                 color = (0, 255, 255)  # Cyan
-            elif message.get("channel") == "dm":
+            elif message.get("channel") == ChatChannel.DM.value:
                 text = f"[DM] {message['username']}: {message['text']}"
                 color = (255, 0, 255)  # Magenta
             else:

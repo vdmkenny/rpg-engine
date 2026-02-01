@@ -31,6 +31,54 @@ class Direction(str, Enum):
     RIGHT = "RIGHT"
 
 
+class CombatTargetType(str, Enum):
+    """Types of combat targets"""
+    ENTITY = "entity"
+    PLAYER = "player"
+
+
+class PlayerSettingKey(str, Enum):
+    """Player configuration settings"""
+    AUTO_RETALIATE = "auto_retaliate"
+
+
+class ChatChannel(str, Enum):
+    """Chat channel types for messaging"""
+    LOCAL = "local"
+    GLOBAL = "global"
+    DM = "dm"
+
+
+class ErrorCategory(str, Enum):
+    """Categories for error responses"""
+    VALIDATION = "validation"
+    PERMISSION = "permission"
+    SYSTEM = "system"
+    RATE_LIMIT = "rate_limit"
+
+
+class UpdateType(str, Enum):
+    """State update types"""
+    FULL = "full"
+    DELTA = "delta"
+
+
+class UpdateScope(str, Enum):
+    """Distribution scope for state updates"""
+    PERSONAL = "personal"
+    NEARBY = "nearby"
+    MAP = "map"
+    GLOBAL = "global"
+
+
+class InventorySortCriteria(str, Enum):
+    """Client-facing sort criteria for inventory organization"""
+    CATEGORY = "category"
+    RARITY = "rarity"
+    VALUE = "value"
+    NAME = "name"
+
+
 # =============================================================================
 # Message Types
 # =============================================================================
@@ -111,7 +159,7 @@ class MovePayload(BaseModel):
 class ChatSendPayload(BaseModel):
     """Payload for CMD_CHAT_SEND"""
     message: str = Field(..., max_length=500, description="Chat message content")
-    channel: Literal["local", "global", "dm"] = Field("local", description="Chat channel type")
+    channel: ChatChannel = Field(ChatChannel.LOCAL, description="Chat channel type")
     recipient: Optional[str] = Field(None, description="Recipient username for DM")
 
 
@@ -123,7 +171,7 @@ class InventoryMovePayload(BaseModel):
 
 class InventorySortPayload(BaseModel):
     """Payload for CMD_INVENTORY_SORT"""
-    sort_by: Literal["category", "rarity", "value", "name"] = Field("category", description="Sort criteria")
+    sort_by: InventorySortCriteria = Field(InventorySortCriteria.CATEGORY, description="Sort criteria")
 
 
 class ItemDropPayload(BaseModel):
@@ -149,7 +197,7 @@ class ItemUnequipPayload(BaseModel):
 
 class AttackPayload(BaseModel):
     """Payload for CMD_ATTACK"""
-    target_type: Literal["entity", "player"] = Field(..., description="Type of target (entity or player)")
+    target_type: CombatTargetType = Field(..., description="Type of target (entity or player)")
     target_id: Union[int, str] = Field(..., description="Entity instance ID (int) or player username (str)")
 
 
@@ -198,7 +246,7 @@ class SuccessPayload(BaseModel):
 class ErrorPayload(BaseModel):
     """Payload for RESP_ERROR - structured error information"""
     error_code: str = Field(..., description="Structured error code (e.g., CHAT_MESSAGE_TOO_LONG)")
-    error_category: Literal["validation", "permission", "system", "rate_limit"] = Field(..., description="Error category")
+    error_category: ErrorCategory = Field(..., description="Error category")
     message: str = Field(..., description="Human-readable error message")
     details: Optional[Dict[str, Any]] = Field(None, description="Additional error context")
     retry_after: Optional[float] = Field(None, description="Seconds to wait before retry (rate limiting)")
@@ -223,8 +271,8 @@ class WelcomeEventPayload(BaseModel):
 
 class StateUpdateEventPayload(BaseModel):
     """Payload for EVENT_STATE_UPDATE - consolidated state changes"""
-    update_type: Literal["full", "delta"] = Field("full", description="Full state or changes only")
-    target: Literal["personal", "nearby", "map", "global"] = Field("personal", description="Update distribution scope")
+    update_type: UpdateType = Field(UpdateType.FULL, description="Full state or changes only")
+    target: UpdateScope = Field(UpdateScope.PERSONAL, description="Update distribution scope")
     systems: Dict[str, Any] = Field(..., description="Updated game systems")
     
     class SystemData(BaseModel):
@@ -356,7 +404,7 @@ def create_error_response(
     correlation_id: str,
     error_code: str,
     message: str,
-    error_category: str = "system",
+    error_category: ErrorCategory = ErrorCategory.SYSTEM,
     details: Optional[Dict[str, Any]] = None,
     retry_after: Optional[float] = None,
     suggested_action: Optional[str] = None
@@ -367,7 +415,7 @@ def create_error_response(
         type=MessageType.RESP_ERROR,
         payload={
             "error_code": error_code,
-            "error_category": error_category,
+            "error_category": error_category.value if isinstance(error_category, ErrorCategory) else error_category,
             "message": message,
             "details": details,
             "retry_after": retry_after,

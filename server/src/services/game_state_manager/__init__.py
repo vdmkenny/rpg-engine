@@ -9,7 +9,7 @@ import json
 import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
 from glide import GlideClient
 from sqlalchemy import delete, select
@@ -19,10 +19,17 @@ from sqlalchemy.orm import selectinload, sessionmaker
 
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
+from common.src.protocol import Direction
 
 from .state_access import GSMStateAccess
 from .batch_operations import GSMBatchOps  
 from .atomic_operations import GSMAtomicOperations  
+
+if TYPE_CHECKING:
+    from server.src.core.skills import SkillType
+    from server.src.core.items import EquipmentSlot  
+    from server.src.core.entities import EntityState
+    from common.src.protocol import CombatTargetType, PlayerSettingKey  
 
 
 logger = get_logger(__name__)
@@ -562,14 +569,14 @@ class GameStateManager:
         return player_settings
     
     async def set_player_setting(
-        self, player_id: int, setting_key: str, value: Any
+        self, player_id: int, setting_key: "PlayerSettingKey", value: Any
     ) -> None:
         """
         Update a specific player setting.
         
         Args:
             player_id: Player's database ID
-            setting_key: Setting name (e.g., "auto_retaliate")
+            setting_key: PlayerSettingKey enum value (e.g., PlayerSettingKey.AUTO_RETALIATE)
             value: New value
         """
         if not settings.USE_VALKEY or not self._valkey:
@@ -582,12 +589,12 @@ class GameStateManager:
         else:
             str_value = str(value)
         
-        await self._valkey.hset(key, {setting_key: str_value})
+        await self._valkey.hset(key, {setting_key.value: str_value})
     
     async def set_player_combat_state(
         self,
         player_id: int,
-        target_type: str,
+        target_type: "CombatTargetType",
         target_id: int,
         last_attack_tick: int,
         attack_speed: float,
@@ -597,7 +604,7 @@ class GameStateManager:
         
         Args:
             player_id: Player's database ID
-            target_type: "entity" or "player"
+            target_type: CombatTargetType.ENTITY or CombatTargetType.PLAYER
             target_id: Target's ID
             last_attack_tick: Tick when last attack occurred
             attack_speed: Weapon attack speed in seconds
@@ -607,7 +614,7 @@ class GameStateManager:
         
         key = PLAYER_COMBAT_STATE_KEY.format(player_id=player_id)
         combat_state = {
-            "target_type": target_type,
+            "target_type": target_type.value,
             "target_id": str(target_id),
             "last_attack_tick": str(last_attack_tick),
             "attack_speed": str(attack_speed),
@@ -782,7 +789,7 @@ class GameStateManager:
             "current_hp": str(current_hp),
             "max_hp": str(max_hp),
             "player_id": str(player_id),
-            "facing_direction": "DOWN",
+            "facing_direction": Direction.DOWN.value,
             "is_moving": "false",
         }
         
@@ -1098,6 +1105,7 @@ class GameStateManager:
                 from server.src.models.player import Player
                 from server.src.models.item import PlayerInventory, PlayerEquipment
                 from server.src.models.skill import PlayerSkill, Skill
+                from server.src.core.skills import SkillType
                 
                 # Load player data
                 stmt = select(Player).where(Player.id == player_id)
@@ -1130,9 +1138,17 @@ class GameStateManager:
                 equipment_items = eq_result.scalars().all()
                 
                 for item in equipment_items:
-                    await self.set_equipment_slot(
-                        player_id, item.equipment_slot, item.item_id, item.quantity, item.current_durability
-                    )
+                    from server.src.core.items import EquipmentSlot
+                    try:
+                        equipment_slot = EquipmentSlot(item.equipment_slot)
+                        await self.set_equipment_slot(
+                            player_id, equipment_slot, item.item_id, item.quantity, item.current_durability or 1.0
+                        )
+                    except ValueError:
+                        logger.warning(
+                            "Unknown equipment slot in database",
+                            extra={"player_id": player_id, "slot": item.equipment_slot}
+                        )
                 
                 # Load skills
                 skill_stmt = (
@@ -1144,10 +1160,12 @@ class GameStateManager:
                 skills = skill_result.all()
                 
                 for player_skill, skill in skills:
-                    await self.set_skill(
-                        player_id, skill.name.lower(), player_skill.skill_id,
-                        player_skill.current_level, player_skill.experience
-                    )
+                    skill_type = SkillType.from_name(skill.name)
+                    if skill_type:
+                        await self.set_skill(
+                            player_id, skill_type,
+                            player_skill.current_level, player_skill.experience
+                        )
                 
                 logger.info(
                     "Player state loaded for game session",
@@ -1272,8 +1290,18 @@ class GameStateManager:
         
         return equipment
     
-    async def get_equipment_slot(self, player_id: int, slot: str) -> Optional[Dict[str, Any]]:
-        """Get item in specific equipment slot."""
+    async def get_equipment_slot(self, player_id: int, slot: "EquipmentSlot") -> Optional[Dict[str, Any]]:
+        """Get item in specific equipment slot.
+        
+        Args:
+            player_id: The player's database ID
+            slot: The EquipmentSlot enum value
+            
+        Returns:
+            Dict with item_id, quantity, current_durability or None if not found
+        """
+        slot_name = slot.value
+        
         # Configuration-based mode selection
         if not settings.USE_VALKEY:
             logger.debug("Equipment slot access not available in database-only mode", extra={"player_id": player_id})
@@ -1290,7 +1318,7 @@ class GameStateManager:
             return None
         
         key = EQUIPMENT_KEY.format(player_id=player_id)
-        raw = await self._valkey.hget(key, slot)
+        raw = await self._valkey.hget(key, slot_name)
         
         if not raw:
             return None
@@ -1300,8 +1328,18 @@ class GameStateManager:
         except json.JSONDecodeError:
             return None
     
-    async def set_equipment_slot(self, player_id: int, slot: str, item_id: int, quantity: int, durability: float) -> None:
-        """Set item in equipment slot."""
+    async def set_equipment_slot(self, player_id: int, slot: "EquipmentSlot", item_id: int, quantity: int, durability: float) -> None:
+        """Set item in equipment slot.
+        
+        Args:
+            player_id: The player's database ID
+            slot: The EquipmentSlot enum value
+            item_id: The item ID to equip
+            quantity: The quantity (for stackable items like ammo)
+            durability: The current durability (0.0-1.0)
+        """
+        slot_name = slot.value
+        
         # Configuration-based mode selection
         if not settings.USE_VALKEY:
             logger.debug("Equipment operations not available in database-only mode", extra={"player_id": player_id})
@@ -1320,11 +1358,18 @@ class GameStateManager:
         key = EQUIPMENT_KEY.format(player_id=player_id)
         item_data = {"item_id": item_id, "quantity": quantity, "current_durability": durability}
         
-        await self._valkey.hset(key, {slot: json.dumps(item_data)})
+        await self._valkey.hset(key, {slot_name: json.dumps(item_data)})
         await self._valkey.sadd(DIRTY_EQUIPMENT_KEY, [str(player_id)])
     
-    async def delete_equipment_slot(self, player_id: int, slot: str) -> None:
-        """Delete item from equipment slot."""
+    async def delete_equipment_slot(self, player_id: int, slot: "EquipmentSlot") -> None:
+        """Delete item from equipment slot.
+        
+        Args:
+            player_id: The player's database ID
+            slot: The EquipmentSlot enum value
+        """
+        slot_name = slot.value
+        
         # Configuration-based mode selection
         if not settings.USE_VALKEY:
             logger.debug("Equipment operations not available in database-only mode", extra={"player_id": player_id})
@@ -1341,7 +1386,7 @@ class GameStateManager:
             return
         
         key = EQUIPMENT_KEY.format(player_id=player_id)
-        await self._valkey.hdel(key, [slot])
+        await self._valkey.hdel(key, [slot_name])
         await self._valkey.sadd(DIRTY_EQUIPMENT_KEY, [str(player_id)])
     
     async def clear_equipment(self, player_id: int) -> None:
@@ -1369,13 +1414,26 @@ class GameStateManager:
     # SKILL OPERATIONS
     # =========================================================================
     
-    async def get_skill(self, player_id: int, skill_name: str) -> Optional[Dict[str, Any]]:
-        """Get specific skill data for player session."""
+    async def get_skill(self, player_id: int, skill: "SkillType") -> Optional[Dict[str, Any]]:
+        """
+        Get specific skill data for player session.
+        
+        Args:
+            player_id: The player's database ID
+            skill: The SkillType enum value
+            
+        Returns:
+            Dict with skill_id, level, experience or None if not found
+        """
+        from server.src.core.skills import SkillType
+        
+        skill_name = skill.name.lower()
+        
         # Configuration-based mode selection
         if not settings.USE_VALKEY:
             logger.debug("Using database-only mode for skill access", extra={"player_id": player_id, "skill": skill_name})
             skills_data = await self.get_skills_offline(player_id)
-            return skills_data.get(skill_name.lower())
+            return skills_data.get(skill_name)
         
         # Valkey mode - fail fast if unavailable
         if not self._valkey:
@@ -1385,7 +1443,7 @@ class GameStateManager:
         
         # Valkey operations (no fallback)
         key = SKILLS_KEY.format(player_id=player_id)
-        raw = await self._valkey.hget(key, skill_name.lower())
+        raw = await self._valkey.hget(key, skill_name)
         
         if raw is not None:
             try:
@@ -1399,7 +1457,7 @@ class GameStateManager:
         if skills_data:
             # Cache all skills for session performance
             await self._cache_skills_in_valkey(player_id, skills_data)
-            return skills_data.get(skill_name.lower())
+            return skills_data.get(skill_name)
         
         return None
     
@@ -1441,9 +1499,28 @@ class GameStateManager:
         
         return skills_data
     
-    async def set_skill(self, player_id: int, skill_name: str, skill_id: int, level: int, experience: int) -> None:
-        """Update skill data for player session."""
+    async def set_skill(self, player_id: int, skill: "SkillType", level: int, experience: int) -> None:
+        """
+        Update skill data for player session.
+        
+        Args:
+            player_id: The player's database ID
+            skill: The SkillType enum value
+            level: The skill level
+            experience: Total experience points
+        """
         from server.src.core.config import settings
+        from server.src.core.skills import SkillType
+        
+        # Derive skill_name from enum
+        skill_name = skill.name.lower()
+        
+        # Get skill_id from cached mapping
+        skill_id_map = await self.get_skill_id_map()
+        skill_id = skill_id_map.get(skill_name)
+        if skill_id is None:
+            logger.error("Skill not found in database", extra={"skill_name": skill_name})
+            raise ValueError(f"Skill '{skill_name}' not found in database")
         
         # Configuration-based mode selection
         if not settings.USE_VALKEY:
@@ -1461,7 +1538,7 @@ class GameStateManager:
         key = SKILLS_KEY.format(player_id=player_id)
         skill_data = {"skill_id": skill_id, "level": level, "experience": experience}
         
-        await self._valkey.hset(key, {skill_name.lower(): json.dumps(skill_data)})
+        await self._valkey.hset(key, {skill_name: json.dumps(skill_data)})
         
         # Manage session cache lifetime for offline players
         if not self.is_online(player_id):
@@ -1826,7 +1903,7 @@ class GameStateManager:
     async def set_entity_state(
         self,
         instance_id: int,
-        state: str,
+        state: "EntityState",
         target_player_id: Optional[int] = None,
         los_lost_at_tick: Optional[int] = None,
         los_lost_position_x: Optional[int] = None,
@@ -1837,7 +1914,7 @@ class GameStateManager:
         
         Args:
             instance_id: Entity instance ID
-            state: New state (idle, wander, combat, returning, dead)
+            state: New EntityState (IDLE, WANDER, COMBAT, RETURNING, DYING, DEAD)
             target_player_id: Target player ID (None to clear)
             los_lost_at_tick: Tick when LOS was lost (optional)
             los_lost_position_x, los_lost_position_y: Last known position (optional)
@@ -1846,7 +1923,7 @@ class GameStateManager:
             return
         
         instance_key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
-        update_data = {"state": state}
+        update_data = {"state": state.value}
         
         if target_player_id is not None:
             update_data["target_player_id"] = str(target_player_id)
@@ -2540,8 +2617,10 @@ class GameStateManager:
         Returns:
             Hitpoints level
         """
+        from server.src.core.skills import SkillType
+        
         # Try the unified get_skill method first
-        hitpoints_skill = await self.get_skill(player_id, "hitpoints")
+        hitpoints_skill = await self.get_skill(player_id, SkillType.HITPOINTS)
         if hitpoints_skill:
             return hitpoints_skill["level"]
         
@@ -2676,7 +2755,7 @@ class GameStateManager:
             # Get current state and update HP
             current_state = await self.get_player_full_state(player_id)
             if current_state:
-                await self.set_player_state(
+                await self.set_player_full_state(
                     player_id,
                     current_state.get("x", 0),
                     current_state.get("y", 0),

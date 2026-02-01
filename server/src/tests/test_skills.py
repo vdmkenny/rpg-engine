@@ -442,7 +442,7 @@ class TestSkillServiceAddExperience:
             result = await SkillService.add_experience(1, SkillType.ATTACK, 100)
             
             # Verify GSM calls
-            mock_gsm.get_skill.assert_called_once_with(1, 'attack')
+            mock_gsm.get_skill.assert_called_once_with(1, SkillType.ATTACK)
             mock_gsm.set_skill.assert_called_once()
             
             # Verify result
@@ -477,7 +477,7 @@ class TestSkillServiceAddExperience:
             result = await SkillService.add_experience(1, SkillType.ATTACK, 5000)
             
             # Verify GSM calls
-            mock_gsm.get_skill.assert_called_once_with(1, 'attack')
+            mock_gsm.get_skill.assert_called_once_with(1, SkillType.ATTACK)
             mock_gsm.set_skill.assert_called_once()
             
             # Verify result

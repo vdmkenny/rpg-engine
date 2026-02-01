@@ -16,6 +16,7 @@ from common.src.protocol import (
     WSMessage,
     MessageType,
     ErrorCodes,
+    ErrorCategory,
     MovePayload,
 )
 
@@ -42,7 +43,7 @@ class MovementHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.MOVE_RATE_LIMITED,
-                    "system",
+                    ErrorCategory.SYSTEM,
                     "Player not properly initialized - please reconnect"
                 )
                 return
@@ -77,7 +78,7 @@ class MovementHandlerMixin:
                 
                 if reason == "rate_limited":
                     error_code = ErrorCodes.MOVE_RATE_LIMITED
-                    error_category = "rate_limit"
+                    error_category = ErrorCategory.RATE_LIMIT
                     error_message = "Movement cooldown active"
                     details = {
                         "current_position": movement_result.get("current_position"),
@@ -86,19 +87,19 @@ class MovementHandlerMixin:
                     suggested_action = "Wait before moving again"
                 elif reason == "blocked":
                     error_code = ErrorCodes.MOVE_COLLISION_DETECTED
-                    error_category = "validation"
+                    error_category = ErrorCategory.VALIDATION
                     error_message = "Movement blocked by obstacle"
                     details = {"current_position": movement_result.get("current_position")}
                     suggested_action = None
                 elif reason == "invalid_direction":
                     error_code = ErrorCodes.MOVE_INVALID_DIRECTION
-                    error_category = "validation"
+                    error_category = ErrorCategory.VALIDATION
                     error_message = "Invalid movement direction"
                     details = {"current_position": movement_result.get("current_position")}
                     suggested_action = None
                 else:
                     error_code = ErrorCodes.MOVE_RATE_LIMITED
-                    error_category = "system"
+                    error_category = ErrorCategory.SYSTEM
                     error_message = f"Movement failed: {reason}"
                     details = {"current_position": movement_result.get("current_position")}
                     suggested_action = None
@@ -127,6 +128,6 @@ class MovementHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.MOVE_RATE_LIMITED,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Movement processing failed"
             )

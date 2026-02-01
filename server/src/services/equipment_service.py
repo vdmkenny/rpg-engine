@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from ..core.config import settings
 from ..core.items import EquipmentSlot, ItemCategory
+from ..core.skills import SkillType
 from ..core.logging_config import get_logger
 from ..schemas.item import (
     ItemStats,
@@ -148,7 +149,7 @@ class EquipmentService:
         """
         # Use GameStateManager for all equipment access (online/offline transparent)
         state_manager = get_game_state_manager()
-        slot_data = await state_manager.get_equipment_slot(player_id, slot.value)
+        slot_data = await state_manager.get_equipment_slot(player_id, slot)
         
         if not slot_data:
             return None
@@ -242,7 +243,7 @@ class EquipmentService:
         gsm = get_game_state_manager()
 
         # Get base HP from Hitpoints skill level in GSM
-        hitpoints_skill = await gsm.get_skill(player_id, "hitpoints")
+        hitpoints_skill = await gsm.get_skill(player_id, SkillType.HITPOINTS)
         if hitpoints_skill:
             base_hp = hitpoints_skill.get("level", HITPOINTS_START_LEVEL)
         else:
@@ -375,12 +376,21 @@ class EquipmentService:
         if not required_skill or not isinstance(required_skill, str):
             return CanEquipResult(can_equip=True, reason="OK")
 
+        # Convert skill name string to SkillType enum
+        skill_type = SkillType.from_name(required_skill)
+        if not skill_type:
+            logger.warning(
+                "Unknown skill requirement",
+                extra={"required_skill": required_skill}
+            )
+            return CanEquipResult(can_equip=True, reason="OK")
+
         # Check skill level for equipment requirements
         gsm = get_game_state_manager()
         
         if gsm.is_online(player_id):
             # Player is online, use cached skills
-            skill_data = await gsm.get_skill(player_id, required_skill)
+            skill_data = await gsm.get_skill(player_id, skill_type)
             if not skill_data:
                 # Player doesn't have skill in cache, assume default level 1
                 current_level = 1
@@ -479,7 +489,7 @@ class EquipmentService:
                 # Update equipment through GSM (preserving durability)
                 current_durability = current_equipped.current_durability or 1.0
                 await state_manager.set_equipment_slot(
-                    player_id, equipment_slot.value, item_data.get("id"), new_total, current_durability
+                    player_id, equipment_slot, item_data.get("id"), new_total, current_durability
                 )
                 # Remove the inventory item using service layer
                 await InventoryService.remove_item(player_id, inventory_slot, add_qty)
@@ -512,7 +522,7 @@ class EquipmentService:
                 # Update equipment through GSM to max stack
                 current_durability = current_equipped.current_durability or 1.0
                 await state_manager.set_equipment_slot(
-                    player_id, equipment_slot.value, item_data.get("id"), max_stack, current_durability
+                    player_id, equipment_slot, item_data.get("id"), max_stack, current_durability
                 )
                 
                 # Remove amount_to_add from inventory (leaving remaining_qty)
@@ -590,7 +600,14 @@ class EquipmentService:
             unequip_qty = eq.quantity  # Preserve quantity for ammo
             
             # Remove from equipment
-            await state_manager.delete_equipment_slot(player_id, eq.equipment_slot)
+            try:
+                eq_slot = EquipmentSlot(eq.equipment_slot)
+                await state_manager.delete_equipment_slot(player_id, eq_slot)
+            except ValueError:
+                logger.warning(
+                    "Unknown equipment slot during unequip",
+                    extra={"player_id": player_id, "slot": eq.equipment_slot}
+                )
 
             # Add to inventory
             free_slot = await state_manager.get_free_inventory_slot(player_id)
@@ -603,7 +620,7 @@ class EquipmentService:
         # Equip the new item
         await state_manager.set_equipment_slot(
             player_id, 
-            equipment_slot.value, 
+            equipment_slot, 
             item_data.get("id"), 
             equip_quantity if is_stackable_ammo else 1,
             float(inv.durability) if inv.durability is not None else 1.0
@@ -712,7 +729,7 @@ class EquipmentService:
             health_bonus_lost = item_wrapper.get("health_bonus", 0)
             
             # Remove from equipment using GSM
-            await state_manager.delete_equipment_slot(player_id, equipment_slot.value)
+            await state_manager.delete_equipment_slot(player_id, equipment_slot)
 
             # Handle HP adjustment for health_bonus loss
             if health_bonus_lost > 0:
@@ -763,7 +780,7 @@ class EquipmentService:
                 health_bonus_lost = item_wrapper.get("health_bonus", 0)
                 
                 # Remove from equipment using GSM
-                await state_manager.delete_equipment_slot(player_id, equipment_slot.value)
+                await state_manager.delete_equipment_slot(player_id, equipment_slot)
 
                 # Handle HP adjustment for health_bonus loss
                 if health_bonus_lost > 0:
@@ -862,7 +879,7 @@ class EquipmentService:
         # Update durability in GSM
         await state_manager.set_equipment_slot(
             player_id,
-            slot.value,
+            slot,
             equipped.item_id,
             equipped.quantity,
             int(new_durability)
@@ -920,7 +937,7 @@ class EquipmentService:
         # Update durability to max in GSM
         await state_manager.set_equipment_slot(
             player_id,
-            slot.value,
+            slot,
             equipped.item_id,
             equipped.quantity,
             float(item_wrapper.get("max_durability"))
@@ -970,7 +987,7 @@ class EquipmentService:
 
         if new_quantity == 0:
             # No ammo left - remove from equipment using GSM
-            await state_manager.delete_equipment_slot(player_id, EquipmentSlot.AMMO.value)
+            await state_manager.delete_equipment_slot(player_id, EquipmentSlot.AMMO)
 
             logger.info(
                 "Ammo depleted",
@@ -984,7 +1001,7 @@ class EquipmentService:
         # Update quantity in GSM
         await state_manager.set_equipment_slot(
             player_id,
-            EquipmentSlot.AMMO.value,
+            EquipmentSlot.AMMO,
             equipped.item_id,
             new_quantity,
             float(equipped.current_durability) if equipped.current_durability else 0.0

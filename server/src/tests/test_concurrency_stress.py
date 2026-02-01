@@ -12,6 +12,7 @@ from typing import List
 from unittest.mock import AsyncMock, patch
 
 from server.src.services.game_state_manager import get_game_state_manager
+from server.src.core.items import EquipmentSlot
 
 
 class TestConcurrencyStress:
@@ -153,7 +154,7 @@ class TestConcurrencyStress:
         # Register player as online
         gsm.register_online_player(player_id, "concurrency_eq_player")
         
-        equipment_slots = ["helmet", "chest", "legs", "weapon", "shield"]
+        equipment_slots = [EquipmentSlot.HEAD, EquipmentSlot.BODY, EquipmentSlot.LEGS, EquipmentSlot.WEAPON, EquipmentSlot.SHIELD]
         operations_completed = []
         
         async def concurrent_equipment_ops(operation_id: int):

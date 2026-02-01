@@ -6,6 +6,7 @@ Keeps batch logic separate from core state management.
 """
 
 import traceback
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 from contextlib import asynccontextmanager
 from glide import GlideClient
@@ -17,6 +18,13 @@ from sqlalchemy.orm import selectinload
 from server.src.core.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+
+def _timestamp_to_datetime(timestamp: Optional[float]) -> Optional[datetime]:
+    """Convert a Unix timestamp (float) to a timezone-aware datetime object."""
+    if timestamp is None:
+        return None
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc)
 
 
 class GSMBatchOps:
@@ -232,8 +240,9 @@ class GSMBatchOps:
                     for slot, item_data in equipment.items():
                         equipment_records.append({
                             "player_id": player_id,
-                            "slot": slot,
+                            "equipment_slot": slot,
                             "item_id": item_data["item_id"],
+                            "quantity": item_data.get("quantity", 1),
                             "current_durability": item_data.get("current_durability", None)
                         })
                 
@@ -344,6 +353,12 @@ class GSMBatchOps:
                     if ground_items:
                         ground_item_records = []
                         for item_data in ground_items:
+                            # public_at defaults to created_at if no loot protection
+                            created_at = _timestamp_to_datetime(item_data.get("created_at"))
+                            public_at = _timestamp_to_datetime(item_data.get("loot_protection_expires_at"))
+                            if public_at is None:
+                                public_at = created_at  # Item is immediately public
+                            
                             ground_item_records.append({
                                 "id": item_data["id"],
                                 "item_id": item_data["item_id"],
@@ -352,9 +367,10 @@ class GSMBatchOps:
                                 "map_id": item_data["map_id"],
                                 "quantity": item_data["quantity"],
                                 "current_durability": item_data.get("current_durability", None),
-                                "dropped_by": item_data.get("dropped_by", None),
-                                "dropped_at": item_data.get("dropped_at", None),
-                                "protected_until": item_data.get("protected_until", None)
+                                "dropped_by": item_data.get("dropped_by_player_id", None),
+                                "dropped_at": created_at,
+                                "public_at": public_at,
+                                "despawn_at": _timestamp_to_datetime(item_data.get("despawn_at"))
                             })
                         
                         if ground_item_records:
@@ -431,8 +447,9 @@ class GSMBatchOps:
                 for slot, item_data in equipment.items():
                     equipment_records.append({
                         "player_id": player_id,
-                        "slot": slot,
+                        "equipment_slot": slot,
                         "item_id": item_data["item_id"],
+                        "quantity": item_data.get("quantity", 1),
                         "current_durability": item_data.get("current_durability", None)
                     })
                 

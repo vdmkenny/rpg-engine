@@ -15,6 +15,7 @@ from server.src.services.chat_service import ChatService
 from common.src.protocol import (
     WSMessage,
     ErrorCodes,
+    ErrorCategory,
     ChatSendPayload,
 )
 
@@ -59,7 +60,7 @@ class ChatHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.CHAT_MESSAGE_TOO_LONG,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     chat_result.get("reason", "Chat message rejected"),
                     details={"channel": payload.channel}
                 )
@@ -72,7 +73,7 @@ class ChatHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.CHAT_MESSAGE_TOO_LONG,
-                "validation",
+                ErrorCategory.VALIDATION,
                 "Message validation failed"
             )
             
@@ -89,6 +90,6 @@ class ChatHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.CHAT_PERMISSION_DENIED,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Chat processing failed"
             )

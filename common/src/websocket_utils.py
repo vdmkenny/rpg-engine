@@ -15,7 +15,7 @@ from collections import defaultdict
 import logging
 
 from .protocol import (
-    WSMessage, MessageType, ErrorCodes,
+    WSMessage, MessageType, ErrorCodes, ErrorCategory,
     COMMAND_TYPES, QUERY_TYPES, EVENT_TYPES, RESPONSE_TYPES,
     get_expected_response_type, requires_correlation_id,
     create_success_response, create_error_response, create_data_response, create_event
@@ -406,7 +406,7 @@ class MessageRouter:
                         ws_message.id, 
                         ErrorCodes.MOVE_RATE_LIMITED,  # Generic rate limit error
                         "Operation rate limited",
-                        error_category="rate_limit",
+                        error_category=ErrorCategory.RATE_LIMIT,
                         retry_after=retry_after
                     )
                     return
@@ -431,7 +431,7 @@ class MessageRouter:
                 None,
                 ErrorCodes.SYS_INTERNAL_ERROR,
                 f"Invalid message format: {e}",
-                error_category="validation"
+                error_category=ErrorCategory.VALIDATION
             )
         except Exception as e:
             # Unexpected error
@@ -441,7 +441,7 @@ class MessageRouter:
                 message_data.get("id") if 'message_data' in locals() else None,
                 ErrorCodes.SYS_INTERNAL_ERROR,
                 "Internal server error",
-                error_category="system"
+                error_category=ErrorCategory.SYSTEM
             )
             
     async def _send_error_response(
@@ -450,7 +450,7 @@ class MessageRouter:
         correlation_id: Optional[str],
         error_code: str,
         message: str,
-        error_category: str = "system",
+        error_category: ErrorCategory = ErrorCategory.SYSTEM,
         retry_after: Optional[float] = None
     ) -> None:
         """Send an error response"""
@@ -500,7 +500,7 @@ async def send_error_response(
     correlation_id: str,
     error_code: str,
     message: str,
-    error_category: str = "system",
+    error_category: ErrorCategory = ErrorCategory.SYSTEM,
     details: Optional[Dict[str, Any]] = None,
     retry_after: Optional[float] = None,
     suggested_action: Optional[str] = None

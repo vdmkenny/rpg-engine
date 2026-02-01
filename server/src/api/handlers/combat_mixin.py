@@ -19,9 +19,12 @@ from common.src.protocol import (
     WSMessage,
     MessageType,
     ErrorCodes,
+    ErrorCategory,
     AttackPayload,
     ToggleAutoRetaliatePayload,
     PROTOCOL_VERSION,
+    CombatTargetType,
+    PlayerSettingKey,
 )
 
 logger = get_logger(__name__)
@@ -47,7 +50,7 @@ class CombatHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.MOVE_RATE_LIMITED,
-                    "rate_limit",
+                    ErrorCategory.RATE_LIMIT,
                     "Attack on cooldown"
                 )
                 return
@@ -61,7 +64,7 @@ class CombatHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.SYS_INTERNAL_ERROR,
-                    "system",
+                    ErrorCategory.SYSTEM,
                     "Could not determine player position"
                 )
                 return
@@ -71,13 +74,13 @@ class CombatHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.SYS_INTERNAL_ERROR,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     "You cannot attack while dead"
                 )
                 return
             
             # Validate target
-            if payload.target_type == "entity":
+            if payload.target_type == CombatTargetType.ENTITY:
                 entity_id = int(payload.target_id)
                 entity_data = await gsm.get_entity_instance(entity_id)
                 
@@ -85,7 +88,7 @@ class CombatHandlerMixin:
                     await self._send_error_response(
                         message.id,
                         ErrorCodes.SYS_INTERNAL_ERROR,
-                        "validation",
+                        ErrorCategory.VALIDATION,
                         "Target entity not found"
                     )
                     return
@@ -94,7 +97,7 @@ class CombatHandlerMixin:
                     await self._send_error_response(
                         message.id,
                         ErrorCodes.SYS_INTERNAL_ERROR,
-                        "validation",
+                        ErrorCategory.VALIDATION,
                         "Target cannot be attacked"
                     )
                     return
@@ -103,7 +106,7 @@ class CombatHandlerMixin:
                     await self._send_error_response(
                         message.id,
                         ErrorCodes.SYS_INTERNAL_ERROR,
-                        "validation",
+                        ErrorCategory.VALIDATION,
                         "Target is not on the same map"
                     )
                     return
@@ -118,7 +121,7 @@ class CombatHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.SYS_INTERNAL_ERROR,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     "Player vs player combat is not yet implemented"
                 )
                 return
@@ -131,7 +134,7 @@ class CombatHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.SYS_INTERNAL_ERROR,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     "Target is too far away (must be within 1 tile)",
                     details={
                         "distance": {"x": dx, "y": dy},
@@ -143,7 +146,7 @@ class CombatHandlerMixin:
             
             # Perform combat
             result = await CombatService.perform_attack(
-                attacker_type="player",
+                attacker_type=CombatTargetType.PLAYER,
                 attacker_id=self.player_id,
                 defender_type=payload.target_type,
                 defender_id=int(payload.target_id),
@@ -168,10 +171,10 @@ class CombatHandlerMixin:
                     id=None,
                     type=MessageType.EVENT_COMBAT_ACTION,
                     payload={
-                        "attacker_type": "player",
+                        "attacker_type": CombatTargetType.PLAYER.value,
                         "attacker_id": self.player_id,
                         "attacker_name": self.username,
-                        "defender_type": payload.target_type,
+                        "defender_type": payload.target_type.value,
                         "defender_id": int(payload.target_id),
                         "defender_name": entity_data.get("display_name", "Unknown"),
                         "hit": result.hit,
@@ -211,7 +214,7 @@ class CombatHandlerMixin:
                     "Combat action executed",
                     extra={
                         "attacker": self.username,
-                        "target_type": payload.target_type,
+                        "target_type": payload.target_type.value,
                         "target_id": payload.target_id,
                         "damage": result.damage,
                         "defender_died": result.defender_died
@@ -221,7 +224,7 @@ class CombatHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.SYS_INTERNAL_ERROR,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     result.error or "Attack failed"
                 )
                 
@@ -233,7 +236,7 @@ class CombatHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
-                "validation",
+                ErrorCategory.VALIDATION,
                 "Invalid attack command"
             )
             
@@ -252,7 +255,7 @@ class CombatHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Attack processing failed"
             )
     
@@ -262,7 +265,7 @@ class CombatHandlerMixin:
             payload = ToggleAutoRetaliatePayload(**message.payload)
             
             gsm = get_game_state_manager()
-            await gsm.set_player_setting(self.player_id, "auto_retaliate", payload.enabled)
+            await gsm.set_player_setting(self.player_id, PlayerSettingKey.AUTO_RETALIATE, payload.enabled)
             
             await self._send_success_response(
                 message.id,
@@ -285,7 +288,7 @@ class CombatHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
-                "validation",
+                ErrorCategory.VALIDATION,
                 "Invalid toggle command"
             )
             
@@ -303,6 +306,6 @@ class CombatHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Toggle auto-retaliate failed"
             )

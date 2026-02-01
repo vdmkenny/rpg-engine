@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 from server.src.services.combat_service import CombatService, CombatStats, CombatResult
 from server.src.core.skills import SkillType
+from common.src.protocol import CombatTargetType
 
 
 class TestCombatCalculations:
@@ -412,9 +413,9 @@ class TestCombatService:
                                 # Force specific damage
                                 with patch('server.src.services.combat_service.random.randint', return_value=5):
                                     result = await CombatService.perform_attack(
-                                        attacker_type="player",
+                                        attacker_type=CombatTargetType.PLAYER,
                                         attacker_id=player_id,
-                                        defender_type="entity",
+                                        defender_type=CombatTargetType.ENTITY,
                                         defender_id=entity_id
                                     )
                                     
@@ -479,9 +480,9 @@ class TestCombatService:
                             with patch('server.src.services.combat_service.random.random', return_value=0.1):
                                 with patch('server.src.services.combat_service.random.randint', return_value=5):
                                     result = await CombatService.perform_attack(
-                                        attacker_type="player",
+                                        attacker_type=CombatTargetType.PLAYER,
                                         attacker_id=player_id,
-                                        defender_type="entity",
+                                        defender_type=CombatTargetType.ENTITY,
                                         defender_id=entity_id
                                     )
                                     
@@ -533,9 +534,9 @@ class TestCombatService:
                 )
                 
                 result = await CombatService.perform_attack(
-                    attacker_type="player",
+                    attacker_type=CombatTargetType.PLAYER,
                     attacker_id=player_id,
-                    defender_type="entity",
+                    defender_type=CombatTargetType.ENTITY,
                     defender_id=entity_id
                 )
                 
@@ -554,9 +555,9 @@ class TestCombatService:
             mock_player_stats.return_value = None
             
             result = await CombatService.perform_attack(
-                attacker_type="player",
+                attacker_type=CombatTargetType.PLAYER,
                 attacker_id=player_id,
-                defender_type="entity",
+                defender_type=CombatTargetType.ENTITY,
                 defender_id=entity_id
             )
             
@@ -587,9 +588,9 @@ class TestCombatService:
                 mock_entity_stats.return_value = None
                 
                 result = await CombatService.perform_attack(
-                    attacker_type="player",
+                    attacker_type=CombatTargetType.PLAYER,
                     attacker_id=player_id,
-                    defender_type="entity",
+                    defender_type=CombatTargetType.ENTITY,
                     defender_id=entity_id
                 )
                 

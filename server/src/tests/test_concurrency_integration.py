@@ -10,6 +10,7 @@ import pytest
 
 from server.src.models.player import Player
 from server.src.core.security import get_password_hash
+from server.src.core.items import EquipmentSlot
 
 
 @pytest.mark.asyncio
@@ -112,7 +113,7 @@ class TestConcurrencyIntegration:
         # Ensure the player is considered online
         gsm.register_online_player(player_id, "testplayer2")
         
-        equipment_slots = ["helmet", "chest", "legs", "weapon", "shield"]
+        equipment_slots = [EquipmentSlot.HEAD, EquipmentSlot.BODY, EquipmentSlot.LEGS, EquipmentSlot.WEAPON, EquipmentSlot.SHIELD]
         operations_completed = []
         operation_results = {}
 
@@ -121,6 +122,7 @@ class TestConcurrencyIntegration:
             results = []
             for i in range(20):
                 slot = equipment_slots[i % len(equipment_slots)]
+                slot_name = slot.value
                 item_id = random.randint(1, 50)
                 quantity = 1  # Equipment typically has quantity 1
                 durability = random.uniform(0.5, 1.0)
@@ -130,12 +132,12 @@ class TestConcurrencyIntegration:
                 
                 # Verify the item was equipped
                 equipment = await gsm.get_equipment(player_id)
-                if slot in equipment:
+                if slot_name in equipment:
                     results.append({
-                        'slot': slot,
-                        'item_id': equipment[slot]['item_id'],
-                        'quantity': equipment[slot]['quantity'],
-                        'durability': equipment[slot]['current_durability']
+                        'slot': slot_name,
+                        'item_id': equipment[slot_name]['item_id'],
+                        'quantity': equipment[slot_name]['quantity'],
+                        'durability': equipment[slot_name]['current_durability']
                     })
 
                 # Occasionally unequip (delete)
@@ -143,8 +145,8 @@ class TestConcurrencyIntegration:
                     await gsm.delete_equipment_slot(player_id, slot)
                     equipment_after_delete = await gsm.get_equipment(player_id)
                     results.append({
-                        'slot': slot,
-                        'unequipped': slot not in equipment_after_delete
+                        'slot': slot_name,
+                        'unequipped': slot_name not in equipment_after_delete
                     })
 
             operations_completed.append(operation_id)
@@ -271,7 +273,7 @@ class TestConcurrencyIntegration:
                 
                 # Equipment operation
                 if i % 5 == 0:
-                    await gsm.set_equipment_slot(player1.id, "weapon", i + 100, 1, 0.8)
+                    await gsm.set_equipment_slot(player1.id, EquipmentSlot.WEAPON, i + 100, 1, 0.8)
                 
                 # HP operation
                 if i % 3 == 0:
@@ -287,7 +289,7 @@ class TestConcurrencyIntegration:
                 
                 # Equipment operation (different items)
                 if i % 4 == 0:
-                    await gsm.set_equipment_slot(player2.id, "helmet", i + 300, 1, 0.6)
+                    await gsm.set_equipment_slot(player2.id, EquipmentSlot.HEAD, i + 300, 1, 0.6)
                 
                 # HP operation (different values)
                 if i % 2 == 0:

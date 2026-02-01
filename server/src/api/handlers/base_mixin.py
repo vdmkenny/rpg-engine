@@ -18,6 +18,7 @@ from common.src.protocol import (
     WSMessage,
     MessageType,
     ErrorPayload,
+    ErrorCategory,
     PROTOCOL_VERSION,
 )
 
@@ -56,7 +57,7 @@ class BaseHandlerMixin:
         self, 
         correlation_id: Optional[str], 
         error_code: str,
-        error_category: str,
+        error_category: ErrorCategory,
         message: str,
         details: Optional[Dict[str, Any]] = None,
         retry_after: Optional[float] = None,

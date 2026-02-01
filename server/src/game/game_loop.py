@@ -24,10 +24,12 @@ from server.src.services.map_service import get_map_manager
 from server.src.services.game_state_manager import get_game_state_manager
 from server.src.services.visibility_service import get_visibility_service
 from server.src.core.database import AsyncSessionLocal
+from server.src.core.entities import EntityState
 from common.src.protocol import (
     WSMessage,
     MessageType,
     GameUpdateEventPayload,
+    CombatTargetType,
 )
 
 logger = get_logger(__name__)
@@ -127,15 +129,15 @@ def get_visible_npc_entities(
     Returns:
         Dict of {entity_key: entity_data} for visible entities
     """
-    from server.src.core.entities import EntityID
+    from server.src.core.entities import EntityID, EntityState
     
     visible = {}
     for entity in all_entity_instances:
-        entity_state = entity.get("state", "idle")
+        entity_state = entity.get("state", EntityState.IDLE.value)
         
         # Show entities in "dying" state (10-tick death animation)
         # Skip entities fully despawned (state == "dead")
-        if entity_state == "dead":
+        if entity_state == EntityState.DEAD.value:
             continue
             
         entity_x = int(entity.get("x", 0))
@@ -157,9 +159,9 @@ def get_visible_npc_entities(
                 display_name = entity_def.display_name
                 behavior_type = entity_def.behavior.name
                 sprite_info = ""  # Empty for now, will be populated later
-                is_attackable = entity_def.is_attackable and entity_state != "dying"  # Can't attack dying entities
+                is_attackable = entity_def.is_attackable and entity_state != EntityState.DYING.value  # Can't attack dying entities
             else:
-                is_attackable = entity_state != "dying"  # Can't attack dying entities
+                is_attackable = entity_state != EntityState.DYING.value  # Can't attack dying entities
             
             visible[f"entity_{entity_id}"] = {
                 "type": "entity",
@@ -319,10 +321,11 @@ async def _process_auto_attacks(
                 continue
             
             # Get target position and validate
-            target_type = combat_state["target_type"]
+            target_type_str = combat_state["target_type"]
+            target_type = CombatTargetType(target_type_str)
             target_id = combat_state["target_id"]
             
-            if target_type == "entity":
+            if target_type == CombatTargetType.ENTITY:
                 target_data = await gsm.get_entity_instance(target_id)
                 if not target_data:
                     await gsm.clear_player_combat_state(player_id)
@@ -349,9 +352,9 @@ async def _process_auto_attacks(
                 
                 # Execute attack
                 result = await CombatService.perform_attack(
-                    attacker_type="player",
+                    attacker_type=CombatTargetType.PLAYER,
                     attacker_id=player_id,
-                    defender_type="entity",
+                    defender_type=CombatTargetType.ENTITY,
                     defender_id=target_id,
                 )
                 
@@ -372,10 +375,10 @@ async def _process_auto_attacks(
                             id=None,
                             type=MessageType.EVENT_COMBAT_ACTION,
                             payload={
-                                "attacker_type": "player",
+                                "attacker_type": CombatTargetType.PLAYER.value,
                                 "attacker_id": player_id,
                                 "attacker_name": username,
-                                "defender_type": "entity",
+                                "defender_type": CombatTargetType.ENTITY.value,
                                 "defender_id": target_id,
                                 "defender_name": target_data.get("display_name", "Unknown"),
                                 "hit": result.hit,
@@ -656,7 +659,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 # Process dying entities (death animation completion)
                 entity_instances = await gsm.get_map_entities(map_id)
                 for entity in entity_instances:
-                    if entity.get("state") == "dying":
+                    if entity.get("state") == EntityState.DYING.value:
                         death_tick = int(entity.get("death_tick", 0))
                         if _global_tick_counter >= death_tick:
                             # Death animation complete, finalize death

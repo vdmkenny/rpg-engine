@@ -13,6 +13,7 @@ from server.src.services.inventory_service import InventoryService
 
 from common.src.protocol import (
     WSMessage,
+    ErrorCategory,
     ErrorCodes,
     InventoryMovePayload,
     InventorySortPayload,
@@ -47,7 +48,7 @@ class InventoryHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.INV_SLOT_EMPTY,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     result.message,
                     details={"from_slot": payload.from_slot, "to_slot": payload.to_slot}
                 )
@@ -65,7 +66,7 @@ class InventoryHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.INV_INVENTORY_FULL,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Inventory move failed"
             )
     
@@ -80,7 +81,7 @@ class InventoryHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.INV_INVALID_SLOT,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     f"Invalid sort type: {payload.sort_by}"
                 )
                 return
@@ -101,7 +102,7 @@ class InventoryHandlerMixin:
                 await self._send_error_response(
                     message.id,
                     ErrorCodes.INV_SLOT_EMPTY,
-                    "validation",
+                    ErrorCategory.VALIDATION,
                     result.message
                 )
                 
@@ -118,6 +119,6 @@ class InventoryHandlerMixin:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.INV_INVENTORY_FULL,
-                "system",
+                ErrorCategory.SYSTEM,
                 "Inventory sort failed"
             )

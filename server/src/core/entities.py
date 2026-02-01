@@ -24,6 +24,18 @@ class EntityBehavior(Enum):
     QUEST_GIVER = "quest_giver"  # Stationary, offers dialogue
 
 
+class EntityState(str, Enum):
+    """
+    Runtime state of an entity instance.
+    """
+    IDLE = "idle"              # Default state, not doing anything
+    WANDER = "wander"          # Roaming around spawn area
+    COMBAT = "combat"          # Engaged in combat
+    RETURNING = "returning"    # Returning to spawn point after disengaging
+    DYING = "dying"            # Playing death animation
+    DEAD = "dead"              # Fully dead, awaiting respawn
+
+
 @dataclass(frozen=True)
 class EntityDefinition:
     """
