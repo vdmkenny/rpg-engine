@@ -6,25 +6,20 @@ track of all connected clients, grouped by the map they are currently on. This
 is essential for scoping game state updates and other messages to relevant
 players, improving efficiency and scalability.
 
+KEY DESIGN PRINCIPLE:
+- player_id (int) is the ONLY internal identifier for players
+- username is for display/authentication only, never for lookups
+
 KEY IMPROVEMENTS:
 - Thread-safe operations using asyncio.Lock
 - Atomic connection state changes
 - Safe concurrent broadcasting
 - Race condition prevention for connect/disconnect operations
-
-The manager uses a dictionary to store active connections, where keys are
-map_ids and values are dictionaries of client_ids to WebSocket objects. A
-reverse mapping is also kept to quickly find a client's map.
-
-Notes for the next agent:
-- All connection operations are now thread-safe and atomic
-- Broadcasting operations create snapshots to prevent modification during iteration
-- Proper cleanup of failed connections without affecting ongoing operations
 """
 
 import asyncio
 from collections import defaultdict
-from typing import Dict, List
+from typing import Dict, List, Any
 from fastapi import WebSocket
 from server.src.core.logging_config import get_logger
 
@@ -34,90 +29,92 @@ logger = get_logger(__name__)
 class ConnectionManager:
     """
     Thread-safe WebSocket connection manager, organized by map, for real-time communication.
+    
+    All player identification uses player_id (int), never username.
     """
 
     def __init__(self):
         """
         Initializes the ConnectionManager with thread-safety locks.
-        - `connections_by_map`: Stores connections per map.
-        - `client_to_map`: Maps a client_id to their current map_id for quick lookups.
+        - `connections_by_map`: Stores connections per map: {map_id: {player_id: WebSocket}}
+        - `player_to_map`: Maps a player_id to their current map_id for quick lookups
         - `_connection_lock`: Protects connection state changes
         """
-        self.connections_by_map: Dict[str, Dict[str, WebSocket]] = defaultdict(dict)
-        self.client_to_map: Dict[str, str] = {}
+        self.connections_by_map: Dict[str, Dict[int, WebSocket]] = defaultdict(dict)
+        self.player_to_map: Dict[int, str] = {}
         self._connection_lock = asyncio.Lock()
 
-    async def connect(self, websocket: WebSocket, client_id: str, map_id: str):
+    async def connect(self, websocket: WebSocket, player_id: int, map_id: str):
         """
         Assigns an already-accepted WebSocket connection to a map (thread-safe).
 
         Args:
             websocket: The WebSocket connection object (already accepted).
-            client_id: A unique identifier for the client.
-            map_id: The identifier of the map the client is on.
+            player_id: The player's unique database ID.
+            map_id: The identifier of the map the player is on.
         """
         async with self._connection_lock:
-            # Check if client is already connected and cleanup old connection
-            old_map_id = self.client_to_map.get(client_id)
+            # Check if player is already connected and cleanup old connection
+            old_map_id = self.player_to_map.get(player_id)
             if old_map_id:
                 logger.warning(
-                    "Client reconnecting - cleaning up old connection",
+                    "Player reconnecting - cleaning up old connection",
                     extra={
-                        "client_id": client_id,
+                        "player_id": player_id,
                         "old_map_id": old_map_id,
                         "new_map_id": map_id
                     }
                 )
                 # Remove old connection without lock (we're already holding it)
-                if client_id in self.connections_by_map[old_map_id]:
-                    del self.connections_by_map[old_map_id][client_id]
+                if player_id in self.connections_by_map[old_map_id]:
+                    del self.connections_by_map[old_map_id][player_id]
                     if not self.connections_by_map[old_map_id]:
                         del self.connections_by_map[old_map_id]
             
             # Add new connection
-            self.connections_by_map[map_id][client_id] = websocket
-            self.client_to_map[client_id] = map_id
+            self.connections_by_map[map_id][player_id] = websocket
+            self.player_to_map[player_id] = map_id
             
             logger.debug(
-                "Client connected to map",
+                "Player connected to map",
                 extra={
-                    "client_id": client_id,
+                    "player_id": player_id,
                     "map_id": map_id,
                 }
             )
 
-    async def disconnect(self, client_id: str):
+    async def disconnect(self, player_id: int):
         """
         Removes a WebSocket connection regardless of its map (thread-safe).
 
         Args:
-            client_id: The identifier of the client to disconnect.
+            player_id: The player's unique database ID.
         """
         async with self._connection_lock:
-            map_id = self.client_to_map.pop(client_id, None)
-            if map_id and client_id in self.connections_by_map[map_id]:
-                del self.connections_by_map[map_id][client_id]
+            map_id = self.player_to_map.pop(player_id, None)
+            if map_id and player_id in self.connections_by_map[map_id]:
+                del self.connections_by_map[map_id][player_id]
                 
                 # Clean up empty map entries
                 if not self.connections_by_map[map_id]:
                     del self.connections_by_map[map_id]
                 
                 logger.debug(
-                    "Client disconnected from map",
+                    "Player disconnected from map",
                     extra={
-                        "client_id": client_id,
+                        "player_id": player_id,
                         "map_id": map_id,
                     }
                 )
             else:
                 logger.warning(
-                    "Attempted to disconnect unknown client",
-                    extra={"client_id": client_id}
+                    "Attempted to disconnect unknown player",
+                    extra={"player_id": player_id}
                 )
 
     async def broadcast_to_map(self, map_id: str, message: bytes):
         """
-        Broadcasts a message to all clients on a specific map (thread-safe).
+        Broadcasts a message to all players on a specific map (thread-safe).
 
         Args:
             map_id: The identifier of the map to broadcast to.
@@ -127,7 +124,7 @@ class ConnectionManager:
         connections_snapshot = []
         async with self._connection_lock:
             connections_dict = self.connections_by_map.get(map_id, {})
-            connections_snapshot = list(connections_dict.items())  # Get (client_id, connection) pairs
+            connections_snapshot = list(connections_dict.items())  # Get (player_id, connection) pairs
         
         if not connections_snapshot:
             return  # No connections on this map
@@ -135,11 +132,11 @@ class ConnectionManager:
         failed_connections = []
         successful_sends = 0
         
-        for client_id, connection in connections_snapshot:
+        for player_id, connection in connections_snapshot:
             try:
                 # Validate connection state before sending
                 if hasattr(connection, 'client_state') and connection.client_state == 3:  # WebSocket CLOSED
-                    failed_connections.append(client_id)
+                    failed_connections.append(player_id)
                     continue
                     
                 await connection.send_bytes(message)
@@ -148,26 +145,26 @@ class ConnectionManager:
             except Exception as e:
                 # Log the error for debugging and mark connection for removal
                 logger.warning(
-                    "Failed to send message to client",
+                    "Failed to send message to player",
                     extra={
-                        "client_id": client_id,
+                        "player_id": player_id,
                         "map_id": map_id,
                         "error": str(e)
                     }
                 )
-                failed_connections.append(client_id)
+                failed_connections.append(player_id)
         
         # Clean up failed connections atomically
         if failed_connections:
             async with self._connection_lock:
-                for client_id in failed_connections:
-                    # Double-check the client is still connected to this map
-                    current_map = self.client_to_map.get(client_id)
+                for player_id in failed_connections:
+                    # Double-check the player is still connected to this map
+                    current_map = self.player_to_map.get(player_id)
                     if current_map == map_id:
                         # Remove from both mappings
-                        self.client_to_map.pop(client_id, None)
-                        if client_id in self.connections_by_map[map_id]:
-                            del self.connections_by_map[map_id][client_id]
+                        self.player_to_map.pop(player_id, None)
+                        if player_id in self.connections_by_map[map_id]:
+                            del self.connections_by_map[map_id][player_id]
                         
                         # Clean up empty map entries
                         if not self.connections_by_map[map_id]:
@@ -183,7 +180,7 @@ class ConnectionManager:
 
     async def broadcast_to_all(self, message: bytes):
         """
-        Broadcasts a message to all connected clients across all maps.
+        Broadcasts a message to all connected players across all maps.
 
         Args:
             message: The message to be sent, as bytes.
@@ -191,32 +188,32 @@ class ConnectionManager:
         for map_id in list(self.connections_by_map.keys()):
             await self.broadcast_to_map(map_id, message)
 
-    async def get_all_connections(self) -> List[Dict[str, str]]:
+    async def get_all_connections(self) -> List[Dict[str, Any]]:
         """
         Get a list of all connections with their metadata (thread-safe).
         
         Returns:
-            List of dictionaries with connection info: [{'username': str, 'map_id': str}]
+            List of dictionaries with connection info: [{'player_id': int, 'map_id': str}]
         """
         connections = []
         async with self._connection_lock:
             for map_id, map_connections in self.connections_by_map.items():
-                for client_id in map_connections.keys():
+                for player_id in map_connections.keys():
                     connections.append({
-                        'username': client_id,  # client_id is username in our setup
+                        'player_id': player_id,
                         'map_id': map_id
                     })
         return connections
 
-    async def broadcast_to_users(self, usernames: List[str], message: bytes):
+    async def broadcast_to_players(self, player_ids: List[int], message: bytes):
         """
-        Broadcasts a message to specific users by username (thread-safe).
+        Broadcasts a message to specific players by player_id (thread-safe).
 
         Args:
-            usernames: List of usernames to send the message to.
+            player_ids: List of player IDs to send the message to.
             message: The message to be sent, as bytes.
         """
-        username_set = set(usernames)
+        player_id_set = set(player_ids)
         failed_connections = []
         
         # Create snapshot of all connections
@@ -224,53 +221,53 @@ class ConnectionManager:
         async with self._connection_lock:
             for map_id in list(self.connections_by_map.keys()):
                 connections = self.connections_by_map.get(map_id, {})
-                for client_id, connection in connections.items():
-                    if client_id in username_set:
-                        connections_snapshot.append((client_id, connection, map_id))
+                for player_id, connection in connections.items():
+                    if player_id in player_id_set:
+                        connections_snapshot.append((player_id, connection, map_id))
         
         # Send messages without holding the lock
-        for client_id, connection, map_id in connections_snapshot:
+        for player_id, connection, map_id in connections_snapshot:
             try:
                 # Validate connection state before sending
                 if hasattr(connection, 'client_state') and connection.client_state == 3:  # WebSocket CLOSED
-                    failed_connections.append(client_id)
+                    failed_connections.append(player_id)
                     continue
                     
                 await connection.send_bytes(message)
             except Exception as e:
                 logger.warning(
-                    "Failed to send message to user",
+                    "Failed to send message to player",
                     extra={
-                        "client_id": client_id,
+                        "player_id": player_id,
                         "error": str(e)
                     }
                 )
-                failed_connections.append(client_id)
+                failed_connections.append(player_id)
         
         # Clean up failed connections atomically
         if failed_connections:
-            for client_id in failed_connections:
-                await self.disconnect(client_id)
+            for player_id in failed_connections:
+                await self.disconnect(player_id)
 
-    async def send_personal_message(self, username: str, message: bytes):
+    async def send_personal_message(self, player_id: int, message: bytes):
         """
-        Sends a message to a specific user (thread-safe).
+        Sends a message to a specific player (thread-safe).
 
         Args:
-            username: The username to send the message to.
+            player_id: The player's unique database ID.
             message: The message to be sent, as bytes.
         """
         # Get connection info under lock
         connection_info = None
         async with self._connection_lock:
-            map_id = self.client_to_map.get(username)
-            if map_id and username in self.connections_by_map[map_id]:
-                connection_info = (self.connections_by_map[map_id][username], map_id)
+            map_id = self.player_to_map.get(player_id)
+            if map_id and player_id in self.connections_by_map[map_id]:
+                connection_info = (self.connections_by_map[map_id][player_id], map_id)
         
         if not connection_info:
             logger.warning(
-                "Attempted to send personal message to unknown user",
-                extra={"username": username}
+                "Attempted to send personal message to unknown player",
+                extra={"player_id": player_id}
             )
             return
             
@@ -278,23 +275,40 @@ class ConnectionManager:
         try:
             # Validate connection state before sending
             if hasattr(connection, 'client_state') and connection.client_state == 3:  # WebSocket CLOSED
-                await self.disconnect(username)
+                await self.disconnect(player_id)
                 return
                 
             await connection.send_bytes(message)
             logger.debug(
                 "Personal message sent successfully",
-                extra={"username": username}
+                extra={"player_id": player_id}
             )
         except Exception as e:
             logger.warning(
                 "Failed to send personal message",
                 extra={
-                    "username": username,
+                    "player_id": player_id,
                     "error": str(e)
                 }
             )
-            await self.disconnect(username)
+            await self.disconnect(player_id)
+
+    def get_player_websocket(self, player_id: int) -> WebSocket | None:
+        """
+        Get the WebSocket connection for a specific player (not thread-safe, use with caution).
+        
+        For use in game loop where we already have the player_id and need the websocket.
+        
+        Args:
+            player_id: The player's unique database ID.
+            
+        Returns:
+            WebSocket connection or None if not found.
+        """
+        map_id = self.player_to_map.get(player_id)
+        if map_id:
+            return self.connections_by_map.get(map_id, {}).get(player_id)
+        return None
 
     async def clear(self):
         """
@@ -302,4 +316,4 @@ class ConnectionManager:
         """
         async with self._connection_lock:
             self.connections_by_map.clear()
-            self.client_to_map.clear()
+            self.player_to_map.clear()

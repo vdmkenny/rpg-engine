@@ -3,6 +3,10 @@ Game loop module for server tick updates.
 
 Implements diff-based visibility broadcasting where each player only receives
 updates about entities within their visible chunk range.
+
+KEY DESIGN PRINCIPLE:
+- player_id (int) is the ONLY internal identifier for players
+- username is for display/authentication only, never for internal lookups
 """
 
 import asyncio
@@ -33,6 +37,7 @@ from common.src.protocol import (
     MessageType,
     GameUpdateEventPayload,
     CombatTargetType,
+    PROTOCOL_VERSION,
 )
 from common.src.sprites import (
     VisualState,
@@ -55,13 +60,15 @@ class GameLoopState:
     
     Encapsulates module-level mutable state with async locks to prevent
     race conditions between the game loop and WebSocket handlers.
+    
+    All player identification uses player_id (int), never username.
     """
     
     def __init__(self):
         self._lock = asyncio.Lock()
-        self._player_chunk_positions: Dict[str, Tuple[int, int]] = {}
+        self._player_chunk_positions: Dict[int, Tuple[int, int]] = {}  # player_id -> chunk
         self._global_tick_counter: int = 0
-        self._player_login_ticks: Dict[str, int] = {}
+        self._player_login_ticks: Dict[int, int] = {}  # player_id -> tick
         self._players_dying: Set[int] = set()
         self._active_tasks: Set[asyncio.Task] = set()
     
@@ -75,25 +82,25 @@ class GameLoopState:
         self._global_tick_counter += 1
         return self._global_tick_counter
     
-    async def get_player_chunk_position(self, username: str) -> Optional[Tuple[int, int]]:
+    async def get_player_chunk_position(self, player_id: int) -> Optional[Tuple[int, int]]:
         """Get a player's last known chunk position."""
         async with self._lock:
-            return self._player_chunk_positions.get(username)
+            return self._player_chunk_positions.get(player_id)
     
-    async def set_player_chunk_position(self, username: str, chunk: Tuple[int, int]) -> None:
+    async def set_player_chunk_position(self, player_id: int, chunk: Tuple[int, int]) -> None:
         """Set a player's chunk position."""
         async with self._lock:
-            self._player_chunk_positions[username] = chunk
+            self._player_chunk_positions[player_id] = chunk
     
-    async def get_player_login_tick(self, username: str) -> Optional[int]:
+    async def get_player_login_tick(self, player_id: int) -> Optional[int]:
         """Get the tick when a player logged in, or None if not found."""
         async with self._lock:
-            return self._player_login_ticks.get(username)
+            return self._player_login_ticks.get(player_id)
     
-    async def register_player_login(self, username: str) -> None:
+    async def register_player_login(self, player_id: int) -> None:
         """Register a player's login tick for staggered HP regen."""
         async with self._lock:
-            self._player_login_ticks[username] = self._global_tick_counter
+            self._player_login_ticks[player_id] = self._global_tick_counter
     
     async def is_player_dying(self, player_id: int) -> bool:
         """Check if a player is currently in death sequence."""
@@ -117,11 +124,11 @@ class GameLoopState:
         async with self._lock:
             self._players_dying.discard(player_id)
     
-    async def cleanup_player(self, username: str) -> None:
+    async def cleanup_player(self, player_id: int) -> None:
         """Clean up all state for a disconnected player."""
         async with self._lock:
-            self._player_chunk_positions.pop(username, None)
-            self._player_login_ticks.pop(username, None)
+            self._player_chunk_positions.pop(player_id, None)
+            self._player_login_ticks.pop(player_id, None)
     
     def track_task(self, task: asyncio.Task) -> None:
         """
@@ -170,14 +177,6 @@ def get_game_loop_state() -> GameLoopState:
     if _game_loop_state is None:
         _game_loop_state = GameLoopState()
     return _game_loop_state
-
-
-# Legacy module-level variables for backward compatibility
-# These are kept for code that directly imports them, but new code should use GameLoopState
-player_chunk_positions: Dict[str, Tuple[int, int]] = {}
-_global_tick_counter: int = 0
-player_login_ticks: Dict[str, int] = {}
-players_dying: Set[int] = set()
 
 
 def get_chunk_coordinates(x: int, y: int, chunk_size: int = CHUNK_SIZE) -> Tuple[int, int]:
@@ -271,26 +270,26 @@ def _build_visual_state(
     return VisualState(appearance=appearance_data, equipment=equipped_visuals)
 
 
-def get_visible_entities(
+def get_visible_players(
     player_x: int, player_y: int, 
-    all_entities: List[Dict[str, Any]], 
-    player_username: str
-) -> Dict[str, Dict[str, Any]]:
+    all_players: List[Dict[str, Any]], 
+    own_player_id: int
+) -> Dict[int, Dict[str, Any]]:
     """
     Get player entities visible to a player based on chunk range.
     
     Args:
         player_x, player_y: Player's tile position
-        all_entities: All player entities on the map
-        player_username: The player's username (to exclude self)
+        all_players: All player entities on the map
+        own_player_id: The player's ID (to exclude self)
         
     Returns:
-        Dict of {username: entity_data} for visible player entities
+        Dict of {player_id: entity_data} for visible player entities
     """
     visible = {}
-    for entity in all_entities:
-        entity_username = entity.get("id") or entity.get("username")
-        if entity_username == player_username:
+    for entity in all_players:
+        entity_player_id = entity.get("player_id")
+        if entity_player_id == own_player_id:
             continue
             
         entity_x = entity.get("x", 0)
@@ -299,7 +298,8 @@ def get_visible_entities(
         if is_in_visible_range(player_x, player_y, entity_x, entity_y):
             entity_data = {
                 "type": "player",
-                "username": entity_username,
+                "player_id": entity_player_id,
+                "username": entity.get("username", ""),  # For display
                 "x": entity_x,
                 "y": entity_y,
                 "current_hp": entity.get("current_hp", 0),
@@ -313,7 +313,7 @@ def get_visible_entities(
             if "visual_state" in entity:
                 entity_data["visual_state"] = entity["visual_state"]
             
-            visible[entity_username] = entity_data
+            visible[entity_player_id] = entity_data
     
     return visible
 
@@ -411,89 +411,6 @@ def get_visible_npc_entities(
     return visible
 
 
-def compute_entity_diff(
-    current_visible: Dict[str, Dict[str, Any]], 
-    last_visible: Dict[str, Dict[str, Any]]
-) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Compute the difference between current and last visible player state.
-    
-    Args:
-        current_visible: Currently visible player entities
-        last_visible: Previously visible player entities
-        
-    Returns:
-        Dict with "added", "updated", and "removed" entity lists
-    """
-    added = []
-    updated = []
-    removed = []
-    
-    current_keys = set(current_visible.keys())
-    last_keys = set(last_visible.keys())
-    
-    # Entities that entered visible range
-    for username in current_keys - last_keys:
-        added.append(current_visible[username])
-    
-    # Entities that left visible range
-    for username in last_keys - current_keys:
-        removed.append({"type": "player", "username": username})
-    
-    # Entities that may have moved or changed HP
-    for username in current_keys & last_keys:
-        current = current_visible[username]
-        last = last_visible[username]
-        if (
-            current["x"] != last["x"] 
-            or current["y"] != last["y"]
-            or current.get("current_hp") != last.get("current_hp")
-            or current.get("max_hp") != last.get("max_hp")
-        ):
-            updated.append(current)
-    
-    return {"added": added, "updated": updated, "removed": removed}
-
-
-def compute_ground_item_diff(
-    current_visible: Dict[int, Dict[str, Any]], 
-    last_visible: Dict[int, Dict[str, Any]]
-) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Compute the difference between current and last visible ground item state.
-    
-    Args:
-        current_visible: Currently visible ground items {id: entity_data}
-        last_visible: Previously visible ground items {id: entity_data}
-        
-    Returns:
-        Dict with "added", "updated", and "removed" entity lists
-    """
-    added = []
-    updated = []
-    removed = []
-    
-    current_keys = set(current_visible.keys())
-    last_keys = set(last_visible.keys())
-    
-    # Ground items that appeared
-    for item_id in current_keys - last_keys:
-        added.append(current_visible[item_id])
-    
-    # Ground items that disappeared (picked up or despawned)
-    for item_id in last_keys - current_keys:
-        removed.append({"type": "ground_item", "id": item_id})
-    
-    # Ground items that changed (quantity changed due to partial pickup)
-    for item_id in current_keys & last_keys:
-        current = current_visible[item_id]
-        last = last_visible[item_id]
-        if current.get("quantity") != last.get("quantity"):
-            updated.append(current)
-    
-    return {"added": added, "updated": updated, "removed": removed}
-
-
 async def _process_auto_attacks(
     gsm,
     manager: ConnectionManager,
@@ -504,22 +421,13 @@ async def _process_auto_attacks(
     
     Called every game tick (20 TPS = 50ms per tick).
     
-    For each player in combat:
-    1. Check if enough ticks passed (attack_speed * 20 ticks/second)
-    2. Validate target still exists and in range
-    3. Execute CombatService.perform_attack()
-    4. Update last_attack_tick
-    5. Broadcast EVENT_COMBAT_ACTION
-    6. Clear combat state if target died or out of range
-    
     Args:
         gsm: GameStateManager instance
         manager: ConnectionManager for broadcasting
         tick_counter: Current tick number
     """
     from ..services.combat_service import CombatService
-    from ..services.connection_service import ConnectionService
-    from common.src.protocol import WSMessage, MessageType, PROTOCOL_VERSION
+    from ..services.player_service import PlayerService
     
     players_in_combat = await gsm.get_all_players_in_combat()
     
@@ -598,8 +506,8 @@ async def _process_auto_attacks(
                         attack_speed=attack_speed,
                     )
                     
-                    # Broadcast combat event
-                    username = ConnectionService.get_online_username_by_player_id(player_id)
+                    # Get username for display in combat event
+                    username = await PlayerService.get_username_by_player_id(player_id)
                     if username:
                         combat_event = WSMessage(
                             id=None,
@@ -621,7 +529,8 @@ async def _process_auto_attacks(
                         )
                         
                         packed_event = msgpack.packb(combat_event.model_dump(), use_bin_type=True)
-                        await manager.broadcast_to_map(player_pos["map_id"], packed_event)
+                        if packed_event:
+                            await manager.broadcast_to_map(player_pos["map_id"], packed_event)
                     
                     # Clear combat if target died
                     if result.defender_died:
@@ -647,13 +556,13 @@ async def _process_auto_attacks(
 
 
 async def send_chunk_update_if_needed(
-    username: str, map_id: str, x: int, y: int, websocket, chunk_size: int = CHUNK_SIZE
+    player_id: int, map_id: str, x: int, y: int, websocket, chunk_size: int = CHUNK_SIZE
 ) -> None:
     """
     Send chunk data if player moved to a new chunk.
 
     Args:
-        username: Player's username
+        player_id: Player's unique database ID
         map_id: Current map ID
         x, y: Player's current tile position
         websocket: Player's WebSocket connection
@@ -662,7 +571,7 @@ async def send_chunk_update_if_needed(
     try:
         state = get_game_loop_state()
         current_chunk = get_chunk_coordinates(x, y, chunk_size)
-        last_chunk = await state.get_player_chunk_position(username)
+        last_chunk = await state.get_player_chunk_position(player_id)
 
         # Send chunks if player is new or moved to different chunk
         if last_chunk != current_chunk:
@@ -697,7 +606,7 @@ async def send_chunk_update_if_needed(
                             }
                         }
                     },
-                    version="2.0"
+                    version=PROTOCOL_VERSION
                 )
 
                 await websocket.send_bytes(
@@ -705,12 +614,12 @@ async def send_chunk_update_if_needed(
                 )
 
                 # Update tracked position
-                await state.set_player_chunk_position(username, current_chunk)
+                await state.set_player_chunk_position(player_id, current_chunk)
 
                 logger.debug(
                     "Sent automatic chunk update",
                     extra={
-                        "username": username,
+                        "player_id": player_id,
                         "old_chunk": last_chunk,
                         "new_chunk": current_chunk,
                         "chunk_count": len(chunk_data_list),
@@ -721,7 +630,7 @@ async def send_chunk_update_if_needed(
         logger.error(
             "Error sending chunk update",
             extra={
-                "username": username,
+                "player_id": player_id,
                 "error": str(e),
                 "traceback": traceback.format_exc(),
             }
@@ -729,7 +638,7 @@ async def send_chunk_update_if_needed(
 
 
 async def send_diff_update(
-    username: str, 
+    player_id: int, 
     websocket, 
     diff: Dict[str, List[Dict[str, Any]]],
     map_id: str
@@ -738,7 +647,7 @@ async def send_diff_update(
     Send a diff-based game state update to a specific player.
     
     Args:
-        username: Player's username
+        player_id: Player's unique database ID
         websocket: Player's WebSocket connection
         diff: The entity diff (added/updated/removed)
         map_id: The map identifier
@@ -751,15 +660,29 @@ async def send_diff_update(
         # Combine added and updated into entities list
         entities = diff["added"] + diff["updated"]
         
+        # Build removed_entities list - use player_id for players, id for others
+        removed_entities = []
+        for e in diff["removed"]:
+            entity_id = e.get("id", "")
+            # Entity keys are like "player_123" or "entity_456" or "ground_item_xxx"
+            if isinstance(entity_id, str) and entity_id.startswith("player_"):
+                # Extract player_id from key
+                try:
+                    removed_entities.append(int(entity_id.replace("player_", "")))
+                except ValueError:
+                    removed_entities.append(entity_id)
+            else:
+                removed_entities.append(str(entity_id))
+        
         update_message = WSMessage(
             id=None,  # No correlation ID for events
             type=MessageType.EVENT_GAME_UPDATE,
             payload={
                 "entities": entities,
-                "removed_entities": [e.get("username") or str(e.get("id", "")) for e in diff["removed"]],
+                "removed_entities": removed_entities,
                 "map_id": map_id,
             },
-            version="2.0"
+            version=PROTOCOL_VERSION
         )
         
         packed = msgpack.packb(update_message.model_dump(), use_bin_type=True)
@@ -770,25 +693,21 @@ async def send_diff_update(
         logger.error(
             "Error sending diff update", 
             extra={
-                "username": username,
+                "player_id": player_id,
                 "error": str(e),
                 "traceback": traceback.format_exc(),
             }
         )
 
 
-async def cleanup_disconnected_player(username: str) -> None:
+async def cleanup_disconnected_player(player_id: int) -> None:
     """Clean up state tracking for a disconnected player."""
     state = get_game_loop_state()
-    await state.cleanup_player(username)
-    
-    # Also update legacy module-level vars for backward compatibility
-    player_chunk_positions.pop(username, None)
-    player_login_ticks.pop(username, None)
+    await state.cleanup_player(player_id)
     
     # Remove player from VisibilityService
     visibility_service = get_visibility_service()
-    await visibility_service.remove_player(username)
+    await visibility_service.remove_player(player_id)
 
 
 async def _handle_player_death(
@@ -811,9 +730,7 @@ async def _handle_player_death(
         map_id: Map where the player died
         manager: ConnectionManager for broadcasting
     """
-    from common.src.protocol import PROTOCOL_VERSION
     from server.src.services.hp_service import HpService
-    from server.src.services.connection_service import ConnectionService
     
     try:
         gsm = get_game_state_manager()
@@ -891,15 +808,12 @@ async def _handle_player_death(
         # Always remove player from dying set when done
         state = get_game_loop_state()
         await state.remove_dying_player(player_id)
-        players_dying.discard(player_id)  # Also update legacy set
 
 
-async def register_player_login(username: str) -> None:
+async def register_player_login(player_id: int) -> None:
     """Register a player's login tick for staggered HP regen."""
     state = get_game_loop_state()
-    await state.register_player_login(username)
-    # Also update legacy dict for backward compatibility
-    player_login_ticks[username] = state.tick_counter
+    await state.register_player_login(player_id)
 
 
 async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
@@ -913,7 +827,9 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
         manager: The connection manager.
         valkey: The Valkey client.
     """
-    global _global_tick_counter
+    from ..services.hp_service import HpService
+    from ..services.equipment_service import EquipmentService
+    
     state = get_game_loop_state()
     tick_interval = 1 / settings.GAME_TICK_RATE
     hp_regen_interval = settings.HP_REGEN_INTERVAL_TICKS
@@ -925,9 +841,8 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
             # Track game loop iteration
             game_loop_iterations_total.inc()
             
-            # Increment global tick counter (both new state and legacy)
+            # Increment global tick counter
             current_tick = state.increment_tick()
-            _global_tick_counter = current_tick
 
             # Periodic batch sync of dirty data to database
             if current_tick % db_sync_interval == 0:
@@ -964,9 +879,10 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 map_connections = manager.connections_by_map.get(map_id, {})
                 if not map_connections:
                     continue
-                    
-                player_usernames = list(map_connections.keys())
-                logger.debug(f"[GAMELOOP] Processing map {map_id} with {len(player_usernames)} players: {player_usernames}")
+                
+                # map_connections is now {player_id: websocket}
+                player_ids = list(map_connections.keys())
+                logger.debug(f"[GAMELOOP] Processing map {map_id} with {len(player_ids)} players: {player_ids}")
                 
                 gsm = get_game_state_manager()
                 visibility_service = get_visibility_service()
@@ -974,13 +890,13 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 
                 # Process player data and collect HP regeneration updates
                 all_player_data: List[Dict[str, Any]] = []
-                player_positions: Dict[str, Tuple[int, int]] = {}
-                hp_updates: List[tuple[str, int]] = []  # Batch HP updates
+                player_positions: Dict[int, Tuple[int, int]] = {}  # player_id -> (x, y)
+                hp_updates: List[Tuple[int, int]] = []  # (player_id, new_hp)
                 
-                # Fetch player states individually (avoiding broken batch methods)
-                for username in player_usernames:
-                    # Get player state using existing individual method
-                    data = await gsm.state_access.get_player_state_by_username(username)
+                # Fetch player states directly by player_id
+                for player_id in player_ids:
+                    # Get player state directly using player_id
+                    data = await gsm.get_player_full_state(player_id)
                     if data:
                         x = int(data.get("x", 0))
                         y = int(data.get("y", 0))
@@ -988,9 +904,10 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         max_hp = int(data.get("max_hp", 10))
                         appearance = data.get("appearance")  # Dict or None
                         facing_direction = data.get("facing_direction", "DOWN")
+                        username = data.get("username", "")
                         
                         # Calculate HP regeneration based on player login time
-                        login_tick = await state.get_player_login_tick(username) or current_tick
+                        login_tick = await state.get_player_login_tick(player_id) or current_tick
                         ticks_since_login = current_tick - login_tick
                         should_regen = (
                             ticks_since_login > 0 
@@ -1000,27 +917,22 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         
                         if should_regen:
                             new_hp = min(current_hp + 1, max_hp)
-                            hp_updates.append((username, new_hp))
+                            hp_updates.append((player_id, new_hp))
                             current_hp = new_hp  # Use updated HP for this tick
                         
                         # Get equipped items for paperdoll rendering
-                        from ..services.connection_service import ConnectionService
-                        from ..services.equipment_service import EquipmentService
-                        player_id = ConnectionService.get_online_player_id_by_username(username)
-                        equipped_items = None
-                        if player_id:
-                            equipment = await EquipmentService.get_equipment_raw(player_id)
-                            equipped_items = _build_equipped_items_map(equipment, gsm)
+                        equipment = await EquipmentService.get_equipment_raw(player_id)
+                        equipped_items = _build_equipped_items_map(equipment, gsm)
                         
                         # Build visual state and register with visual registry
                         visual_state = _build_visual_state(appearance, equipped_items)
                         visual_hash = await visual_registry.register_visual_state(
-                            f"player_{username}", visual_state
+                            f"player_{player_id}", visual_state
                         )
                         
                         all_player_data.append({
-                            "id": username,
-                            "username": username,
+                            "player_id": player_id,
+                            "username": username,  # For display
                             "x": x,
                             "y": y,
                             "current_hp": current_hp,
@@ -1029,27 +941,18 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             "visual_hash": visual_hash,
                             "visual_state": visual_state.to_dict(),
                         })
-                        player_positions[username] = (x, y)
+                        player_positions[player_id] = (x, y)
 
                 # Execute batch HP regeneration updates via HpService
                 if hp_updates:
-                    from ..services.hp_service import HpService
-                    # Convert username-based updates to player_id-based
-                    from ..services.connection_service import ConnectionService
-                    player_id_updates = []
-                    for username, new_hp in hp_updates:
-                        pid = ConnectionService.get_online_player_id_by_username(username)
-                        if pid:
-                            player_id_updates.append((pid, new_hp))
-                    if player_id_updates:
-                        await HpService.batch_regenerate_hp(player_id_updates)
+                    await HpService.batch_regenerate_hp(hp_updates)
 
                 # Process dying entities (death animation completion)
                 entity_instances = await gsm.get_map_entities(map_id)
                 for entity in entity_instances:
                     if entity.get("state") == EntityState.DYING.value:
                         death_tick = int(entity.get("death_tick", 0))
-                        if _global_tick_counter >= death_tick:
+                        if current_tick >= death_tick:
                             # Death animation complete, finalize death
                             await gsm.finalize_entity_death(entity["id"])
                             # Clean up AI timer state for dead entity
@@ -1059,13 +962,11 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 entity_combat_events = await AIService.process_entities(
                     gsm=gsm,
                     map_id=map_id,
-                    current_tick=_global_tick_counter,
+                    current_tick=current_tick,
                 )
                 
                 # Broadcast any entity combat events
                 if entity_combat_events:
-                    from common.src.protocol import PROTOCOL_VERSION
-                    
                     for combat_event in entity_combat_events:
                         event_message = WSMessage(
                             id=None,
@@ -1086,18 +987,12 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             version=PROTOCOL_VERSION,
                         )
                         packed_event = msgpack.packb(event_message.model_dump(), use_bin_type=True)
-                        await manager.broadcast_to_map(combat_event.map_id, packed_event)
+                        if packed_event:
+                            await manager.broadcast_to_map(combat_event.map_id, packed_event)
                 
                 # Check for player deaths and spawn death handlers
-                # This happens after entity combat to catch players killed by entities
-                from ..services.connection_service import ConnectionService
-                from ..services.hp_service import HpService
-                for username in player_usernames:
-                    player_id = ConnectionService.get_online_player_id_by_username(username)
-                    if not player_id:
-                        continue
-                    
-                    # Skip players already in death sequence (use new thread-safe state)
+                for player_id in player_ids:
+                    # Skip players already in death sequence
                     if await state.is_player_dying(player_id):
                         continue
                     
@@ -1105,9 +1000,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     current_hp, max_hp = await HpService.get_hp(player_id)
                     if current_hp <= 0:
                         # Player died - add to dying set and spawn death handler
-                        # Use atomic add to prevent race conditions
                         if await state.add_dying_player(player_id):
-                            players_dying.add(player_id)  # Also update legacy set
                             task = asyncio.create_task(
                                 _handle_player_death(player_id, map_id, manager),
                                 name=f"death_handler_{player_id}"
@@ -1115,26 +1008,26 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             state.track_task(task)
 
                 # Process auto-attacks for all players in combat
-                await _process_auto_attacks(gsm, manager, _global_tick_counter)
+                await _process_auto_attacks(gsm, manager, current_tick)
 
                 # For each connected player, compute and send their personalized diff
-                for username in player_usernames:
-                    logger.debug(f"[GAMELOOP] Processing player: {username}")
-                    if username not in player_positions:
-                        logger.debug(f"[GAMELOOP] Player {username} not in player_positions, skipping")
+                for player_id in player_ids:
+                    logger.debug(f"[GAMELOOP] Processing player: {player_id}")
+                    if player_id not in player_positions:
+                        logger.debug(f"[GAMELOOP] Player {player_id} not in player_positions, skipping")
                         continue
                         
-                    websocket = map_connections.get(username)
+                    websocket = map_connections.get(player_id)
                     if not websocket:
-                        logger.debug(f"[GAMELOOP] No websocket for {username}, skipping")
+                        logger.debug(f"[GAMELOOP] No websocket for {player_id}, skipping")
                         continue
                     
-                    player_x, player_y = player_positions[username]
-                    logger.debug(f"[GAMELOOP] Player {username} at ({player_x}, {player_y})")
+                    player_x, player_y = player_positions[player_id]
+                    logger.debug(f"[GAMELOOP] Player {player_id} at ({player_x}, {player_y})")
                     
                     # Get player entities currently visible to this player
-                    current_visible_players = get_visible_entities(
-                        player_x, player_y, all_player_data, username
+                    current_visible_players = get_visible_players(
+                        player_x, player_y, all_player_data, player_id
                     )
                     
                     # Get entity instances visible to this player
@@ -1144,49 +1037,42 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     )
                     
                     # Get ground items visible to this player
-                    from ..services.connection_service import ConnectionService
-                    player_id = ConnectionService.get_online_player_id_by_username(username)
+                    from ..services.ground_item_service import GroundItemService
+                    visible_ground_items = await GroundItemService.get_visible_ground_items_raw(
+                        player_id=player_id,
+                        map_id=map_id,
+                        center_x=player_x,
+                        center_y=player_y,
+                        tile_radius=32,  # Same as visibility range
+                    )
                     
-                    # Skip ground item processing if player_id is invalid
-                    if not player_id:
-                        current_visible_ground_items = {}
-                    else:
-                        # Use GroundItemService for ground item visibility
-                        from ..services.ground_item_service import GroundItemService
-                        visible_ground_items = await GroundItemService.get_visible_ground_items_raw(
-                            player_id=player_id,
-                            map_id=map_id,
-                            center_x=player_x,
-                            center_y=player_y,
-                            tile_radius=32,  # Same as visibility range
-                        )
-                        
-                        # Convert to dict keyed by ground item ID
-                        current_visible_ground_items = {}
-                        for item in visible_ground_items:
-                            current_visible_ground_items[item["id"]] = {
-                                "type": "ground_item",
-                                "id": item["id"],
-                                "item_id": item["item_id"],
-                                "item_name": item["item_name"],
-                                "display_name": item["display_name"],
-                                "rarity": item["rarity"],
-                                "x": item["x"],
-                                "y": item["y"],
-                                "quantity": item["quantity"],
-                                "is_protected": item.get("is_protected", False),
-                            }
+                    # Convert to dict keyed by ground item ID
+                    current_visible_ground_items = {}
+                    for item in visible_ground_items:
+                        current_visible_ground_items[item["id"]] = {
+                            "type": "ground_item",
+                            "id": item["id"],
+                            "item_id": item["item_id"],
+                            "item_name": item["item_name"],
+                            "display_name": item["display_name"],
+                            "rarity": item["rarity"],
+                            "x": item["x"],
+                            "y": item["y"],
+                            "quantity": item["quantity"],
+                            "is_protected": item.get("is_protected", False),
+                        }
                     
                     # Combine players and ground items into single visibility state
-                    combined_visible_entities = {}
+                    combined_visible_entities: Dict[str, Dict[str, Any]] = {}
                     
                     # Add the player's own data (so client can track its own position)
                     own_player_data = None
                     for entity in all_player_data:
-                        if entity.get("username") == username:
+                        if entity.get("player_id") == player_id:
                             own_player_data = {
                                 "type": "player",
-                                "username": username,
+                                "player_id": player_id,
+                                "username": entity.get("username", ""),  # For display
                                 "x": entity.get("x", player_x),
                                 "y": entity.get("y", player_y),
                                 "current_hp": entity.get("current_hp", 0),
@@ -1200,14 +1086,14 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             break
                     
                     if own_player_data:
-                        combined_visible_entities[f"player_{username}"] = own_player_data
-                        logger.info(f"[DEBUG] Added own player to combined_visible_entities: {username} at ({own_player_data.get('x')}, {own_player_data.get('y')})")
+                        combined_visible_entities[f"player_{player_id}"] = own_player_data
+                        logger.info(f"[DEBUG] Added own player to combined_visible_entities: {player_id} at ({own_player_data.get('x')}, {own_player_data.get('y')})")
                     else:
-                        logger.warning(f"[DEBUG] own_player_data is None for {username}")
+                        logger.warning(f"[DEBUG] own_player_data is None for {player_id}")
                     
                     # Add other players with 'player_' prefix to avoid ID conflicts with ground items
-                    for player_username, player_data in current_visible_players.items():
-                        combined_visible_entities[f"player_{player_username}"] = player_data
+                    for other_player_id, player_data in current_visible_players.items():
+                        combined_visible_entities[f"player_{other_player_id}"] = player_data
                     
                     # Add ground items directly (they already have unique IDs)
                     for ground_item_id, ground_item_data in current_visible_ground_items.items():
@@ -1218,14 +1104,14 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         combined_visible_entities[entity_key] = entity_data
                     
                     # Use VisibilityService to compute diff and update state
-                    diff = await visibility_service.update_player_visible_entities(username, combined_visible_entities)
+                    diff = await visibility_service.update_player_visible_entities(player_id, combined_visible_entities)
                     
                     # Send diff update if there are changes
-                    await send_diff_update(username, websocket, diff, map_id)
+                    await send_diff_update(player_id, websocket, diff, map_id)
                     
                     # Check if player needs chunk updates
                     await send_chunk_update_if_needed(
-                        username, map_id, player_x, player_y, websocket
+                        player_id, map_id, player_x, player_y, websocket
                     )
                     
                 # Track broadcast for metrics

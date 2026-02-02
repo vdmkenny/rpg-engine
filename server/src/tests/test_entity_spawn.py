@@ -69,6 +69,20 @@ class FakeValkey:
             if min <= score <= max
         ]
     
+    async def zrange(self, key, score_query):
+        """Get sorted set members by score range using RangeByScore."""
+        if key not in self.sorted_sets:
+            return []
+        # Extract min/max from RangeByScore query
+        # In Glide, query.start and query.end are already converted to strings
+        min_score = float(score_query.start)
+        max_score = float(score_query.end)
+        return [
+            member.encode() if isinstance(member, str) else member
+            for member, score in self.sorted_sets[key].items()
+            if min_score <= score <= max_score
+        ]
+    
     async def zrem(self, key, members):
         """Remove from sorted set."""
         if key in self.sorted_sets:

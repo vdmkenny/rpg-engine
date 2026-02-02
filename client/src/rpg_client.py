@@ -11,6 +11,7 @@ All game logic is server-side. This client:
 import pygame
 import asyncio
 import websockets
+from websockets.protocol import State as WebSocketState
 import msgpack
 import aiohttp
 import sys
@@ -54,11 +55,10 @@ TILE_SIZE = 32
 CHUNK_SIZE = 16
 
 # Movement timing
-MOVE_COOLDOWN = 0.5  # seconds between moves (must match server rate limit)
+MOVE_COOLDOWN = 0.15  # seconds between moves (matches server rate limit)
 MOVE_DURATION = 0.2  # animation duration
 
 # Network
-WEBSOCKET_TIMEOUT = 0.05  # seconds
 CHUNK_REQUEST_DISTANCE = 8  # tiles before requesting new chunks
 
 # Server
@@ -108,6 +108,7 @@ class RPGClient:
         self.websocket: Optional[websockets.WebSocketClientProtocol] = None
         self.jwt_token: Optional[str] = None
         self.http_session: Optional[aiohttp.ClientSession] = None
+        self._ws_receive_task: Optional[asyncio.Task] = None  # Background WebSocket receiver
         
         # Map and rendering
         self.chunk_manager = ChunkManager()
@@ -354,6 +355,9 @@ class RPGClient:
             self.sprite_manager.clear_failed()
             self.paperdoll_renderer.clear_cache()
             
+            # Start background WebSocket receiver task (event-driven)
+            self._start_websocket_receiver()
+            
         except Exception as e:
             self.status_message = f"WebSocket failed: {e}"
             self.status_color = Colors.TEXT_RED
@@ -364,27 +368,44 @@ class RPGClient:
             packed = msgpack.packb(message.model_dump())
             await self.websocket.send(packed)
     
-    async def _receive_messages(self) -> None:
-        """Receive and process WebSocket messages."""
-        if not self.websocket:
-            return
-        
+    async def _websocket_receiver_task(self) -> None:
+        """Background task that continuously receives WebSocket messages (event-driven)."""
         try:
-            data = await asyncio.wait_for(
-                self.websocket.recv(),
-                timeout=WEBSOCKET_TIMEOUT
-            )
-            message = msgpack.unpackb(data, raw=False)
-            # DEBUG: Log all incoming message types
-            msg_type = message.get("type", "UNKNOWN")
-            if msg_type not in ("EVENT_GAME_STATE_UPDATE",):  # Skip noisy ones
-                print(f"[DEBUG] Received message type: {msg_type}")
-            await self.protocol.handle_message(message)
-            
-        except asyncio.TimeoutError:
-            pass  # Normal, no message waiting
-        except Exception as e:
-            print(f"WebSocket error: {e}")
+            while self.websocket and self.websocket.state == WebSocketState.OPEN:
+                try:
+                    data = await self.websocket.recv()
+                    message = msgpack.unpackb(data, raw=False)
+                    
+                    # DEBUG: Log all incoming message types
+                    msg_type = message.get("type", "UNKNOWN")
+                    if msg_type not in ("EVENT_GAME_STATE_UPDATE",):  # Skip noisy ones
+                        print(f"[DEBUG] Received message type: {msg_type}")
+                    
+                    await self.protocol.handle_message(message)
+                    
+                except websockets.exceptions.ConnectionClosed:
+                    print("WebSocket connection closed")
+                    break
+                except Exception as e:
+                    print(f"WebSocket receiver error: {e}")
+                    break
+        finally:
+            print("WebSocket receiver task stopped")
+    
+    def _start_websocket_receiver(self) -> None:
+        """Start the background WebSocket receiver task."""
+        if self._ws_receive_task is None or self._ws_receive_task.done():
+            self._ws_receive_task = asyncio.create_task(self._websocket_receiver_task())
+    
+    async def _stop_websocket_receiver(self) -> None:
+        """Stop the background WebSocket receiver task."""
+        if self._ws_receive_task and not self._ws_receive_task.done():
+            self._ws_receive_task.cancel()
+            try:
+                await self._ws_receive_task
+            except asyncio.CancelledError:
+                pass
+            self._ws_receive_task = None
     
     # =========================================================================
     # EVENT HANDLERS - Server Events
@@ -568,10 +589,12 @@ class RPGClient:
     
     async def _handle_player_left(self, payload: Dict[str, Any]) -> None:
         """Handle player left event."""
+        player_id = payload.get("player_id")
         username = payload.get("username", "")
         
+        if player_id:
+            self.game_state.remove_player(player_id)
         if username:
-            self.game_state.remove_player(username)
             self.chat_window.add_message("System", f"{username} has left.", ChatChannel.LOCAL.value)
     
     async def _handle_combat_action(self, payload: Dict[str, Any]) -> None:
@@ -1070,10 +1093,13 @@ class RPGClient:
     
     async def _handle_logout(self) -> None:
         """Handle logout - disconnect and return to login screen."""
-        # Close websocket connection
-        if self.websocket:
+        # Stop WebSocket receiver task
+        await self._stop_websocket_receiver()
+        
+        # Close websocket connection gracefully
+        if self.websocket and self.websocket.state == WebSocketState.OPEN:
             try:
-                await self.websocket.close()
+                await self.websocket.close(code=1000, reason="User logout")
             except Exception:
                 pass
             self.websocket = None
@@ -1082,8 +1108,7 @@ class RPGClient:
         self.game_state.reset()
         
         # Reset authentication
-        self.auth_token = None
-        self.player_id = None
+        self.jwt_token = None
         
         # Clear paperdoll cache
         self.paperdoll_renderer.clear_cache()
@@ -1093,9 +1118,10 @@ class RPGClient:
         
         # Reset to login state
         self.state = GameState.LOGIN
-        self.login_error = None
-        self.username_input = ""
-        self.password_input = ""
+        self.username_text = ""
+        self.password_text = ""
+        self.status_message = "Logged out"
+        self.status_color = Colors.TEXT_WHITE
         self.email_input = ""
         self.active_field = "username"
         
@@ -1179,7 +1205,7 @@ class RPGClient:
         # Check if still animating
         if self.game_state.is_moving:
             progress = (current_time - self.game_state.move_start_time) / self.game_state.move_duration
-            if progress < 0.9:
+            if progress < 0.5:  # Allow next move at 50% animation completion
                 return
         
         # Determine direction
@@ -1439,11 +1465,12 @@ class RPGClient:
     
     def _draw_other_players(self) -> None:
         """Draw other players."""
-        for username, player in self.game_state.other_players.items():
-            self._draw_other_player(username, player)
+        for player_id, player in self.game_state.other_players.items():
+            self._draw_other_player(player)
     
-    def _draw_other_player(self, username: str, player: Entity) -> None:
+    def _draw_other_player(self, player: Entity) -> None:
         """Draw another player."""
+        username = player.name  # Username is stored in the Entity for display
         screen_x, screen_y = self._world_to_screen(
             player.display_x * TILE_SIZE,
             player.display_y * TILE_SIZE
@@ -1728,8 +1755,8 @@ class RPGClient:
             
             # Game logic (playing state)
             if self.state == GameState.PLAYING:
-                # Receive WebSocket messages
-                await self._receive_messages()
+                # WebSocket messages are now received in background task (event-driven)
+                # No polling needed here!
                 
                 # Process movement
                 await self._process_movement()
@@ -1756,16 +1783,32 @@ class RPGClient:
             await asyncio.sleep(0)
         
         # Cleanup
-        if self.websocket:
-            await self.websocket.close()
+        print("Shutting down client...")
+        
+        # Stop WebSocket receiver task first
+        await self._stop_websocket_receiver()
+        
+        # Close WebSocket connection gracefully (sends close frame to server)
+        if self.websocket and self.websocket.state == WebSocketState.OPEN:
+            try:
+                print("Closing WebSocket connection...")
+                await self.websocket.close(code=1000, reason="Client shutdown")
+                print("WebSocket closed")
+            except Exception as e:
+                print(f"Error closing WebSocket: {e}")
+        
+        # Close HTTP session
         if self.http_session:
             await self.http_session.close()
+        
+        # Close resource managers
         await self.tileset_manager.close()
         await self.sprite_manager.close()
         
         # Clear paperdoll renderer cache
         self.paperdoll_renderer.clear_cache()
         
+        print("Client shutdown complete")
         pygame.quit()
 
 

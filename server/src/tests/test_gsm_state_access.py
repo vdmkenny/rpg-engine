@@ -29,63 +29,6 @@ class TestGSMStateAccess:
         
         return {"player_id": player_id, "username": username, "gsm": gsm}
 
-    async def test_get_player_state_by_username(self, online_player):
-        """Test retrieving player state by username."""
-        player_id = online_player["player_id"] 
-        username = online_player["username"]
-        gsm = online_player["gsm"]
-        
-        # Get state by username
-        state = await gsm.state_access.get_player_state_by_username(username)
-        
-        assert state is not None
-        assert state["x"] == 10
-        assert state["y"] == 20 
-        assert state["map_id"] == "test_map"
-        assert state["current_hp"] == 50
-        assert state["max_hp"] == 100
-        assert state["username"] == username
-        assert state["player_id"] == str(player_id)
-
-    async def test_get_player_state_by_username_not_online(self, gsm: GameStateManager):
-        """Test retrieving state for offline player returns None."""
-        state = await gsm.state_access.get_player_state_by_username("offline_player")
-        assert state is None
-
-    async def test_set_player_hp_by_username_offline(self, gsm: GameStateManager):
-        """Test setting HP for offline player does nothing."""
-        # Should not raise error, just log warning
-        await gsm.state_access.set_player_hp_by_username("offline_player", 50)
-        # No assertion needed - just verify it doesn't crash
-
-    async def test_get_multiple_players_by_usernames(self, gsm: GameStateManager, fake_valkey: FakeValkey):
-        """Test batch retrieval of multiple players by username."""
-        # Set up multiple players
-        players = [
-            {"id": 101, "username": "player1", "x": 10, "y": 20},
-            {"id": 102, "username": "player2", "x": 30, "y": 40},
-            {"id": 103, "username": "player3", "x": 50, "y": 60}
-        ]
-
-        for player in players:
-            gsm.register_online_player(player["id"], player["username"])
-            # Initialize full state first before setting position
-            await gsm.set_player_full_state(player["id"], player["x"], player["y"], "test_map", 100, 100)
-
-        # Get multiple players by username
-        usernames = ["player1", "player2", "player3", "nonexistent"]
-        states = await gsm.state_access.get_multiple_players_by_usernames(usernames)
-
-        assert len(states) == 3  # Only existing players returned
-        assert "player1" in states
-        assert "player2" in states
-        assert "player3" in states
-        assert "nonexistent" not in states
-
-        assert states["player1"]["x"] == 10
-        assert states["player2"]["x"] == 30
-        assert states["player3"]["x"] == 50
-
     async def test_get_players_on_map(self, gsm: GameStateManager):
         """Test retrieving all players on a specific map."""
         # Set up players on different maps

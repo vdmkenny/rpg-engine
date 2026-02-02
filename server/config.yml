@@ -16,7 +16,7 @@ game:
     # Minimum time between moves in seconds (prevents spam)
     move_cooldown: 0.15  # 150ms = ~6.7 moves per second max
     # Duration of movement animation on client
-    animation_duration: 0.3
+    animation_duration: 0.15  # Match cooldown for smooth continuous movement
 
   # HP regeneration configuration
   hp_regen:

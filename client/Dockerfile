@@ -22,6 +22,6 @@ COPY . /app/
 COPY . /app/
 
 # Set the command to run the application
-CMD ["poetry", "run", "python", "client/src/client.py"]
+CMD ["poetry", "run", "python", "client/src/main.py"]
 
 

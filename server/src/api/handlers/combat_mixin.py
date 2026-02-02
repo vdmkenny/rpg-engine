@@ -190,7 +190,9 @@ class CombatHandlerMixin:
                 await manager.broadcast_to_map(attacker_pos["map_id"], packed_event)
                 
                 # Set combat state for auto-attack
-                from server.src.game.game_loop import _global_tick_counter
+                from server.src.game.game_loop import get_game_loop_state
+                
+                game_state = get_game_loop_state()
                 
                 equipment = await gsm.get_equipment(self.player_id)
                 weapon_item = equipment.get("weapon")
@@ -206,7 +208,7 @@ class CombatHandlerMixin:
                     player_id=self.player_id,
                     target_type=payload.target_type,
                     target_id=int(payload.target_id),
-                    last_attack_tick=_global_tick_counter,
+                    last_attack_tick=game_state.tick_counter,
                     attack_speed=attack_speed
                 )
                 

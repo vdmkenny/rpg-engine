@@ -238,8 +238,8 @@ class ClientGameState:
         # Combat state
         self.combat: CombatState = CombatState()
         
-        # Other players
-        self.other_players: Dict[str, Entity] = {}
+        # Other players (keyed by player_id for identification)
+        self.other_players: Dict[int, Entity] = {}
         
         # NPCs and monsters
         self.entities: Dict[int, Entity] = {}
@@ -272,10 +272,10 @@ class ClientGameState:
             return
         
         if animate:
-            self._start_x = float(self.x) if self.x else float(x)
-            self._start_y = float(self.y) if self.y else float(y)
-            self.display_x = self._start_x
-            self.display_y = self._start_y
+            # Start animation from current display position (smooth continuous movement)
+            # If already moving, this prevents "stepping" by continuing from where we are
+            self._start_x = self.display_x
+            self._start_y = self.display_y
             self.is_moving = True
             self.move_start_time = time.time()
             
@@ -453,8 +453,11 @@ class ClientGameState:
             entity_type = entity_data.get("type", "")
             
             if entity_type == "player":
+                player_id = entity_data.get("player_id")
                 username = entity_data.get("username", "")
-                if username == self.username:
+                
+                # Check if this is our own player (by player_id or username)
+                if player_id == self.player_id or username == self.username:
                     # Update own player position
                     new_x = entity_data.get("x", self.x)
                     new_y = entity_data.get("y", self.y)
@@ -466,8 +469,8 @@ class ClientGameState:
                             entity_data.get("current_hp", self.current_hp),
                             entity_data.get("max_hp", self.max_hp)
                         )
-                elif username:
-                    self._update_other_player(username, entity_data)
+                elif player_id:
+                    self._update_other_player(player_id, username, entity_data)
             
             elif entity_type in ["npc", "monster", "humanoid"]:
                 instance_id = entity_data.get("instance_id", 0)
@@ -477,11 +480,11 @@ class ClientGameState:
                 ground_item_id = entity_data.get("ground_item_id", "")
                 self._update_ground_item(ground_item_id, entity_data)
     
-    def _update_other_player(self, username: str, data: Dict[str, Any]) -> None:
-        """Update or create another player entity."""
-        if username not in self.other_players:
-            self.other_players[username] = Entity(
-                instance_id=0,
+    def _update_other_player(self, player_id: int, username: str, data: Dict[str, Any]) -> None:
+        """Update or create another player entity (identified by player_id)."""
+        if player_id not in self.other_players:
+            self.other_players[player_id] = Entity(
+                instance_id=player_id,
                 entity_type=EntityType.PLAYER,
                 name=username,
                 display_name=username,
@@ -491,16 +494,19 @@ class ClientGameState:
                 display_y=float(data.get("y", 0)),
             )
         
-        player = self.other_players[username]
+        player = self.other_players[player_id]
+        # Update username in case it changed
+        player.name = username
+        player.display_name = username
+        
         new_x = data.get("x", player.x)
         new_y = data.get("y", player.y)
         
         # Animate if position changed
         if new_x != player.x or new_y != player.y:
-            player._start_x = float(player.x) if player.x else float(new_x)
-            player._start_y = float(player.y) if player.y else float(new_y)
-            player.display_x = player._start_x
-            player.display_y = player._start_y
+            # Start animation from current display position (smooth continuous movement)
+            player._start_x = player.display_x
+            player._start_y = player.display_y
             player.is_moving = True
             player.move_start_time = time.time()
             
@@ -548,10 +554,9 @@ class ClientGameState:
         
         # Animate if position changed
         if new_x != entity.x or new_y != entity.y:
-            entity._start_x = float(entity.x) if entity.x else float(new_x)
-            entity._start_y = float(entity.y) if entity.y else float(new_y)
-            entity.display_x = entity._start_x
-            entity.display_y = entity._start_y
+            # Start animation from current display position (smooth continuous movement)
+            entity._start_x = entity.display_x
+            entity._start_y = entity.display_y
             entity.is_moving = True
             entity.move_start_time = time.time()
             
@@ -592,9 +597,9 @@ class ClientGameState:
             owner=data.get("owner"),
         )
     
-    def remove_player(self, username: str) -> None:
-        """Remove a player from the game state."""
-        self.other_players.pop(username, None)
+    def remove_player(self, player_id: int) -> None:
+        """Remove a player from the game state by player_id."""
+        self.other_players.pop(player_id, None)
     
     # =========================================================================
     # ANIMATION UPDATES

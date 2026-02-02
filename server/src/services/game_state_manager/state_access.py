@@ -1,8 +1,8 @@
 """
 GameStateManager State Access Helper
 
-Handles username-based queries, batch operations, and map-based state access.
-Keeps the main GSM class focused on core CRUD operations.
+Provides map-based state access and batch operations using player_id (int).
+All operations use player_id as the internal identifier.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 
 
 class GSMStateAccess:
-    """Helper class for advanced state access operations."""
+    """Helper class for advanced state access operations using player_id."""
     
     def __init__(self, gsm):
         """Initialize with reference to main GameStateManager."""
@@ -25,119 +25,6 @@ class GSMStateAccess:
     def valkey(self) -> Optional[GlideClient]:
         """Get Valkey client from main GSM."""
         return self._gsm.valkey
-    
-    async def get_player_state_by_username(self, username: str) -> Optional[Dict[str, Any]]:
-        """
-        Get player state by username (transition helper for legacy code).
-        
-        Args:
-            username: Player's username
-            
-        Returns:
-            Player state dict or None if not found
-        """
-        if not self.valkey:
-            return None
-            
-        from ..connection_service import ConnectionService
-        player_id = ConnectionService.get_online_player_id_by_username(username)
-        if not player_id:
-            return None
-            
-        return await self._gsm.get_player_full_state(player_id)
-    
-    async def set_player_hp_by_username(
-        self, 
-        username: str, 
-        current_hp: int, 
-        max_hp: Optional[int] = None
-    ) -> None:
-        """
-        Set player HP by username (transition helper for game loop).
-        
-        Args:
-            username: Player's username
-            current_hp: New current HP value
-            max_hp: New max HP value (optional)
-        """
-        if not self.valkey:
-            logger.warning("No Valkey connection for HP update", extra={"username": username})
-            return
-            
-        from ..connection_service import ConnectionService
-        player_id = ConnectionService.get_online_player_id_by_username(username)
-        if not player_id:
-            logger.warning("Player ID not found for HP update", extra={"username": username})
-            return
-            
-        await self._gsm.set_player_hp(player_id, current_hp, max_hp)
-    
-    async def batch_update_player_hp(
-        self,
-        hp_updates: List[tuple[str, int]]  # List of (username, new_hp) tuples
-    ) -> None:
-        """
-        Batch update HP for multiple players using individual operations.
-        Optimized for HP regeneration processing in game loop.
-        
-        Args:
-            hp_updates: List of (username, new_current_hp) tuples
-        """
-        if not self.valkey or not hp_updates:
-            return
-        
-        # Process each HP update individually (since pipeline isn't available)
-        # TODO: This should be refactored to use player IDs directly instead of username lookups
-        for username, new_hp in hp_updates:
-            # Use ConnectionService to get player ID
-            from ..connection_service import ConnectionService
-            player_id = ConnectionService.get_online_player_id_by_username(username)
-            if player_id:
-                player_key = f"player:{player_id}"
-                await self.valkey.hset(player_key, mapping={"current_hp": str(new_hp)})
-                # Mark dirty for database sync
-                await self.valkey.sadd("dirty:position", [str(player_id)])
-        
-        logger.debug(
-            "Batch HP regeneration completed",
-            extra={"updated_players": len(hp_updates)}
-        )
-    
-    async def get_multiple_players_by_usernames(
-        self, 
-        usernames: List[str]
-    ) -> Dict[str, Dict[str, Any]]:
-        """
-        Get full state for multiple players by username using individual operations.
-        
-        Args:
-            usernames: List of player usernames
-            
-        Returns:
-            Dict mapping username to player state
-        """
-        if not usernames:
-            return {}
-        
-        # Get player IDs from ConnectionService
-        from ..connection_service import ConnectionService
-        username_to_id = {}
-        for username in usernames:
-            player_id = ConnectionService.get_online_player_id_by_username(username)
-            if player_id:
-                username_to_id[username] = player_id
-        
-        if not username_to_id:
-            return {}
-        
-        # Use individual operations for each player
-        result = {}
-        for username, player_id in username_to_id.items():
-            state = await self._gsm.get_player_full_state(player_id)
-            if state:
-                result[username] = state
-        
-        return result
     
     async def get_players_on_map(self, map_id: str) -> List[Dict[str, Any]]:
         """

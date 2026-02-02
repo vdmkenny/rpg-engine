@@ -429,8 +429,9 @@ class CombatService:
             
             # If entity died, trigger death animation
             if defender_died:
-                from server.src.game.game_loop import _global_tick_counter
-                death_tick = _global_tick_counter + 10  # 10 ticks for death animation
+                from server.src.game.game_loop import get_game_loop_state
+                game_state = get_game_loop_state()
+                death_tick = game_state.tick_counter + 10  # 10 ticks for death animation
                 await gsm.despawn_entity(defender_id, death_tick=death_tick, respawn_delay_seconds=30)
         
         # Calculate XP (only for player attackers)
@@ -484,8 +485,10 @@ class CombatService:
             
             # If auto-retaliate is on and not already in combat, set combat state to attack back
             if auto_retaliate and not defender_combat_state:
-                from server.src.game.game_loop import _global_tick_counter
+                from server.src.game.game_loop import get_game_loop_state
                 from server.src.core.config import game_config
+                
+                game_state = get_game_loop_state()
                 
                 # Get defender's weapon attack speed
                 defender_equipment = await gsm.get_equipment(defender_id)
@@ -503,7 +506,7 @@ class CombatService:
                     player_id=defender_id,
                     target_type=attacker_type,
                     target_id=attacker_id,
-                    last_attack_tick=_global_tick_counter,
+                    last_attack_tick=game_state.tick_counter,
                     attack_speed=defender_attack_speed,
                 )
                 

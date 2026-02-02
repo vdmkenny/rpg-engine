@@ -5,7 +5,7 @@ Tests for entity visibility in game loop.
 import pytest
 from server.src.game.game_loop import (
     get_visible_npc_entities,
-    get_visible_entities,
+    get_visible_players,
     is_in_visible_range,
     _build_equipped_items_map,
 )
@@ -283,7 +283,7 @@ class TestPlayerVisibility:
         """Test that visible players include visual state data."""
         players = [
             {
-                "id": "player1",
+                "player_id": 1,
                 "username": "player1",
                 "x": 30,
                 "y": 30,
@@ -296,7 +296,7 @@ class TestPlayerVisibility:
                 },
             },
             {
-                "id": "viewer",
+                "player_id": 999,
                 "username": "viewer",
                 "x": 25,
                 "y": 25,
@@ -305,11 +305,11 @@ class TestPlayerVisibility:
             }
         ]
         
-        visible = get_visible_entities(25, 25, players, "viewer")
+        visible = get_visible_players(25, 25, players, 999)
         
         assert len(visible) == 1
-        assert "player1" in visible
-        player_data = visible["player1"]
+        assert 1 in visible
+        player_data = visible[1]
         assert player_data["type"] == "player"
         # New sprite system uses visual_hash and visual_state
         assert player_data["visual_hash"] == "abc123def456"
@@ -320,7 +320,7 @@ class TestPlayerVisibility:
         """Test that viewing player is excluded from visibility."""
         players = [
             {
-                "id": "viewer",
+                "player_id": 999,
                 "username": "viewer",
                 "x": 25,
                 "y": 25,
@@ -329,7 +329,7 @@ class TestPlayerVisibility:
             }
         ]
         
-        visible = get_visible_entities(25, 25, players, "viewer")
+        visible = get_visible_players(25, 25, players, 999)
         
         assert len(visible) == 0
     
@@ -337,7 +337,7 @@ class TestPlayerVisibility:
         """Test that distant players are not visible."""
         players = [
             {
-                "id": "distant_player",
+                "player_id": 1,
                 "username": "distant_player",
                 "x": 200,
                 "y": 200,
@@ -346,7 +346,7 @@ class TestPlayerVisibility:
             }
         ]
         
-        visible = get_visible_entities(25, 25, players, "viewer")
+        visible = get_visible_players(25, 25, players, 999)
         
         assert len(visible) == 0
     
@@ -354,7 +354,7 @@ class TestPlayerVisibility:
         """Test players without visual data are still visible."""
         players = [
             {
-                "id": "player1",
+                "player_id": 1,
                 "username": "player1",
                 "x": 30,
                 "y": 30,
@@ -364,10 +364,10 @@ class TestPlayerVisibility:
             }
         ]
         
-        visible = get_visible_entities(25, 25, players, "viewer")
+        visible = get_visible_players(25, 25, players, 999)
         
         assert len(visible) == 1
-        player_data = visible["player1"]
+        player_data = visible[1]
         # Player should still be visible, just without visual data
         assert player_data["type"] == "player"
         assert "visual_hash" not in player_data

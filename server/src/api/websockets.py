@@ -228,10 +228,10 @@ async def websocket_endpoint(
                 code=status.WS_1011_INTERNAL_ERROR,
                 reason="Could not get player position"
             )
-        await manager.connect(websocket, username, position["map_id"])
+        await manager.connect(websocket, player_id, position["map_id"])
         
         # Register for game loop
-        await register_player_login(username)
+        await register_player_login(player_id)
         
         # Update metrics
         _update_connection_metrics()
@@ -311,18 +311,23 @@ async def websocket_endpoint(
 async def _handle_player_disconnect(username: str, player_id: Optional[int]) -> None:
     """Handle player disconnection cleanup."""
     try:
-        player_map = manager.client_to_map.get(username)
+        # Get map from player_id (not username)
+        player_map = manager.player_to_map.get(player_id) if player_id else None
         
         await ConnectionService.handle_player_disconnect(
             username, player_map, manager, rate_limiter
         )
         
+        # Disconnect from connection manager using player_id
+        if player_id:
+            await manager.disconnect(player_id)
+        
         if player_map:
-            await broadcast_player_left(username, player_map, manager)
+            await broadcast_player_left(username, player_id, player_map, manager)
         
         logger.debug(
             "Player disconnection handled",
-            extra={"username": username}
+            extra={"username": username, "player_id": player_id}
         )
         
     except Exception as e:
@@ -330,6 +335,7 @@ async def _handle_player_disconnect(username: str, player_id: Optional[int]) -> 
             "Error handling player disconnect",
             extra={
                 "username": username,
+                "player_id": player_id,
                 "error": str(e),
                 "error_type": type(e).__name__,
                 "traceback": traceback.format_exc(),

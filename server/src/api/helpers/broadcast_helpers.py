@@ -151,6 +151,7 @@ async def handle_player_join_broadcast(
             type=MessageType.EVENT_PLAYER_JOINED,
             payload={
                 "player": {
+                    "player_id": player_id,
                     "username": username,
                     "position": position,
                     "type": "player"
@@ -163,18 +164,19 @@ async def handle_player_join_broadcast(
         
         # Get all connections on this map and filter out the joining player
         all_connections = await connection_manager.get_all_connections()
-        other_players = [
-            conn['username'] for conn in all_connections 
-            if conn['map_id'] == map_id and conn['username'] != username
+        other_player_ids = [
+            conn['player_id'] for conn in all_connections 
+            if conn['map_id'] == map_id and conn['player_id'] != player_id
         ]
         
-        if other_players:
-            await connection_manager.broadcast_to_users(other_players, packed_join)
+        if other_player_ids:
+            await connection_manager.broadcast_to_players(other_player_ids, packed_join)
         
         logger.debug(
             "Player join broadcast completed",
             extra={
                 "username": username,
+                "player_id": player_id,
                 "map_id": map_id,
                 "existing_players": len(existing_players_data) if existing_players_data else 0
             }
@@ -185,6 +187,7 @@ async def handle_player_join_broadcast(
             "Error handling player join broadcast",
             extra={
                 "username": username,
+                "player_id": player_id,
                 "error": str(e),
                 "error_type": type(e).__name__,
                 "traceback": traceback.format_exc()
@@ -194,6 +197,7 @@ async def handle_player_join_broadcast(
 
 async def broadcast_player_left(
     username: str,
+    player_id: int,
     player_map: str | None,
     connection_manager
 ) -> None:
@@ -201,7 +205,8 @@ async def broadcast_player_left(
     Broadcast player left event to remaining players.
     
     Args:
-        username: Player's username
+        username: Player's username (for display)
+        player_id: Player's database ID (for identification)
         player_map: Map player was on (may be None)
         connection_manager: ConnectionManager instance
     """
@@ -213,6 +218,7 @@ async def broadcast_player_left(
             id=None,
             type=MessageType.EVENT_PLAYER_LEFT,
             payload={
+                "player_id": player_id,
                 "username": username,
                 "reason": "Disconnected"
             },
@@ -223,19 +229,20 @@ async def broadcast_player_left(
         
         # Get all connections on this map and filter out the disconnecting player
         all_connections = await connection_manager.get_all_connections()
-        other_players = [
-            conn['username'] for conn in all_connections 
-            if conn['map_id'] == player_map and conn['username'] != username
+        other_player_ids = [
+            conn['player_id'] for conn in all_connections 
+            if conn['map_id'] == player_map and conn['player_id'] != player_id
         ]
         
-        if other_players:
-            await connection_manager.broadcast_to_users(other_players, packed_left)
+        if other_player_ids:
+            await connection_manager.broadcast_to_players(other_player_ids, packed_left)
             
     except Exception as e:
         logger.error(
             "Error broadcasting player left",
             extra={
                 "username": username,
+                "player_id": player_id,
                 "error": str(e),
                 "error_type": type(e).__name__,
                 "traceback": traceback.format_exc()

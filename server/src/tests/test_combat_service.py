@@ -431,8 +431,10 @@ class TestCombatService:
                     with patch('server.src.services.combat_service.SkillService.add_experience') as mock_add_xp:
                         mock_add_xp.return_value = AsyncMock()
                         
-                        # Mock global tick counter from game_loop module
-                        with patch('server.src.game.game_loop._global_tick_counter', 100):
+                        # Mock global tick counter from GameLoopState
+                        from server.src.game.game_loop import get_game_loop_state
+                        game_state = get_game_loop_state()
+                        with patch.object(game_state, '_global_tick_counter', 100):
                             # Force a hit for testing
                             with patch('server.src.services.combat_service.random.random', return_value=0.1):
                                 # Force specific damage
@@ -499,8 +501,10 @@ class TestCombatService:
                     with patch('server.src.services.combat_service.SkillService.add_experience') as mock_add_xp:
                         mock_add_xp.return_value = AsyncMock()
                         
-                        # Mock global tick counter from game_loop module
-                        with patch('server.src.game.game_loop._global_tick_counter', 100):
+                        # Mock global tick counter from GameLoopState
+                        from server.src.game.game_loop import get_game_loop_state
+                        game_state = get_game_loop_state()
+                        with patch.object(game_state, '_global_tick_counter', 100):
                             # Force a hit with 5 damage (kills entity)
                             with patch('server.src.services.combat_service.random.random', return_value=0.1):
                                 with patch('server.src.services.combat_service.random.randint', return_value=5):
