@@ -22,7 +22,9 @@ from server.src.core.logging_config import get_logger
 from server.src.core.skills import SkillType
 from server.src.services.game_state_manager import get_game_state_manager
 from server.src.services.skill_service import SkillService
-from server.src.core.entities import EntityID
+from server.src.core.entities import get_entity_by_name
+from server.src.core.humanoids import HumanoidDefinition
+from server.src.core.monsters import MonsterDefinition
 from common.src.protocol import CombatTargetType
 
 logger = get_logger(__name__)
@@ -160,9 +162,9 @@ class CombatService:
         if not entity_data:
             return None
         
-        # Get entity definition
+        # Get entity definition (works for both humanoids and monsters)
         entity_name = entity_data.get("entity_name", "")
-        entity_enum = EntityID.from_name(entity_name)
+        entity_enum = get_entity_by_name(entity_name)
         if not entity_enum:
             return None
         
@@ -173,13 +175,33 @@ class CombatService:
         strength_level = entity_def.skills.get(SkillType.STRENGTH, 1)
         defence_level = entity_def.skills.get(SkillType.DEFENCE, 1)
         
+        # Get combat bonuses - for monsters these are innate, for humanoids derive from equipment
+        if isinstance(entity_def, MonsterDefinition):
+            attack_bonus = entity_def.attack_bonus
+            strength_bonus = entity_def.strength_bonus
+            defence_bonus = entity_def.physical_defence_bonus
+        elif isinstance(entity_def, HumanoidDefinition):
+            # Humanoids derive stats from their equipped items
+            attack_bonus = 0
+            strength_bonus = 0
+            defence_bonus = 0
+            for slot, item_type in entity_def.equipped_items.items():
+                item_def = item_type.value
+                attack_bonus += item_def.attack_bonus
+                strength_bonus += item_def.strength_bonus
+                defence_bonus += item_def.physical_defence_bonus
+        else:
+            attack_bonus = 0
+            strength_bonus = 0
+            defence_bonus = 0
+        
         return CombatStats(
             attack_level=attack_level,
             strength_level=strength_level,
-            attack_bonus=entity_def.attack_bonus,
-            strength_bonus=entity_def.strength_bonus,
+            attack_bonus=attack_bonus,
+            strength_bonus=strength_bonus,
             defence_level=defence_level,
-            defence_bonus=entity_def.physical_defence_bonus,
+            defence_bonus=defence_bonus,
             current_hp=int(entity_data.get("current_hp", 0)),
             max_hp=int(entity_data.get("max_hp", 10)),
             name=entity_def.display_name
@@ -288,6 +310,36 @@ class CombatService:
         return xp_rewards
     
     @staticmethod
+    def calculate_defensive_xp(did_hit: bool, damage_taken: int) -> Dict[SkillType, int]:
+        """
+        Calculate defensive XP for a player being attacked.
+        
+        Awards small amounts of XP when a player is attacked:
+        - Defence XP: 2 XP if attack missed (successful defense)
+        - Hitpoints XP: damage / 3 if hit (learning to endure damage)
+        
+        These rates are lower than offensive XP to prevent leveling
+        by just standing and taking hits.
+        
+        Args:
+            did_hit: Whether the attack hit the defender
+            damage_taken: Amount of damage taken (0 if missed)
+            
+        Returns:
+            Dict of {SkillType: xp_amount}
+        """
+        xp_rewards = {}
+        
+        if not did_hit:
+            # Successful defense - small Defence XP
+            xp_rewards[SkillType.DEFENCE] = 2
+        elif damage_taken > 0:
+            # Took damage - small Hitpoints XP (same rate as offensive)
+            xp_rewards[SkillType.HITPOINTS] = max(1, damage_taken // 3)
+        
+        return xp_rewards
+    
+    @staticmethod
     async def perform_attack(
         attacker_type: CombatTargetType,
         attacker_id: int,
@@ -389,6 +441,12 @@ class CombatService:
             # Award XP
             for skill_type, xp_amount in xp_gained.items():
                 await SkillService.add_experience(attacker_id, skill_type, xp_amount)
+        
+        # Award defensive XP to player defenders (when attacked by entities)
+        if defender_type == CombatTargetType.PLAYER and not defender_died:
+            defensive_xp = CombatService.calculate_defensive_xp(did_hit, damage)
+            for skill_type, xp_amount in defensive_xp.items():
+                await SkillService.add_experience(defender_id, skill_type, xp_amount)
         
         # Build combat message
         if did_hit:

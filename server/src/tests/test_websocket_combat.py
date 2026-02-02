@@ -13,6 +13,7 @@ import pytest
 import asyncio
 
 from common.src.protocol import MessageType
+from server.src.core.entities import EntityType
 from server.src.tests.websocket_test_utils import (
     WebSocketTestClient,
     ErrorResponseError,
@@ -41,6 +42,7 @@ class TestCombatIntegration:
         # Spawn an entity near the player
         instance_id = await gsm.spawn_entity_instance(
             entity_name="GOBLIN",
+            entity_type=EntityType.MONSTER,
             map_id="samplemap",
             x=spawn_x,
             y=spawn_y,
@@ -87,6 +89,7 @@ class TestCombatIntegration:
         # This makes the test reliable regardless of player's combat stats
         instance_id = await gsm.spawn_entity_instance(
             entity_name="GOBLIN",
+            entity_type=EntityType.MONSTER,
             map_id="samplemap",
             x=spawn_x,
             y=spawn_y,
@@ -152,6 +155,7 @@ class TestCombatIntegration:
         # Spawn entity far away
         instance_id = await gsm.spawn_entity_instance(
             entity_name="GOBLIN",
+            entity_type=EntityType.MONSTER,
             map_id="samplemap",
             x=spawn_x,
             y=spawn_y,
@@ -187,6 +191,7 @@ class TestCombatIntegration:
         # Spawn entity adjacent to player
         instance_id = await gsm.spawn_entity_instance(
             entity_name="GOBLIN",
+            entity_type=EntityType.MONSTER,
             map_id="samplemap",
             x=spawn_x,
             y=spawn_y,
@@ -229,6 +234,7 @@ class TestCombatIntegration:
         # Spawn entity adjacent to player
         instance_id = await gsm.spawn_entity_instance(
             entity_name="GOBLIN",
+            entity_type=EntityType.MONSTER,
             map_id="samplemap",
             x=spawn_x,
             y=spawn_y,

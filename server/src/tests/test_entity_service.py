@@ -10,24 +10,29 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from server.src.services.entity_service import EntityService
 from server.src.services.game_state_manager import GameStateManager
-from server.src.core.entities import EntityID, EntityDefinition, EntityBehavior
+from server.src.core.entities import EntityBehavior
+from server.src.core.humanoids import HumanoidID, HumanoidDefinition
+from server.src.core.monsters import MonsterID, MonsterDefinition
+from server.src.core.appearance import AppearanceData
 from server.src.core.skills import SkillType
+from server.src.core.items import EquipmentSlot, ItemType
 
 
-class TestEntityDefToDict:
-    """Tests for EntityService._entity_def_to_dict()"""
+class TestMonsterDefToDict:
+    """Tests for EntityService.entity_def_to_dict() with MonsterDefinition"""
 
-    def test_converts_basic_entity_definition(self):
-        """Test that basic entity fields are converted correctly."""
-        entity_def = EntityDefinition(
+    def test_converts_basic_monster_definition(self):
+        """Test that basic monster fields are converted correctly."""
+        monster_def = MonsterDefinition(
             display_name="Test Monster",
             description="A test monster for unit testing",
             behavior=EntityBehavior.AGGRESSIVE,
         )
         
-        result = EntityService._entity_def_to_dict("TEST_MONSTER", entity_def)
+        result = EntityService.entity_def_to_dict("TEST_MONSTER", monster_def)
         
         assert result["name"] == "TEST_MONSTER"
+        assert result["entity_type"] == "monster"
         assert result["display_name"] == "Test Monster"
         assert result["description"] == "A test monster for unit testing"
         assert result["behavior"] == "aggressive"
@@ -35,20 +40,20 @@ class TestEntityDefToDict:
 
     def test_converts_behavior_enum_to_value(self):
         """Test that EntityBehavior enum is serialized to its string value."""
-        for behavior in EntityBehavior:
-            entity_def = EntityDefinition(
+        for behavior in [EntityBehavior.AGGRESSIVE, EntityBehavior.PASSIVE, EntityBehavior.NEUTRAL]:
+            monster_def = MonsterDefinition(
                 display_name="Test",
                 description="Test",
                 behavior=behavior,
             )
             
-            result = EntityService._entity_def_to_dict("TEST", entity_def)
+            result = EntityService.entity_def_to_dict("TEST", monster_def)
             
             assert result["behavior"] == behavior.value
 
     def test_serializes_skills_dict(self):
         """Test that skills dict is properly serialized with lowercase keys."""
-        entity_def = EntityDefinition(
+        monster_def = MonsterDefinition(
             display_name="Skilled Monster",
             description="Has skills",
             behavior=EntityBehavior.AGGRESSIVE,
@@ -59,7 +64,7 @@ class TestEntityDefToDict:
             },
         )
         
-        result = EntityService._entity_def_to_dict("SKILLED_MONSTER", entity_def)
+        result = EntityService.entity_def_to_dict("SKILLED_MONSTER", monster_def)
         
         assert "skills" in result
         assert result["skills"]["attack"] == 10
@@ -68,7 +73,7 @@ class TestEntityDefToDict:
 
     def test_serializes_all_stat_bonuses(self):
         """Test that all combat stat bonuses are included in output."""
-        entity_def = EntityDefinition(
+        monster_def = MonsterDefinition(
             display_name="Strong Monster",
             description="Has stat bonuses",
             behavior=EntityBehavior.AGGRESSIVE,
@@ -83,7 +88,7 @@ class TestEntityDefToDict:
             speed_bonus=2,
         )
         
-        result = EntityService._entity_def_to_dict("STRONG_MONSTER", entity_def)
+        result = EntityService.entity_def_to_dict("STRONG_MONSTER", monster_def)
         
         assert result["attack_bonus"] == 10
         assert result["strength_bonus"] == 15
@@ -97,43 +102,26 @@ class TestEntityDefToDict:
 
     def test_handles_visual_properties(self):
         """Test that visual properties are included."""
-        entity_def = EntityDefinition(
+        monster_def = MonsterDefinition(
             display_name="Big Monster",
             description="A large monster",
             behavior=EntityBehavior.NEUTRAL,
-            sprite_name="big_monster",
+            sprite_sheet_id="big_monster",
             width=2,
             height=3,
             scale=1.5,
         )
         
-        result = EntityService._entity_def_to_dict("BIG_MONSTER", entity_def)
+        result = EntityService.entity_def_to_dict("BIG_MONSTER", monster_def)
         
-        assert result["sprite_name"] == "big_monster"
+        assert result["sprite_sheet_id"] == "big_monster"
         assert result["width"] == 2
         assert result["height"] == 3
         assert result["scale"] == 1.5
 
-    def test_handles_optional_fields(self):
-        """Test that optional fields (dialogue, shop_id) are included."""
-        entity_def = EntityDefinition(
-            display_name="Merchant NPC",
-            description="Sells items",
-            behavior=EntityBehavior.MERCHANT,
-            is_attackable=False,
-            dialogue=["Hello, traveler!", "Would you like to trade?"],
-            shop_id="general_store",
-        )
-        
-        result = EntityService._entity_def_to_dict("MERCHANT_NPC", entity_def)
-        
-        assert result["is_attackable"] is False
-        assert result["dialogue"] == ["Hello, traveler!", "Would you like to trade?"]
-        assert result["shop_id"] == "general_store"
-
     def test_handles_combat_and_respawn_properties(self):
         """Test level, XP reward, aggro radius, and respawn time."""
-        entity_def = EntityDefinition(
+        monster_def = MonsterDefinition(
             display_name="Boss Monster",
             description="A powerful boss",
             behavior=EntityBehavior.AGGRESSIVE,
@@ -144,7 +132,7 @@ class TestEntityDefToDict:
             respawn_time=300,
         )
         
-        result = EntityService._entity_def_to_dict("BOSS_MONSTER", entity_def)
+        result = EntityService.entity_def_to_dict("BOSS_MONSTER", monster_def)
         
         assert result["level"] == 50
         assert result["xp_reward"] == 1000
@@ -154,31 +142,118 @@ class TestEntityDefToDict:
 
     def test_max_hp_from_hitpoints_skill(self):
         """Test that max_hp is calculated from hitpoints skill."""
-        entity_def = EntityDefinition(
+        monster_def = MonsterDefinition(
             display_name="HP Monster",
             description="Has HP",
             behavior=EntityBehavior.PASSIVE,
             skills={SkillType.HITPOINTS: 75},
         )
         
-        result = EntityService._entity_def_to_dict("HP_MONSTER", entity_def)
+        result = EntityService.entity_def_to_dict("HP_MONSTER", monster_def)
         
-        # max_hp is a property, so it should be included
         assert result["max_hp"] == 75
 
     def test_default_max_hp_when_no_hitpoints_skill(self):
         """Test default max_hp when hitpoints skill is not defined."""
-        entity_def = EntityDefinition(
+        monster_def = MonsterDefinition(
             display_name="Default HP Monster",
             description="No HP skill",
             behavior=EntityBehavior.PASSIVE,
             skills={},
         )
         
-        result = EntityService._entity_def_to_dict("DEFAULT_HP_MONSTER", entity_def)
+        result = EntityService.entity_def_to_dict("DEFAULT_HP_MONSTER", monster_def)
         
-        # Default is 10 when hitpoints skill not defined
         assert result["max_hp"] == 10
+
+
+class TestHumanoidDefToDict:
+    """Tests for EntityService.entity_def_to_dict() with HumanoidDefinition"""
+
+    def test_converts_basic_humanoid_definition(self):
+        """Test that basic humanoid fields are converted correctly."""
+        humanoid_def = HumanoidDefinition(
+            display_name="Test NPC",
+            description="A test NPC for unit testing",
+            behavior=EntityBehavior.MERCHANT,
+            is_attackable=False,
+        )
+        
+        result = EntityService.entity_def_to_dict("TEST_NPC", humanoid_def)
+        
+        assert result["name"] == "TEST_NPC"
+        assert result["entity_type"] == "humanoid_npc"
+        assert result["display_name"] == "Test NPC"
+        assert result["description"] == "A test NPC for unit testing"
+        assert result["behavior"] == "merchant"
+        assert result["is_attackable"] is False
+
+    def test_humanoid_with_appearance(self):
+        """Test that appearance data is serialized."""
+        appearance = AppearanceData(
+            skin_tone=2,
+            hair_style="long",
+            hair_color="#FF5500",
+            body_type="muscular",
+        )
+        humanoid_def = HumanoidDefinition(
+            display_name="Styled NPC",
+            description="Has custom appearance",
+            behavior=EntityBehavior.QUEST_GIVER,
+            appearance=appearance,
+        )
+        
+        result = EntityService.entity_def_to_dict("STYLED_NPC", humanoid_def)
+        
+        assert result["appearance"] == {
+            "skin_tone": 2,
+            "hair_style": "long",
+            "hair_color": "#FF5500",
+            "body_type": "muscular",
+        }
+
+    def test_humanoid_with_equipment(self):
+        """Test that equipped items are serialized."""
+        humanoid_def = HumanoidDefinition(
+            display_name="Armed Guard",
+            description="Has equipment",
+            behavior=EntityBehavior.GUARD,
+            equipped_items={
+                EquipmentSlot.WEAPON: ItemType.IRON_SWORD,
+                EquipmentSlot.BODY: ItemType.BRONZE_PLATEBODY,
+            },
+        )
+        
+        result = EntityService.entity_def_to_dict("ARMED_GUARD", humanoid_def)
+        
+        assert result["equipped_items"]["weapon"] == "IRON_SWORD"
+        assert result["equipped_items"]["body"] == "BRONZE_PLATEBODY"
+
+    def test_humanoid_with_dialogue(self):
+        """Test that dialogue is serialized."""
+        humanoid_def = HumanoidDefinition(
+            display_name="Talkative NPC",
+            description="Has dialogue",
+            behavior=EntityBehavior.QUEST_GIVER,
+            dialogue=["Hello, traveler!", "I have a quest for you."],
+        )
+        
+        result = EntityService.entity_def_to_dict("TALKATIVE_NPC", humanoid_def)
+        
+        assert result["dialogue"] == ["Hello, traveler!", "I have a quest for you."]
+
+    def test_humanoid_with_shop(self):
+        """Test that shop_id is serialized."""
+        humanoid_def = HumanoidDefinition(
+            display_name="Shopkeeper",
+            description="Runs a shop",
+            behavior=EntityBehavior.MERCHANT,
+            shop_id="weapon_shop",
+        )
+        
+        result = EntityService.entity_def_to_dict("SHOPKEEPER", humanoid_def)
+        
+        assert result["shop_id"] == "weapon_shop"
 
 
 class TestSyncEntitiesToDb:
@@ -188,7 +263,6 @@ class TestSyncEntitiesToDb:
     async def test_sync_entities_calls_gsm(self, gsm: GameStateManager):
         """Test that sync_entities_to_db calls GSM's sync method."""
         with patch.object(gsm, 'sync_entities_to_database', new_callable=AsyncMock) as mock_sync:
-            # Patch get_game_state_manager to return our test GSM
             with patch('server.src.services.entity_service.get_game_state_manager', return_value=gsm):
                 await EntityService.sync_entities_to_db()
                 
@@ -197,7 +271,6 @@ class TestSyncEntitiesToDb:
     @pytest.mark.asyncio
     async def test_sync_entities_to_db_integration(self, gsm: GameStateManager, session):
         """Test full sync of entities to database."""
-        # This is an integration test that verifies entities are synced
         with patch('server.src.services.entity_service.get_game_state_manager', return_value=gsm):
             await EntityService.sync_entities_to_db()
         
@@ -208,33 +281,60 @@ class TestSyncEntitiesToDb:
         result = await session.execute(select(Entity).limit(5))
         entities = result.scalars().all()
         
-        # Should have synced entities from EntityID enum
+        # Should have synced entities from HumanoidID and MonsterID enums
         assert len(entities) > 0
 
 
 class TestEntityServiceWithRealEntities:
-    """Tests using real EntityID definitions."""
+    """Tests using real HumanoidID and MonsterID definitions."""
 
-    def test_goblin_entity_conversion(self):
-        """Test converting the GOBLIN entity definition."""
-        goblin_def = EntityID.GOBLIN.value
+    def test_goblin_monster_conversion(self):
+        """Test converting the GOBLIN monster definition."""
+        goblin_def = MonsterID.GOBLIN.value
         
-        result = EntityService._entity_def_to_dict("GOBLIN", goblin_def)
+        result = EntityService.entity_def_to_dict("GOBLIN", goblin_def)
         
         assert result["name"] == "GOBLIN"
+        assert result["entity_type"] == "monster"
         assert result["display_name"] == "Goblin"
         assert result["behavior"] == "aggressive"
         assert "skills" in result
 
-    def test_all_entity_ids_can_be_converted(self):
-        """Test that all EntityID enums can be converted to dict."""
-        for entity_id in EntityID:
-            entity_def = entity_id.value
+    def test_village_guard_humanoid_conversion(self):
+        """Test converting the VILLAGE_GUARD humanoid definition."""
+        guard_def = HumanoidID.VILLAGE_GUARD.value
+        
+        result = EntityService.entity_def_to_dict("VILLAGE_GUARD", guard_def)
+        
+        assert result["name"] == "VILLAGE_GUARD"
+        assert result["entity_type"] == "humanoid_npc"
+        assert result["display_name"] == "Village Guard"
+        assert result["behavior"] == "guard"
+        assert result["appearance"] is not None
+        assert result["equipped_items"] is not None
+
+    def test_all_monster_ids_can_be_converted(self):
+        """Test that all MonsterID enums can be converted to dict."""
+        for monster_id in MonsterID:
+            monster_def = monster_id.value
             
-            # Should not raise any exceptions
-            result = EntityService._entity_def_to_dict(entity_id.name, entity_def)
+            result = EntityService.entity_def_to_dict(monster_id.name, monster_def)
             
-            assert result["name"] == entity_id.name
+            assert result["name"] == monster_id.name
+            assert result["entity_type"] == "monster"
+            assert "display_name" in result
+            assert "behavior" in result
+            assert "skills" in result
+
+    def test_all_humanoid_ids_can_be_converted(self):
+        """Test that all HumanoidID enums can be converted to dict."""
+        for humanoid_id in HumanoidID:
+            humanoid_def = humanoid_id.value
+            
+            result = EntityService.entity_def_to_dict(humanoid_id.name, humanoid_def)
+            
+            assert result["name"] == humanoid_id.name
+            assert result["entity_type"] == "humanoid_npc"
             assert "display_name" in result
             assert "behavior" in result
             assert "skills" in result

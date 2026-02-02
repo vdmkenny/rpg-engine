@@ -168,6 +168,10 @@ class ItemDefinition:
 
     All stat bonuses default to 0 and can be negative for balance tradeoffs.
     For example, heavy metal armor may have negative magic attack bonus.
+    
+    Sprite IDs:
+        icon_sprite_id: Sprite for inventory/ground display (all items should have this)
+        equipped_sprite_id: Sprite layer for paperdoll rendering (equipable items only)
     """
 
     display_name: str
@@ -184,6 +188,10 @@ class ItemDefinition:
     ammo_type: Optional[AmmoType] = None
     value: int = 0
     is_tradeable: bool = True
+    
+    # Sprite identifiers for rendering
+    icon_sprite_id: Optional[str] = None  # Inventory/ground icon sprite
+    equipped_sprite_id: Optional[str] = None  # Paperdoll layer sprite (equipable items only)
 
     # Combat stats (offensive)
     attack_bonus: int = 0
@@ -236,6 +244,8 @@ class ItemType(Enum):
         attack_bonus=4,
         strength_bonus=3,
         attack_speed=3.0,
+        icon_sprite_id="icon_bronze_sword",
+        equipped_sprite_id="equip_bronze_sword",
     )
 
     IRON_SWORD = ItemDefinition(
@@ -250,6 +260,8 @@ class ItemType(Enum):
         attack_bonus=10,
         strength_bonus=7,
         attack_speed=3.0,
+        icon_sprite_id="icon_iron_sword",
+        equipped_sprite_id="equip_iron_sword",
     )
 
     BRONZE_2H_SWORD = ItemDefinition(
@@ -265,6 +277,8 @@ class ItemType(Enum):
         attack_bonus=6,
         strength_bonus=8,
         attack_speed=3.6,
+        icon_sprite_id="icon_bronze_2h_sword",
+        equipped_sprite_id="equip_bronze_2h_sword",
     )
 
     # =========================================================================
@@ -283,6 +297,8 @@ class ItemType(Enum):
         ranged_attack_bonus=4,
         ranged_strength_bonus=3,
         attack_speed=2.4,
+        icon_sprite_id="icon_shortbow",
+        equipped_sprite_id="equip_shortbow",
     )
 
     OAK_SHORTBOW = ItemDefinition(
@@ -298,6 +314,8 @@ class ItemType(Enum):
         ranged_attack_bonus=10,
         ranged_strength_bonus=6,
         attack_speed=2.4,
+        icon_sprite_id="icon_oak_shortbow",
+        equipped_sprite_id="equip_oak_shortbow",
     )
 
     # =========================================================================
@@ -315,6 +333,8 @@ class ItemType(Enum):
         physical_defence_bonus=3,
         magic_defence_bonus=1,
         magic_attack_bonus=-1,  # Metal interferes with magic
+        icon_sprite_id="icon_bronze_helmet",
+        equipped_sprite_id="equip_bronze_helmet",
     )
 
     BRONZE_PLATEBODY = ItemDefinition(
@@ -331,6 +351,8 @@ class ItemType(Enum):
         health_bonus=5,
         magic_attack_bonus=-3,  # Heavy metal reduces magic ability
         speed_bonus=-1,  # Heavy armor slows movement
+        icon_sprite_id="icon_bronze_platebody",
+        equipped_sprite_id="equip_bronze_platebody",
     )
 
     BRONZE_PLATELEGS = ItemDefinition(
@@ -345,6 +367,8 @@ class ItemType(Enum):
         physical_defence_bonus=5,
         magic_defence_bonus=1,
         magic_attack_bonus=-2,  # Metal interferes with magic
+        icon_sprite_id="icon_bronze_platelegs",
+        equipped_sprite_id="equip_bronze_platelegs",
     )
 
     BRONZE_BOOTS = ItemDefinition(
@@ -358,6 +382,8 @@ class ItemType(Enum):
         value=12,
         physical_defence_bonus=1,
         magic_attack_bonus=-1,  # Metal interferes with magic
+        icon_sprite_id="icon_bronze_boots",
+        equipped_sprite_id="equip_bronze_boots",
     )
 
     BRONZE_GLOVES = ItemDefinition(
@@ -371,6 +397,8 @@ class ItemType(Enum):
         value=10,
         physical_defence_bonus=1,
         magic_attack_bonus=-1,  # Metal interferes with magic
+        icon_sprite_id="icon_bronze_gloves",
+        equipped_sprite_id="equip_bronze_gloves",
     )
 
     BRONZE_SHIELD = ItemDefinition(
@@ -385,6 +413,8 @@ class ItemType(Enum):
         physical_defence_bonus=4,
         magic_defence_bonus=1,
         magic_attack_bonus=-2,  # Metal interferes with magic
+        icon_sprite_id="icon_bronze_shield",
+        equipped_sprite_id="equip_bronze_shield",
     )
 
     # =========================================================================
@@ -402,6 +432,8 @@ class ItemType(Enum):
         physical_defence_bonus=4,
         magic_defence_bonus=4,
         ranged_attack_bonus=2,  # Good for archers
+        icon_sprite_id="icon_leather_body",
+        equipped_sprite_id="equip_leather_body",
     )
 
     LEATHER_CHAPS = ItemDefinition(
@@ -416,6 +448,8 @@ class ItemType(Enum):
         physical_defence_bonus=2,
         magic_defence_bonus=2,
         ranged_attack_bonus=1,  # Good for archers
+        icon_sprite_id="icon_leather_chaps",
+        equipped_sprite_id="equip_leather_chaps",
     )
 
     # =========================================================================
@@ -434,6 +468,8 @@ class ItemType(Enum):
         attack_bonus=2,  # Can be used as weak weapon
         strength_bonus=1,
         attack_speed=3.6,
+        icon_sprite_id="icon_bronze_pickaxe",
+        equipped_sprite_id="equip_bronze_pickaxe",
     )
 
     IRON_PICKAXE = ItemDefinition(
@@ -449,6 +485,8 @@ class ItemType(Enum):
         attack_bonus=4,
         strength_bonus=2,
         attack_speed=3.6,
+        icon_sprite_id="icon_iron_pickaxe",
+        equipped_sprite_id="equip_iron_pickaxe",
     )
 
     BRONZE_AXE = ItemDefinition(
@@ -464,6 +502,8 @@ class ItemType(Enum):
         attack_bonus=3,  # Better weapon than pickaxe
         strength_bonus=2,
         attack_speed=3.6,
+        icon_sprite_id="icon_bronze_axe",
+        equipped_sprite_id="equip_bronze_axe",
     )
 
     IRON_AXE = ItemDefinition(
@@ -479,6 +519,8 @@ class ItemType(Enum):
         attack_bonus=6,
         strength_bonus=4,
         attack_speed=3.6,
+        icon_sprite_id="icon_iron_axe",
+        equipped_sprite_id="equip_iron_axe",
     )
 
     FISHING_NET = ItemDefinition(
@@ -491,6 +533,8 @@ class ItemType(Enum):
         required_level=1,
         value=10,
         fishing_bonus=3,
+        icon_sprite_id="icon_fishing_net",
+        equipped_sprite_id="equip_fishing_net",
     )
 
     FISHING_ROD = ItemDefinition(
@@ -503,6 +547,8 @@ class ItemType(Enum):
         required_level=5,
         value=20,
         fishing_bonus=5,
+        icon_sprite_id="icon_fishing_rod",
+        equipped_sprite_id="equip_fishing_rod",
     )
 
     # =========================================================================
@@ -514,6 +560,7 @@ class ItemType(Enum):
         category=ItemCategory.MATERIAL,
         max_stack_size=STACK_SIZE_MATERIALS,
         value=5,
+        icon_sprite_id="icon_copper_ore",
     )
 
     TIN_ORE = ItemDefinition(
@@ -522,6 +569,7 @@ class ItemType(Enum):
         category=ItemCategory.MATERIAL,
         max_stack_size=STACK_SIZE_MATERIALS,
         value=5,
+        icon_sprite_id="icon_tin_ore",
     )
 
     BRONZE_BAR = ItemDefinition(
@@ -530,6 +578,7 @@ class ItemType(Enum):
         category=ItemCategory.MATERIAL,
         max_stack_size=STACK_SIZE_MATERIALS,
         value=15,
+        icon_sprite_id="icon_bronze_bar",
     )
 
     IRON_ORE = ItemDefinition(
@@ -538,6 +587,7 @@ class ItemType(Enum):
         category=ItemCategory.MATERIAL,
         max_stack_size=STACK_SIZE_MATERIALS,
         value=12,
+        icon_sprite_id="icon_iron_ore",
     )
 
     IRON_BAR = ItemDefinition(
@@ -546,6 +596,7 @@ class ItemType(Enum):
         category=ItemCategory.MATERIAL,
         max_stack_size=STACK_SIZE_MATERIALS,
         value=30,
+        icon_sprite_id="icon_iron_bar",
     )
 
     OAK_LOGS = ItemDefinition(
@@ -554,6 +605,7 @@ class ItemType(Enum):
         category=ItemCategory.MATERIAL,
         max_stack_size=STACK_SIZE_MATERIALS,
         value=10,
+        icon_sprite_id="icon_oak_logs",
     )
 
     WILLOW_LOGS = ItemDefinition(
@@ -562,6 +614,7 @@ class ItemType(Enum):
         category=ItemCategory.MATERIAL,
         max_stack_size=STACK_SIZE_MATERIALS,
         value=20,
+        icon_sprite_id="icon_willow_logs",
     )
 
     RAW_SHRIMP = ItemDefinition(
@@ -571,6 +624,7 @@ class ItemType(Enum):
         rarity=ItemRarity.POOR,
         max_stack_size=STACK_SIZE_MATERIALS,
         value=3,
+        icon_sprite_id="icon_raw_shrimp",
     )
 
     RAW_TROUT = ItemDefinition(
@@ -579,6 +633,7 @@ class ItemType(Enum):
         category=ItemCategory.MATERIAL,
         max_stack_size=STACK_SIZE_MATERIALS,
         value=15,
+        icon_sprite_id="icon_raw_trout",
     )
 
     # =========================================================================
@@ -591,6 +646,7 @@ class ItemType(Enum):
         rarity=ItemRarity.POOR,
         max_stack_size=STACK_SIZE_CONSUMABLES,
         value=5,
+        icon_sprite_id="icon_cooked_shrimp",
     )
 
     COOKED_TROUT = ItemDefinition(
@@ -599,6 +655,7 @@ class ItemType(Enum):
         category=ItemCategory.CONSUMABLE,
         max_stack_size=STACK_SIZE_CONSUMABLES,
         value=25,
+        icon_sprite_id="icon_cooked_trout",
     )
 
     BREAD = ItemDefinition(
@@ -608,6 +665,7 @@ class ItemType(Enum):
         rarity=ItemRarity.POOR,
         max_stack_size=STACK_SIZE_CONSUMABLES,
         value=8,
+        icon_sprite_id="icon_bread",
     )
 
     # =========================================================================
@@ -622,6 +680,8 @@ class ItemType(Enum):
         ammo_type=AmmoType.ARROWS,
         value=1,
         ranged_strength_bonus=1,
+        icon_sprite_id="icon_bronze_arrows",
+        equipped_sprite_id="equip_bronze_arrows",
     )
 
     IRON_ARROWS = ItemDefinition(
@@ -633,6 +693,8 @@ class ItemType(Enum):
         ammo_type=AmmoType.ARROWS,
         value=3,
         ranged_strength_bonus=3,
+        icon_sprite_id="icon_iron_arrows",
+        equipped_sprite_id="equip_iron_arrows",
     )
 
     # =========================================================================
@@ -644,6 +706,7 @@ class ItemType(Enum):
         category=ItemCategory.CURRENCY,
         max_stack_size=STACK_SIZE_CURRENCY,
         value=1,
+        icon_sprite_id="icon_gold_coins",
     )
 
     # =========================================================================

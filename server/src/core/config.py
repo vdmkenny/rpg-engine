@@ -223,6 +223,33 @@ class Settings(BaseSettings):
         game_config.get("game", {}).get("death", {}).get("respawn_delay", 5.0)
     )
 
+    # Entity AI settings from config.yml
+    ENTITY_AI_ENABLED: bool = game_config.get("game", {}).get("entity_ai", {}).get("enabled", True)
+    ENTITY_AI_WANDER_INTERVAL: int = int(
+        game_config.get("game", {}).get("entity_ai", {}).get("wander_interval_ticks", 40)
+    )
+    ENTITY_AI_CHASE_INTERVAL: int = int(
+        game_config.get("game", {}).get("entity_ai", {}).get("chase_interval_ticks", 10)
+    )
+    ENTITY_AI_ATTACK_INTERVAL: int = int(
+        game_config.get("game", {}).get("entity_ai", {}).get("attack_interval_ticks", 60)
+    )
+    ENTITY_AI_AGGRO_CHECK_INTERVAL: int = int(
+        game_config.get("game", {}).get("entity_ai", {}).get("aggro_check_interval_ticks", 5)
+    )
+    ENTITY_AI_LOS_TIMEOUT: int = int(
+        game_config.get("game", {}).get("entity_ai", {}).get("los_timeout_ticks", 100)
+    )
+    ENTITY_AI_MAX_PATHFINDING_DISTANCE: int = int(
+        game_config.get("game", {}).get("entity_ai", {}).get("max_pathfinding_distance", 50)
+    )
+    ENTITY_AI_IDLE_MIN: int = int(
+        game_config.get("game", {}).get("entity_ai", {}).get("idle_to_wander_min_ticks", 20)
+    )
+    ENTITY_AI_IDLE_MAX: int = int(
+        game_config.get("game", {}).get("entity_ai", {}).get("idle_to_wander_max_ticks", 100)
+    )
+
     # Database settings
     DATABASE_ECHO: bool = os.getenv("DATABASE_ECHO", "").lower() in ("true", "1", "yes")
     

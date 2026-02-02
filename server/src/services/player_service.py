@@ -551,3 +551,44 @@ class PlayerService:
                 }
             )
             raise
+
+    @staticmethod
+    async def get_players_on_map(map_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all online players on a specific map with their positions.
+        
+        Used by AI system to check for nearby players within aggro range.
+        
+        Args:
+            map_id: Map identifier
+            
+        Returns:
+            List of dicts with player_id, username, x, y for each online player on the map
+        """
+        from .connection_service import ConnectionService
+        
+        state_manager = get_game_state_manager()
+        online_player_ids = ConnectionService.get_online_player_ids()
+        
+        players_on_map: List[Dict[str, Any]] = []
+        
+        for player_id in online_player_ids:
+            position = await state_manager.get_player_position(player_id)
+            if not position:
+                continue
+            
+            # Check if player is on the requested map
+            if position.get("map_id") != map_id:
+                continue
+            
+            # Get username
+            username = await PlayerService.get_username_by_player_id(player_id)
+            
+            players_on_map.append({
+                "player_id": player_id,
+                "username": username,
+                "x": position.get("x"),
+                "y": position.get("y"),
+            })
+        
+        return players_on_map

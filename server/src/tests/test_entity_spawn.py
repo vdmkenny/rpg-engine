@@ -6,7 +6,9 @@ import pytest
 import pytest_asyncio
 from unittest.mock import Mock, AsyncMock, patch
 from server.src.services.entity_spawn_service import EntitySpawnService
-from server.src.core.entities import EntityID
+from server.src.core.entities import get_entity_by_name
+from server.src.core.monsters import MonsterID
+from server.src.core.humanoids import HumanoidID
 
 
 class FakeValkey:
@@ -96,6 +98,7 @@ class FakeGSM:
     async def spawn_entity_instance(
         self,
         entity_name,
+        entity_type,
         map_id,
         x,
         y,
@@ -114,6 +117,7 @@ class FakeGSM:
         self.entity_instances[instance_id] = {
             "id": instance_id,
             "entity_name": entity_name,
+            "entity_type": entity_type.value if hasattr(entity_type, 'value') else entity_type,
             "map_id": map_id,
             "x": x,
             "y": y,
@@ -189,7 +193,7 @@ class TestEntitySpawnService:
         assert entity["spawn_y"] == 15
         assert entity["wander_radius"] == 5
         assert entity["state"] == "idle"
-        assert entity["max_hp"] == EntityID.GOBLIN.value.max_hp
+        assert entity["max_hp"] == MonsterID.GOBLIN.value.max_hp
     
     async def test_spawn_single_entity_with_overrides(self):
         """Test spawning entity with aggro/disengage overrides."""

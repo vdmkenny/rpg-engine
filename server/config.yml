@@ -72,6 +72,27 @@ game:
     # Ticks before entity despawns after death (10 ticks = 0.5s @ 20 TPS)
     death_animation_ticks: 10
 
+  # Entity AI configuration
+  entity_ai:
+    # Enable/disable entity AI processing
+    enabled: true
+    # Ticks between wander movements (40 ticks = 2 seconds @ 20 TPS)
+    wander_interval_ticks: 40
+    # Ticks between chase movements (10 ticks = 0.5 seconds @ 20 TPS)
+    chase_interval_ticks: 10
+    # Base ticks between entity attacks (60 ticks = 3 seconds @ 20 TPS)
+    attack_interval_ticks: 60
+    # Ticks between aggro scans (5 ticks = 0.25 seconds @ 20 TPS)
+    aggro_check_interval_ticks: 5
+    # Ticks without LOS before entity loses aggro (100 ticks = 5 seconds @ 20 TPS)
+    los_timeout_ticks: 100
+    # Maximum A* pathfinding search distance (tiles)
+    max_pathfinding_distance: 50
+    # Minimum idle time before wandering (ticks)
+    idle_to_wander_min_ticks: 20
+    # Maximum idle time before wandering (ticks)
+    idle_to_wander_max_ticks: 100
+
   # Authentication/session configuration
   auth:
     # How long access tokens are valid (in minutes)

@@ -28,7 +28,7 @@ from .atomic_operations import GSMAtomicOperations
 if TYPE_CHECKING:
     from server.src.core.skills import SkillType
     from server.src.core.items import EquipmentSlot  
-    from server.src.core.entities import EntityState
+    from server.src.core.entities import EntityState, EntityType
     from common.src.protocol import CombatTargetType, PlayerSettingKey  
 
 
@@ -197,10 +197,11 @@ class GameStateManager:
     
     async def sync_entities_to_database(self) -> None:
         """
-        Sync EntityID enum definitions to the 'entities' database table.
+        Sync HumanoidID and MonsterID enum definitions to the 'entities' database table.
         Mirroring the pattern used for Items.
         """
-        from server.src.core.entities import EntityID
+        from server.src.core.humanoids import HumanoidID
+        from server.src.core.monsters import MonsterID
         from server.src.services.entity_service import EntityService
 
         logger.info("Syncing entities to database...")
@@ -214,12 +215,32 @@ class GameStateManager:
             from sqlalchemy.dialects.postgresql import insert
             
             count = 0
-            for entity_enum in EntityID:
-                entity_def = entity_enum.value
-                entity_name = entity_enum.name
+            
+            # Sync humanoid NPCs
+            for humanoid_enum in HumanoidID:
+                humanoid_def = humanoid_enum.value
+                humanoid_name = humanoid_enum.name
                 
                 # Convert definition to dict
-                entity_data = EntityService._entity_def_to_dict(entity_name, entity_def)
+                entity_data = EntityService.entity_def_to_dict(humanoid_name, humanoid_def)
+                
+                # Upsert
+                stmt = insert(Entity).values(**entity_data)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=['name'],
+                    set_=entity_data
+                )
+                
+                await db.execute(stmt)
+                count += 1
+            
+            # Sync monsters
+            for monster_enum in MonsterID:
+                monster_def = monster_enum.value
+                monster_name = monster_enum.name
+                
+                # Convert definition to dict
+                entity_data = EntityService.entity_def_to_dict(monster_name, monster_def)
                 
                 # Upsert
                 stmt = insert(Entity).values(**entity_data)
@@ -733,6 +754,12 @@ class GameStateManager:
             # Convert numeric fields (excluding player_id which should remain as string for consistency)
             if field_str in ["x", "y", "current_hp", "max_hp"]:
                 state[field_str] = int(value_str) if value_str.isdigit() else 0
+            elif field_str == "appearance":
+                # Parse appearance JSON
+                try:
+                    state[field_str] = json.loads(value_str)
+                except json.JSONDecodeError:
+                    state[field_str] = None
             else:
                 state[field_str] = value_str
         
@@ -1121,6 +1148,11 @@ class GameStateManager:
                     player_id, player.x_coord, player.y_coord, player.map_id,
                     player.current_hp, player.current_hp  # Using current HP for max HP calculation
                 )
+                
+                # Store appearance in Valkey for visibility system
+                if player.appearance:
+                    key = PLAYER_KEY.format(player_id=player_id)
+                    await self._valkey.hset(key, {"appearance": json.dumps(player.appearance)})
                 
                 # Load inventory
                 inv_stmt = select(PlayerInventory).where(PlayerInventory.player_id == player_id)
@@ -1728,6 +1760,7 @@ class GameStateManager:
     async def spawn_entity_instance(
         self,
         entity_name: str,
+        entity_type: "EntityType",
         map_id: str,
         x: int,
         y: int,
@@ -1743,7 +1776,8 @@ class GameStateManager:
         Spawn a new entity instance.
         
         Args:
-            entity_name: Entity type name (e.g., "GOBLIN")
+            entity_name: Entity type name (e.g., "GOBLIN", "VILLAGE_GUARD")
+            entity_type: EntityType enum (HUMANOID_NPC or MONSTER)
             map_id: Map identifier
             x, y: Current tile position
             spawn_x, spawn_y: Original spawn position
@@ -1766,6 +1800,7 @@ class GameStateManager:
         entity_data = {
             "id": str(instance_id),
             "entity_name": entity_name,
+            "entity_type": entity_type.value,
             "map_id": map_id,
             "x": str(x),
             "y": str(y),

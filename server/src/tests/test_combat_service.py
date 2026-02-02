@@ -217,6 +217,42 @@ class TestCombatCalculations:
         
         # Hitpoints gets 4/3 XP per damage
         assert xp_rewards[SkillType.HITPOINTS] == int(damage * 4 / 3)
+    
+    def test_calculate_defensive_xp_on_miss(self):
+        """Test defensive XP when attack misses (player dodges)"""
+        xp_rewards = CombatService.calculate_defensive_xp(did_hit=False, damage_taken=0)
+        
+        assert SkillType.DEFENCE in xp_rewards
+        assert xp_rewards[SkillType.DEFENCE] == 2
+        # Should not get hitpoints XP on a miss
+        assert SkillType.HITPOINTS not in xp_rewards
+    
+    def test_calculate_defensive_xp_on_hit(self):
+        """Test defensive XP when attack hits (player takes damage)"""
+        damage = 6
+        xp_rewards = CombatService.calculate_defensive_xp(did_hit=True, damage_taken=damage)
+        
+        # Should get hitpoints XP for enduring damage
+        assert SkillType.HITPOINTS in xp_rewards
+        assert xp_rewards[SkillType.HITPOINTS] == damage // 3  # 6 // 3 = 2
+        # Should not get defence XP when hit
+        assert SkillType.DEFENCE not in xp_rewards
+    
+    def test_calculate_defensive_xp_minimum_hp_xp(self):
+        """Test defensive XP has minimum of 1 HP XP on hit"""
+        damage = 1  # Low damage
+        xp_rewards = CombatService.calculate_defensive_xp(did_hit=True, damage_taken=damage)
+        
+        # 1 // 3 = 0, but should be at least 1
+        assert SkillType.HITPOINTS in xp_rewards
+        assert xp_rewards[SkillType.HITPOINTS] == 1
+    
+    def test_calculate_defensive_xp_zero_damage_hit(self):
+        """Test defensive XP when hit but zero damage (e.g., 0 hit)"""
+        xp_rewards = CombatService.calculate_defensive_xp(did_hit=True, damage_taken=0)
+        
+        # No XP for zero damage hits
+        assert len(xp_rewards) == 0
 
 
 @pytest.mark.asyncio
@@ -334,29 +370,18 @@ class TestCombatService:
                 "map_id": "samplemap"
             })
             
-            # Mock entity definition
-            with patch('server.src.services.combat_service.EntityID.from_name') as mock_from_name:
-                mock_entity_def = MagicMock()
-                mock_entity_def.skills = {
-                    SkillType.ATTACK: 5,
-                    SkillType.STRENGTH: 5,
-                    SkillType.DEFENCE: 1
-                }
-                mock_entity_def.attack_bonus = 0
-                mock_entity_def.strength_bonus = 0
-                mock_entity_def.physical_defence_bonus = 0
-                mock_entity_def.display_name = "Goblin"
-                
-                mock_entity_enum = MagicMock()
-                mock_entity_enum.value = mock_entity_def
-                mock_from_name.return_value = mock_entity_enum
+            # Mock entity definition via get_entity_by_name
+            with patch('server.src.services.combat_service.get_entity_by_name') as mock_get_entity:
+                from server.src.core.monsters import MonsterID
+                # Return the actual MonsterID enum member
+                mock_get_entity.return_value = MonsterID.GOBLIN
                 
                 stats = await CombatService.get_entity_combat_stats(entity_id)
                 
                 assert stats is not None
                 assert stats.attack_level == 5
                 assert stats.strength_level == 5
-                assert stats.defence_level == 1
+                assert stats.defence_level == 5
                 assert stats.current_hp == 5
                 assert stats.max_hp == 10
                 assert stats.name == "Goblin"

@@ -459,3 +459,80 @@ class TestGetPlayerDataById:
         assert result is not None
         assert result.id == player.id
         assert result.username == "data_by_id_test"
+
+
+class TestGetPlayersOnMap:
+    """Tests for PlayerService.get_players_on_map()"""
+
+    @pytest.mark.asyncio
+    async def test_get_players_on_map_returns_players(self, gsm: GameStateManager, create_test_player):
+        """Test getting players on a specific map."""
+        player1 = await create_test_player("map_player1", "password123")
+        player2 = await create_test_player("map_player2", "password123")
+        
+        # Place both players on same map
+        await gsm.set_player_full_state(player1.id, 50, 50, "test_map", 100, 100)
+        await gsm.set_player_full_state(player2.id, 60, 60, "test_map", 100, 100)
+        
+        players = await PlayerService.get_players_on_map("test_map")
+        
+        assert len(players) >= 2
+        player_ids = [p["player_id"] for p in players]
+        assert player1.id in player_ids
+        assert player2.id in player_ids
+        
+        # Check structure of returned data
+        for player in players:
+            if player["player_id"] == player1.id:
+                assert player["username"] == "map_player1"
+                assert player["x"] == 50
+                assert player["y"] == 50
+
+    @pytest.mark.asyncio
+    async def test_get_players_on_map_filters_by_map(self, gsm: GameStateManager, create_test_player):
+        """Test that only players on specified map are returned."""
+        player1 = await create_test_player("filter_test1", "password123")
+        player2 = await create_test_player("filter_test2", "password123")
+        
+        # Place players on different maps
+        await gsm.set_player_full_state(player1.id, 50, 50, "map_a", 100, 100)
+        await gsm.set_player_full_state(player2.id, 60, 60, "map_b", 100, 100)
+        
+        players_on_a = await PlayerService.get_players_on_map("map_a")
+        players_on_b = await PlayerService.get_players_on_map("map_b")
+        
+        # player1 should be on map_a only
+        ids_on_a = [p["player_id"] for p in players_on_a]
+        ids_on_b = [p["player_id"] for p in players_on_b]
+        
+        assert player1.id in ids_on_a
+        assert player1.id not in ids_on_b
+        assert player2.id in ids_on_b
+        assert player2.id not in ids_on_a
+
+    @pytest.mark.asyncio
+    async def test_get_players_on_map_empty(self, gsm: GameStateManager):
+        """Test getting players on a map with no players."""
+        players = await PlayerService.get_players_on_map("nonexistent_map_12345")
+        
+        assert players == []
+
+    @pytest.mark.asyncio
+    async def test_get_players_on_map_includes_position(self, gsm: GameStateManager, create_test_player):
+        """Test that returned player data includes position."""
+        player = await create_test_player("pos_check_test", "password123")
+        
+        await gsm.set_player_full_state(player.id, 123, 456, "pos_map", 100, 100)
+        
+        players = await PlayerService.get_players_on_map("pos_map")
+        
+        found = False
+        for p in players:
+            if p["player_id"] == player.id:
+                found = True
+                assert p["x"] == 123
+                assert p["y"] == 456
+                assert p["username"] == "pos_check_test"
+                break
+        
+        assert found, "Player not found in results"

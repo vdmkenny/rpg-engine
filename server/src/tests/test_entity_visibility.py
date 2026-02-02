@@ -3,7 +3,12 @@ Tests for entity visibility in game loop.
 """
 
 import pytest
-from server.src.game.game_loop import get_visible_npc_entities, is_in_visible_range
+from server.src.game.game_loop import (
+    get_visible_npc_entities,
+    get_visible_entities,
+    is_in_visible_range,
+    _build_equipped_items_map,
+)
 
 
 class TestEntityVisibility:
@@ -44,7 +49,9 @@ class TestEntityVisibility:
         assert entity_data["max_hp"] == 10
         assert entity_data["state"] == "idle"
         assert entity_data["is_attackable"] is True
-        assert entity_data["sprite_info"] == ""
+        # Monsters include sprite_sheet_id for rendering
+        assert "sprite_sheet_id" in entity_data
+        assert entity_data["entity_type"] == "monster"
     
     def test_get_visible_npc_entities_out_of_range(self):
         """Test entity outside visible range."""
@@ -166,6 +173,7 @@ class TestEntityVisibility:
             {
                 "id": 1,
                 "entity_name": "VILLAGE_GUARD",
+                "entity_type": "humanoid_npc",
                 "x": 30,
                 "y": 30,
                 "current_hp": 100,
@@ -175,6 +183,7 @@ class TestEntityVisibility:
             {
                 "id": 2,
                 "entity_name": "SHOPKEEPER_BOB",
+                "entity_type": "humanoid_npc",
                 "x": 32,
                 "y": 28,
                 "current_hp": 10,
@@ -184,6 +193,7 @@ class TestEntityVisibility:
             {
                 "id": 3,
                 "entity_name": "VILLAGE_ELDER",
+                "entity_type": "humanoid_npc",
                 "x": 28,
                 "y": 27,
                 "current_hp": 20,
@@ -196,23 +206,28 @@ class TestEntityVisibility:
         
         assert len(visible) == 3
         
-        # Check guard
+        # Check guard - humanoid with appearance and equipment
         guard_data = visible["entity_1"]
         assert guard_data["display_name"] == "Village Guard"
         assert guard_data["behavior_type"] == "GUARD"
         assert guard_data["is_attackable"] is True
+        assert guard_data["entity_type"] == "humanoid_npc"
+        assert "appearance" in guard_data
+        assert "equipped_items" in guard_data
         
         # Check merchant
         merchant_data = visible["entity_2"]
         assert merchant_data["display_name"] == "Bob"
         assert merchant_data["behavior_type"] == "MERCHANT"
         assert merchant_data["is_attackable"] is False
+        assert merchant_data["entity_type"] == "humanoid_npc"
         
         # Check quest giver
         elder_data = visible["entity_3"]
         assert elder_data["display_name"] == "Village Elder"
         assert elder_data["behavior_type"] == "QUEST_GIVER"
         assert elder_data["is_attackable"] is False
+        assert elder_data["entity_type"] == "humanoid_npc"
     
     def test_get_visible_npc_entities_unknown_entity_type(self):
         """Test entity with unknown entity_name."""
@@ -258,3 +273,156 @@ class TestEntityVisibility:
         
         # Outside range (far away)
         assert is_in_visible_range(0, 0, 100, 100) is False
+
+
+class TestPlayerVisibility:
+    """Test player visibility with paperdoll data."""
+    
+    def test_get_visible_players_includes_appearance(self):
+        """Test that visible players include appearance data."""
+        players = [
+            {
+                "id": "player1",
+                "username": "player1",
+                "x": 30,
+                "y": 30,
+                "current_hp": 50,
+                "max_hp": 100,
+                "appearance": {"skin_tone": 1, "hair_style": "short", "hair_color": "#4A3728"},
+                "equipped_items": {"weapon": "BRONZE_SWORD"},
+            },
+            {
+                "id": "viewer",
+                "username": "viewer",
+                "x": 25,
+                "y": 25,
+                "current_hp": 100,
+                "max_hp": 100,
+                "appearance": None,
+                "equipped_items": None,
+            }
+        ]
+        
+        visible = get_visible_entities(25, 25, players, "viewer")
+        
+        assert len(visible) == 1
+        assert "player1" in visible
+        player_data = visible["player1"]
+        assert player_data["type"] == "player"
+        assert player_data["appearance"] == {"skin_tone": 1, "hair_style": "short", "hair_color": "#4A3728"}
+        assert player_data["equipped_items"] == {"weapon": "BRONZE_SWORD"}
+    
+    def test_get_visible_players_excludes_self(self):
+        """Test that viewing player is excluded from visibility."""
+        players = [
+            {
+                "id": "viewer",
+                "username": "viewer",
+                "x": 25,
+                "y": 25,
+                "current_hp": 100,
+                "max_hp": 100,
+                "appearance": None,
+                "equipped_items": None,
+            }
+        ]
+        
+        visible = get_visible_entities(25, 25, players, "viewer")
+        
+        assert len(visible) == 0
+    
+    def test_get_visible_players_out_of_range(self):
+        """Test that distant players are not visible."""
+        players = [
+            {
+                "id": "distant_player",
+                "username": "distant_player",
+                "x": 200,
+                "y": 200,
+                "current_hp": 100,
+                "max_hp": 100,
+                "appearance": None,
+                "equipped_items": None,
+            }
+        ]
+        
+        visible = get_visible_entities(25, 25, players, "viewer")
+        
+        assert len(visible) == 0
+    
+    def test_get_visible_players_null_appearance(self):
+        """Test players with null appearance are still visible."""
+        players = [
+            {
+                "id": "player1",
+                "username": "player1",
+                "x": 30,
+                "y": 30,
+                "current_hp": 50,
+                "max_hp": 100,
+                "appearance": None,
+                "equipped_items": None,
+            }
+        ]
+        
+        visible = get_visible_entities(25, 25, players, "viewer")
+        
+        assert len(visible) == 1
+        player_data = visible["player1"]
+        assert player_data["appearance"] is None
+        assert player_data["equipped_items"] is None
+
+
+class TestBuildEquippedItemsMap:
+    """Test the equipment to item name mapping helper."""
+    
+    def test_empty_equipment(self):
+        """Test with no equipment."""
+        result = _build_equipped_items_map({}, None)
+        assert result is None
+    
+    def test_none_equipment(self):
+        """Test with None equipment."""
+        result = _build_equipped_items_map(None, None)
+        assert result is None
+    
+    def test_equipment_with_missing_item_id(self):
+        """Test equipment entries without item_id are skipped."""
+        equipment = {"weapon": {"quantity": 1}}
+        
+        class MockGSM:
+            def get_cached_item_meta(self, item_id):
+                return {"name": "test_item"}
+        
+        result = _build_equipped_items_map(equipment, MockGSM())
+        assert result is None  # No valid items
+    
+    def test_equipment_with_valid_items(self):
+        """Test equipment with valid item IDs."""
+        equipment = {
+            "weapon": {"item_id": 1, "quantity": 1},
+            "shield": {"item_id": 2, "quantity": 1},
+        }
+        
+        class MockGSM:
+            def get_cached_item_meta(self, item_id):
+                items = {1: {"name": "BRONZE_SWORD"}, 2: {"name": "WOODEN_SHIELD"}}
+                return items.get(item_id)
+        
+        result = _build_equipped_items_map(equipment, MockGSM())
+        assert result == {"weapon": "BRONZE_SWORD", "shield": "WOODEN_SHIELD"}
+    
+    def test_equipment_with_uncached_item(self):
+        """Test equipment with item not in cache is skipped."""
+        equipment = {
+            "weapon": {"item_id": 1, "quantity": 1},
+            "shield": {"item_id": 999, "quantity": 1},  # Not in cache
+        }
+        
+        class MockGSM:
+            def get_cached_item_meta(self, item_id):
+                items = {1: {"name": "BRONZE_SWORD"}}
+                return items.get(item_id)
+        
+        result = _build_equipped_items_map(equipment, MockGSM())
+        assert result == {"weapon": "BRONZE_SWORD"}

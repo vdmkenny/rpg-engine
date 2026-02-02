@@ -10,29 +10,38 @@ from .base import Base
 
 class Entity(Base):
     """
-    Database mirror of the EntityDefinition from server/src/core/entities.py.
+    Database mirror of HumanoidDefinition and MonsterDefinition.
     
     This table acts as a queryable reference for entity templates.
-    The source of truth is the code (EntityID enum), which is synced
+    The source of truth is the code (HumanoidID/MonsterID enums), which are synced
     to this table on server startup.
+    
+    entity_type distinguishes between:
+    - "humanoid_npc": Uses paperdoll rendering with appearance + equipment
+    - "monster": Uses sprite sheet animations with innate combat stats
     """
     
     __tablename__ = "entities"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String, unique=True, index=True) # Enum name (e.g., "GOBLIN")
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)  # Enum name (e.g., "GOBLIN", "VILLAGE_GUARD")
+    entity_type: Mapped[str] = mapped_column(String, default="monster")  # "humanoid_npc" or "monster"
     
     # Identity
     display_name: Mapped[str] = mapped_column(String)
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    behavior: Mapped[str] = mapped_column(String) # EntityBehavior value
+    behavior: Mapped[str] = mapped_column(String)  # EntityBehavior value
     is_attackable: Mapped[bool] = mapped_column(Boolean, default=True)
     
-    # Visuals
-    sprite_name: Mapped[str] = mapped_column(String, default="default")
+    # Visuals - Monster sprite sheets
+    sprite_sheet_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # Monster sprite sheet identifier
     width: Mapped[int] = mapped_column(Integer, default=1)
     height: Mapped[int] = mapped_column(Integer, default=1)
     scale: Mapped[float] = mapped_column(Float, default=1.0)
+    
+    # Visuals - Humanoid paperdoll (JSON for appearance data)
+    appearance: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # AppearanceData as JSON
+    equipped_items: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True)  # {slot: item_name}
     
     # Stats
     level: Mapped[int] = mapped_column(Integer, default=1)

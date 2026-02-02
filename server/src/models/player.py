@@ -3,8 +3,8 @@ SQLAlchemy models for players.
 """
 
 from datetime import datetime
-from typing import Optional, List
-from sqlalchemy import String, Boolean, DateTime, func, Enum as SAEnum
+from typing import Optional, List, Dict, Any
+from sqlalchemy import String, Boolean, DateTime, func, Enum as SAEnum, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 from ..schemas.player import PlayerRole
@@ -36,6 +36,10 @@ class Player(Base):
 
     # Hitpoints (current HP, persisted - max HP derived from Hitpoints skill + equipment)
     current_hp: Mapped[int] = mapped_column(default=10)
+
+    # Appearance (paperdoll rendering data)
+    # JSON structure: {"skin_tone": str, "hair_style": str, "hair_color": str, "body_type": str}
+    appearance: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     # Relationships
     skills: Mapped[List["PlayerSkill"]] = relationship(

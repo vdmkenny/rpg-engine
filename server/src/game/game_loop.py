@@ -23,6 +23,8 @@ from server.src.core.metrics import (
 from server.src.services.map_service import get_map_manager
 from server.src.services.game_state_manager import get_game_state_manager
 from server.src.services.visibility_service import get_visibility_service
+from server.src.services.ai_service import AIService
+from server.src.services.entity_spawn_service import EntitySpawnService
 from server.src.core.database import AsyncSessionLocal
 from server.src.core.entities import EntityState
 from common.src.protocol import (
@@ -50,6 +52,10 @@ _global_tick_counter: int = 0
 # {username: tick_count_at_login}
 player_login_ticks: Dict[str, int] = {}
 
+# Track players currently in death sequence to avoid triggering multiple times
+# {player_id: True}
+players_dying: Set[int] = set()
+
 
 def get_chunk_coordinates(x: int, y: int, chunk_size: int = CHUNK_SIZE) -> Tuple[int, int]:
     """Convert tile coordinates to chunk coordinates."""
@@ -75,6 +81,33 @@ def is_in_visible_range(
     visible_range = (chunk_radius + 1) * chunk_size
     return (abs(target_x - player_x) <= visible_range and 
             abs(target_y - player_y) <= visible_range)
+
+
+def _build_equipped_items_map(equipment: Optional[Dict[str, Dict]], gsm) -> Optional[Dict[str, str]]:
+    """
+    Convert equipment data to slot->item_name mapping for paperdoll rendering.
+    
+    Args:
+        equipment: Dict of {slot: {item_id, quantity, ...}}
+        gsm: GameStateManager for item cache lookup
+        
+    Returns:
+        Dict of {slot: item_name} or None if no equipment
+    """
+    if not equipment:
+        return None
+    
+    equipped_items = {}
+    for slot, item_data in equipment.items():
+        item_id = item_data.get("item_id")
+        if not item_id:
+            continue
+        item_meta = gsm.get_cached_item_meta(item_id)
+        if not item_meta:
+            continue
+        equipped_items[slot] = item_meta.get("name", "")
+    
+    return equipped_items if equipped_items else None
 
 
 def get_visible_entities(
@@ -110,6 +143,8 @@ def get_visible_entities(
                 "y": entity_y,
                 "current_hp": entity.get("current_hp", 0),
                 "max_hp": entity.get("max_hp", 0),
+                "appearance": entity.get("appearance"),
+                "equipped_items": entity.get("equipped_items"),
             }
     
     return visible
@@ -129,7 +164,9 @@ def get_visible_npc_entities(
     Returns:
         Dict of {entity_key: entity_data} for visible entities
     """
-    from server.src.core.entities import EntityID, EntityState
+    from server.src.core.entities import EntityState, get_entity_by_name, EntityType
+    from server.src.core.humanoids import HumanoidDefinition
+    from server.src.core.monsters import MonsterDefinition
     
     visible = {}
     for entity in all_entity_instances:
@@ -146,30 +183,45 @@ def get_visible_npc_entities(
         if is_in_visible_range(player_x, player_y, entity_x, entity_y):
             entity_id = entity.get("id")
             entity_name = entity.get("entity_name", "")
+            entity_type = entity.get("entity_type", EntityType.MONSTER.value)
             
             # Get entity definition for display name and behavior
-            entity_enum = EntityID.from_name(entity_name)
+            entity_enum = get_entity_by_name(entity_name)
             display_name = entity_name
             behavior_type = "PASSIVE"
-            sprite_info = ""
             is_attackable = True
+            
+            # Entity-type specific rendering data
+            appearance = None  # For humanoids
+            equipped_items = None  # For humanoids
+            sprite_sheet_id = None  # For monsters
             
             if entity_enum:
                 entity_def = entity_enum.value
                 display_name = entity_def.display_name
                 behavior_type = entity_def.behavior.name
-                sprite_info = ""  # Empty for now, will be populated later
-                is_attackable = entity_def.is_attackable and entity_state != EntityState.DYING.value  # Can't attack dying entities
+                is_attackable = entity_def.is_attackable and entity_state != EntityState.DYING.value
+                
+                # Extract type-specific rendering data
+                if isinstance(entity_def, HumanoidDefinition):
+                    if entity_def.appearance:
+                        appearance = entity_def.appearance.to_dict()
+                    if entity_def.equipped_items:
+                        equipped_items = {
+                            slot.value: item.name for slot, item in entity_def.equipped_items.items()
+                        }
+                elif isinstance(entity_def, MonsterDefinition):
+                    sprite_sheet_id = entity_def.sprite_sheet_id
             else:
-                is_attackable = entity_state != EntityState.DYING.value  # Can't attack dying entities
+                is_attackable = entity_state != EntityState.DYING.value
             
-            visible[f"entity_{entity_id}"] = {
+            entity_data = {
                 "type": "entity",
                 "id": entity_id,
+                "entity_type": entity_type,
                 "entity_name": entity_name,
                 "display_name": display_name,
                 "behavior_type": behavior_type,
-                "sprite_info": sprite_info,
                 "x": entity_x,
                 "y": entity_y,
                 "current_hp": int(entity.get("current_hp", 0)),
@@ -177,6 +229,15 @@ def get_visible_npc_entities(
                 "state": entity_state,
                 "is_attackable": is_attackable,
             }
+            
+            # Add type-specific fields
+            if entity_type == EntityType.HUMANOID_NPC.value:
+                entity_data["appearance"] = appearance
+                entity_data["equipped_items"] = equipped_items
+            elif entity_type == EntityType.MONSTER.value:
+                entity_data["sprite_sheet_id"] = sprite_sheet_id
+            
+            visible[f"entity_{entity_id}"] = entity_data
     
     return visible
 
@@ -556,6 +617,107 @@ async def cleanup_disconnected_player(username: str) -> None:
     await visibility_service.remove_player(username)
 
 
+async def _handle_player_death(
+    player_id: int,
+    map_id: str,
+    manager: ConnectionManager,
+) -> None:
+    """
+    Handle the full death sequence for a player who reached 0 HP.
+    
+    This function runs asynchronously and handles:
+    1. Calling HpService.full_death_sequence() (drops items, waits, respawns)
+    2. Broadcasting EVENT_PLAYER_DIED and EVENT_PLAYER_RESPAWN
+    3. Clearing the player's combat state
+    4. Clearing all entities targeting this player
+    5. Removing player from players_dying set when complete
+    
+    Args:
+        player_id: Player's database ID
+        map_id: Map where the player died
+        manager: ConnectionManager for broadcasting
+    """
+    from common.src.protocol import PROTOCOL_VERSION
+    from server.src.services.hp_service import HpService
+    from server.src.services.connection_service import ConnectionService
+    
+    try:
+        gsm = get_game_state_manager()
+        
+        # Clear player's combat state immediately
+        await gsm.clear_player_combat_state(player_id)
+        
+        # Clear all entities targeting this player
+        await AIService.clear_entities_targeting_player(gsm, map_id, player_id)
+        
+        # Create broadcast callback for death/respawn events
+        async def broadcast_callback(message_type: str, payload: dict, username: str):
+            """Broadcast death/respawn events to the map."""
+            event_map_id = payload.get("map_id", map_id)
+            
+            # Map message_type string to MessageType enum
+            if message_type == "EVENT_PLAYER_DIED":
+                msg_type = MessageType.EVENT_PLAYER_DIED
+            elif message_type == "EVENT_PLAYER_RESPAWN":
+                msg_type = MessageType.EVENT_PLAYER_RESPAWN
+            else:
+                logger.warning(f"Unknown death broadcast message type: {message_type}")
+                return
+            
+            event_message = WSMessage(
+                id=None,
+                type=msg_type,
+                payload=payload,
+                version=PROTOCOL_VERSION,
+            )
+            packed_event = msgpack.packb(event_message.model_dump(), use_bin_type=True)
+            if packed_event:
+                await manager.broadcast_to_map(event_map_id, packed_event)
+        
+        # Execute full death sequence
+        result = await HpService.full_death_sequence(
+            player_id=player_id,
+            broadcast_callback=broadcast_callback,
+        )
+        
+        if result.success:
+            logger.info(
+                "Player death sequence completed",
+                extra={
+                    "player_id": player_id,
+                    "respawn_location": {
+                        "map_id": result.map_id,
+                        "x": result.x,
+                        "y": result.y,
+                    },
+                    "new_hp": result.new_hp,
+                },
+            )
+        else:
+            logger.error(
+                "Player death sequence failed",
+                extra={
+                    "player_id": player_id,
+                    "message": result.message,
+                },
+            )
+    
+    except Exception as e:
+        logger.error(
+            "Error in player death handler",
+            extra={
+                "player_id": player_id,
+                "map_id": map_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "traceback": traceback.format_exc(),
+            },
+        )
+    finally:
+        # Always remove player from dying set when done
+        players_dying.discard(player_id)
+
+
 def register_player_login(username: str) -> None:
     """Register a player's login tick for staggered HP regen."""
     player_login_ticks[username] = _global_tick_counter
@@ -601,6 +763,20 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         },
                     )
 
+            # Process entity respawn queue (every tick)
+            try:
+                gsm = get_game_state_manager()
+                await EntitySpawnService.check_respawn_queue(gsm)
+            except Exception as respawn_error:
+                logger.error(
+                    "Entity respawn processing failed",
+                    extra={
+                        "error": str(respawn_error),
+                        "tick": _global_tick_counter,
+                        "traceback": traceback.format_exc(),
+                    },
+                )
+
             # Process each active map
             active_maps = list(manager.connections_by_map.keys())
             for map_id in active_maps:
@@ -627,6 +803,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         y = int(data.get("y", 0))
                         current_hp = int(data.get("current_hp", 10))
                         max_hp = int(data.get("max_hp", 10))
+                        appearance = data.get("appearance")  # Dict or None
                         
                         # Calculate HP regeneration based on player login time
                         login_tick = player_login_ticks.get(username, _global_tick_counter)
@@ -642,6 +819,14 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             hp_updates.append((username, new_hp))
                             current_hp = new_hp  # Use updated HP for this tick
                         
+                        # Get equipped items for paperdoll rendering
+                        from ..services.connection_service import ConnectionService
+                        player_id = ConnectionService.get_online_player_id_by_username(username)
+                        equipped_items = None
+                        if player_id:
+                            equipment = await gsm.get_equipment(player_id)
+                            equipped_items = _build_equipped_items_map(equipment, gsm)
+                        
                         all_player_data.append({
                             "id": username,
                             "username": username,
@@ -649,6 +834,8 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             "y": y,
                             "current_hp": current_hp,
                             "max_hp": max_hp,
+                            "appearance": appearance,
+                            "equipped_items": equipped_items,
                         })
                         player_positions[username] = (x, y)
 
@@ -664,6 +851,62 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         if _global_tick_counter >= death_tick:
                             # Death animation complete, finalize death
                             await gsm.finalize_entity_death(entity["id"])
+                            # Clean up AI timer state for dead entity
+                            AIService.cleanup_entity_timers(entity["id"])
+
+                # Process entity AI for this map
+                entity_combat_events = await AIService.process_entities(
+                    gsm=gsm,
+                    map_id=map_id,
+                    current_tick=_global_tick_counter,
+                )
+                
+                # Broadcast any entity combat events
+                if entity_combat_events:
+                    from common.src.protocol import PROTOCOL_VERSION
+                    
+                    for combat_event in entity_combat_events:
+                        event_message = WSMessage(
+                            id=None,
+                            type=MessageType.EVENT_COMBAT_ACTION,
+                            payload={
+                                "attacker_type": CombatTargetType.ENTITY.value,
+                                "attacker_id": combat_event.attacker_id,
+                                "attacker_name": combat_event.attacker_name,
+                                "defender_type": CombatTargetType.PLAYER.value,
+                                "defender_id": combat_event.defender_id,
+                                "defender_name": combat_event.defender_name,
+                                "hit": combat_event.hit,
+                                "damage": combat_event.damage,
+                                "defender_hp": combat_event.defender_hp,
+                                "defender_died": combat_event.defender_died,
+                                "message": combat_event.message,
+                            },
+                            version=PROTOCOL_VERSION,
+                        )
+                        packed_event = msgpack.packb(event_message.model_dump(), use_bin_type=True)
+                        await manager.broadcast_to_map(combat_event.map_id, packed_event)
+                
+                # Check for player deaths and spawn death handlers
+                # This happens after entity combat to catch players killed by entities
+                from ..services.connection_service import ConnectionService
+                for username in player_usernames:
+                    player_id = ConnectionService.get_online_player_id_by_username(username)
+                    if not player_id:
+                        continue
+                    
+                    # Skip players already in death sequence
+                    if player_id in players_dying:
+                        continue
+                    
+                    # Check player HP
+                    player_hp = await gsm.get_player_hp(player_id)
+                    if player_hp and player_hp["current_hp"] <= 0:
+                        # Player died - add to dying set and spawn death handler
+                        players_dying.add(player_id)
+                        asyncio.create_task(
+                            _handle_player_death(player_id, map_id, manager)
+                        )
 
                 # Process auto-attacks for all players in combat
                 await _process_auto_attacks(gsm, manager, _global_tick_counter)
