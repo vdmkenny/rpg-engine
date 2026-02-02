@@ -98,7 +98,21 @@ class RPGClient:
         
         # Game state (received from server)
         self.game_state = ClientGameState()
-        self.state = GameState.LOGIN
+        self.state = GameState.SERVER_SELECT
+        
+        # Server selection
+        self.servers = [
+            {
+                "name": "Local Server",
+                "host": "localhost",
+                "port": 8000,
+                "description": "Development server",
+            },
+            # Add more servers here as needed
+        ]
+        self.selected_server_index = 0
+        self.server_status = {}  # Dict[int, Dict] - server index -> status data
+        self.fetching_status = set()  # Set of server indices currently fetching status
         
         # Protocol handler for WebSocket communication
         self.protocol = ProtocolHandler()
@@ -113,7 +127,7 @@ class RPGClient:
         # Map and rendering
         self.chunk_manager = ChunkManager()
         self.tileset_manager = TilesetManager()
-        self.sprite_manager = SpriteManager(SERVER_BASE_URL)
+        self.sprite_manager = SpriteManager(SERVER_BASE_URL)  # Will be updated when server is selected
         self.paperdoll_renderer = PaperdollRenderer(self.sprite_manager)
         self.current_map_id: Optional[str] = None
         
@@ -242,6 +256,54 @@ class RPGClient:
     # NETWORK - HTTP Authentication
     # =========================================================================
     
+    def _get_selected_server_url(self) -> str:
+        """Get the base URL for the currently selected server."""
+        server = self.servers[self.selected_server_index]
+        return f"http://{server['host']}:{server['port']}"
+    
+    def _get_selected_websocket_url(self) -> str:
+        """Get the WebSocket URL for the currently selected server."""
+        server = self.servers[self.selected_server_index]
+        return f"ws://{server['host']}:{server['port']}/ws"
+    
+    async def fetch_server_status(self, server_index: int) -> None:
+        """Fetch status for a specific server."""
+        if server_index in self.fetching_status:
+            return  # Already fetching
+        
+        self.fetching_status.add(server_index)
+        server = self.servers[server_index]
+        server_url = f"http://{server['host']}:{server['port']}"
+        
+        try:
+            session = await self._get_http_session()
+            async with session.get(f"{server_url}/status", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    self.server_status[server_index] = data
+                else:
+                    self.server_status[server_index] = {"status": "error", "error": f"HTTP {resp.status}"}
+        except asyncio.TimeoutError:
+            self.server_status[server_index] = {"status": "error", "error": "Timeout"}
+        except Exception as e:
+            self.server_status[server_index] = {"status": "error", "error": str(e)}
+        finally:
+            self.fetching_status.discard(server_index)
+    
+    async def refresh_all_server_status(self) -> None:
+        """Refresh status for all servers."""
+        tasks = [self.fetch_server_status(i) for i in range(len(self.servers))]
+        await asyncio.gather(*tasks, return_exceptions=True)
+    
+    def select_server(self, server_index: int) -> None:
+        """Select a server and proceed to login screen."""
+        self.selected_server_index = server_index
+        # Update sprite manager with selected server URL
+        self.sprite_manager.set_server_url(self._get_selected_server_url())
+        self.state = GameState.LOGIN
+        self.status_message = ""
+        self.status_color = Colors.TEXT_WHITE
+    
     async def _get_http_session(self) -> aiohttp.ClientSession:
         """Get or create HTTP session."""
         if self.http_session is None:
@@ -262,7 +324,7 @@ class RPGClient:
             session = await self._get_http_session()
             
             async with session.post(
-                f"{SERVER_BASE_URL}/auth/login",
+                f"{self._get_selected_server_url()}/auth/login",
                 data={"username": self.username_text, "password": self.password_text}
             ) as resp:
                 if resp.status != 200:
@@ -306,7 +368,7 @@ class RPGClient:
             session = await self._get_http_session()
             
             async with session.post(
-                f"{SERVER_BASE_URL}/auth/register",
+                f"{self._get_selected_server_url()}/auth/register",
                 json={
                     "username": self.username_text,
                     "password": self.password_text,
@@ -334,7 +396,7 @@ class RPGClient:
         """Connect to WebSocket and authenticate."""
         try:
             self.websocket = await websockets.connect(
-                WEBSOCKET_URL,
+                self._get_selected_websocket_url(),
                 additional_headers={"Authorization": f"Bearer {self.jwt_token}"}
             )
             
@@ -965,6 +1027,37 @@ class RPGClient:
     # INPUT HANDLING
     # =========================================================================
     
+    async def _handle_server_select_event(self, event: pygame.event.Event) -> None:
+        """Handle events in server selection state."""
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP:
+                self.selected_server_index = (self.selected_server_index - 1) % len(self.servers)
+            elif event.key == pygame.K_DOWN:
+                self.selected_server_index = (self.selected_server_index + 1) % len(self.servers)
+            elif event.key == pygame.K_RETURN:
+                self.select_server(self.selected_server_index)
+            elif event.key == pygame.K_r:
+                # Refresh server status
+                await self.refresh_all_server_status()
+        
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            mouse_pos = pygame.mouse.get_pos()
+            center_x = WINDOW_WIDTH // 2
+            start_y = 200
+            
+            # Check server item clicks
+            for i, server in enumerate(self.servers):
+                item_y = start_y + (i * 100)
+                item_rect = pygame.Rect(center_x - 300, item_y, 600, 90)
+                if item_rect.collidepoint(mouse_pos):
+                    self.select_server(i)
+                    break
+            
+            # Check refresh button
+            refresh_btn_rect = pygame.Rect(center_x - 100, WINDOW_HEIGHT - 100, 200, 40)
+            if refresh_btn_rect.collidepoint(mouse_pos):
+                await self.refresh_all_server_status()
+    
     async def _handle_login_event(self, event: pygame.event.Event) -> None:
         """Handle events in login/register state."""
         if event.type == pygame.KEYDOWN:
@@ -1324,6 +1417,77 @@ class RPGClient:
         if self.status_message:
             status_surface = self.small_font.render(self.status_message, True, self.status_color)
             self.screen.blit(status_surface, (center_x - status_surface.get_width() // 2, 650))
+    
+    def _draw_server_select(self) -> None:
+        """Draw server selection screen."""
+        self.screen.fill(Colors.PANEL_BG)
+        
+        center_x = WINDOW_WIDTH // 2
+        
+        # Title
+        title_surface = self.font.render("Select Server", True, Colors.TEXT_ORANGE)
+        self.screen.blit(title_surface, (center_x - title_surface.get_width() // 2, 50))
+        
+        # Instructions
+        instructions = self.tiny_font.render("Use arrow keys or click to select, ENTER to connect, R to refresh", True, Colors.TEXT_GRAY)
+        self.screen.blit(instructions, (center_x - instructions.get_width() // 2, 100))
+        
+        # Server list
+        start_y = 200
+        for i, server in enumerate(self.servers):
+            item_y = start_y + (i * 100)
+            is_selected = i == self.selected_server_index
+            
+            # Server item background
+            item_rect = pygame.Rect(center_x - 300, item_y, 600, 90)
+            bg_color = Colors.STONE_MEDIUM if is_selected else Colors.STONE_DARK
+            pygame.draw.rect(self.screen, bg_color, item_rect)
+            border_color = Colors.TEXT_ORANGE if is_selected else Colors.SLOT_BORDER
+            pygame.draw.rect(self.screen, border_color, item_rect, 2)
+            
+            # Server name
+            name_surface = self.font.render(server["name"], True, Colors.TEXT_WHITE)
+            self.screen.blit(name_surface, (item_rect.x + 20, item_rect.y + 10))
+            
+            # Server description
+            desc_surface = self.tiny_font.render(server["description"], True, Colors.TEXT_GRAY)
+            self.screen.blit(desc_surface, (item_rect.x + 20, item_rect.y + 40))
+            
+            # Server status
+            if i in self.server_status:
+                status = self.server_status[i]
+                if status.get("status") == "ok":
+                    # Show player count and MOTD
+                    capacity = status.get("capacity", {})
+                    current = capacity.get("current_players", 0)
+                    max_players = capacity.get("max_players", 0)
+                    
+                    players_text = f"{current}/{max_players} players"
+                    players_surface = self.small_font.render(players_text, True, Colors.TEXT_GREEN)
+                    self.screen.blit(players_surface, (item_rect.x + 420, item_rect.y + 15))
+                    
+                    # MOTD
+                    motd = status.get("motd", "")
+                    if motd:
+                        motd_surface = self.tiny_font.render(motd[:50] + ("..." if len(motd) > 50 else ""), True, Colors.TEXT_GRAY)
+                        self.screen.blit(motd_surface, (item_rect.x + 20, item_rect.y + 65))
+                else:
+                    error_text = status.get("error", "Unknown error")
+                    error_surface = self.small_font.render(f"Offline: {error_text}", True, Colors.TEXT_RED)
+                    self.screen.blit(error_surface, (item_rect.x + 420, item_rect.y + 15))
+            elif i in self.fetching_status:
+                loading_surface = self.small_font.render("Loading...", True, Colors.TEXT_YELLOW)
+                self.screen.blit(loading_surface, (item_rect.x + 420, item_rect.y + 15))
+            else:
+                unknown_surface = self.small_font.render("Status unknown", True, Colors.TEXT_GRAY)
+                self.screen.blit(unknown_surface, (item_rect.x + 420, item_rect.y + 15))
+        
+        # Refresh button
+        refresh_btn_rect = pygame.Rect(center_x - 100, WINDOW_HEIGHT - 100, 200, 40)
+        pygame.draw.rect(self.screen, Colors.STONE_MEDIUM, refresh_btn_rect)
+        pygame.draw.rect(self.screen, Colors.STONE_HIGHLIGHT, refresh_btn_rect, 2)
+        refresh_text = self.small_font.render("Refresh Status", True, Colors.TEXT_WHITE)
+        self.screen.blit(refresh_text, (center_x - refresh_text.get_width() // 2, WINDOW_HEIGHT - 92))
     
     def _draw_game(self) -> None:
         """Draw the game world and UI."""
@@ -1771,13 +1935,19 @@ class RPGClient:
         """Main game loop."""
         running = True
         
+        # Fetch server status on startup if on server select screen
+        if self.state == GameState.SERVER_SELECT:
+            await self.refresh_all_server_status()
+        
         while running:
             # Handle events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
                 
-                if self.state in [GameState.LOGIN, GameState.REGISTER]:
+                if self.state == GameState.SERVER_SELECT:
+                    await self._handle_server_select_event(event)
+                elif self.state in [GameState.LOGIN, GameState.REGISTER]:
                     await self._handle_login_event(event)
                 elif self.state == GameState.PLAYING:
                     await self._handle_game_event(event)
@@ -1800,7 +1970,9 @@ class RPGClient:
                 self.protocol.cleanup_expired_requests()
             
             # Render
-            if self.state in [GameState.LOGIN, GameState.REGISTER]:
+            if self.state == GameState.SERVER_SELECT:
+                self._draw_server_select()
+            elif self.state in [GameState.LOGIN, GameState.REGISTER]:
                 self._draw_login_form()
             elif self.state == GameState.PLAYING:
                 self._draw_game()

@@ -12,6 +12,7 @@ import aiohttp
 import asyncio
 import os
 import io
+import shutil
 from typing import Dict, Optional, Tuple
 from pathlib import Path
 
@@ -56,6 +57,10 @@ class SpriteManager:
     def set_auth_token(self, token: str) -> None:
         """Set the authentication token for API requests."""
         self.auth_token = token
+    
+    def set_server_url(self, server_base_url: str) -> None:
+        """Update the server base URL."""
+        self.server_base_url = server_base_url
     
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create HTTP session."""

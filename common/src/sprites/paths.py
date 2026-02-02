@@ -68,6 +68,8 @@ class SpritePaths:
     def eyes(
         eye_color: EyeColor,
         age_group: EyeAgeGroup = EyeAgeGroup.ADULT,
+        expression: str = "default",
+        animation: str = "walk",
     ) -> str:
         """
         Get the path for an eyes sprite sheet.
@@ -75,29 +77,38 @@ class SpritePaths:
         Args:
             eye_color: Eye color
             age_group: Age variant (adult, child, elderly)
+            expression: Eye expression (default, anger, sad, etc.)
+            animation: Animation type (walk, idle, slash, etc.)
             
         Returns:
-            Path like "eyes/human/adult/blue.png"
+            Path like "eyes/human/adult/default/walk/blue.png"
         """
-        return f"eyes/human/{age_group.value}/{eye_color.value}.png"
+        return f"eyes/human/{age_group.value}/{expression}/{animation}/{eye_color.value}.png"
     
     @staticmethod
-    def hair(hair_style: HairStyle, hair_color: HairColor) -> str:
+    def hair(
+        hair_style: HairStyle,
+        hair_color: HairColor,
+        age_group: str = "adult",
+        animation: str = "walk",
+    ) -> str:
         """
         Get the path for a hair sprite sheet.
         
         Args:
             hair_style: Hair style
             hair_color: Hair color
+            age_group: Age group (adult, child, elderly)
+            animation: Animation type (walk, idle, slash, etc.)
             
         Returns:
-            Path like "hair/short/brown.png"
+            Path like "hair/parted/adult/walk/brown.png"
         """
         # Handle "bald" specially - no sprite needed
         if hair_style == HairStyle.BALD:
             return ""
         
-        return f"hair/{hair_style.value}/{hair_color.value}.png"
+        return f"hair/{hair_style.value}/{age_group}/{animation}/{hair_color.value}.png"
     
     @staticmethod
     def equipment(

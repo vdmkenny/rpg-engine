@@ -139,19 +139,16 @@ class PaperdollRenderer:
         Returns:
             pygame.Surface or None if sprites not loaded
         """
-        print(f"[DEBUG PAPERDOLL] get_frame called: visual_hash={visual_hash}, animation={animation}, direction={direction}, frame={frame}")
-        
         # Check frame cache
         cache_key = (visual_hash, animation.value, direction.value, frame)
         if cache_key in self._frame_cache:
-            print(f"[DEBUG PAPERDOLL] Found in cache!")
             cached = self._frame_cache[cache_key]
             if render_size != FRAME_SIZE:
                 return pygame.transform.scale(cached, (render_size, render_size))
             return cached
         
         # Get the layers to render
-        layers = self._get_render_layers(visual_state)
+        layers = self._get_render_layers(visual_state, animation)
         if not layers:
             return None
         
@@ -168,6 +165,20 @@ class PaperdollRenderer:
         composited = self._composite_frame(layers, row, col)
         if composited is None:
             return None
+        
+        # Check if the composited frame is actually visible (not completely transparent)
+        # Don't cache transparent frames - they're incomplete renders
+        # Count non-transparent pixels by checking alpha channel
+        try:
+            alpha_array = pygame.surfarray.pixels_alpha(composited)
+            has_visible_pixels = (alpha_array > 0).any()
+            del alpha_array  # Release the surface lock
+            
+            if not has_visible_pixels:
+                return None
+        except Exception:
+            # If we can't check, assume it's okay and cache it
+            pass
         
         # Cache the result
         self._cache_frame(cache_key, composited)
@@ -255,11 +266,14 @@ class PaperdollRenderer:
         self._loading.add(visual_hash)
         
         try:
-            layers = self._get_render_layers(visual_state)
-            paths = [layer.sprite_path for layer in layers]
+            # Preload sprites for both walk and idle animations
+            all_paths = set()
+            for anim in [AnimationType.WALK, AnimationType.IDLE]:
+                layers = self._get_render_layers(visual_state, anim)
+                all_paths.update(layer.sprite_path for layer in layers)
             
             # Download all sprites in parallel
-            tasks = [self.sprite_manager.download_sprite(path) for path in paths]
+            tasks = [self.sprite_manager.download_sprite(path) for path in all_paths]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
             success = all(r is True for r in results)
@@ -274,10 +288,12 @@ class PaperdollRenderer:
         
         Returns True if all needed sprites are cached locally.
         """
-        layers = self._get_render_layers(visual_state)
-        for layer in layers:
-            if self.sprite_manager.get_surface(layer.sprite_path) is None:
-                return False
+        # Check if both walk and idle animations are loaded
+        for anim in [AnimationType.WALK, AnimationType.IDLE]:
+            layers = self._get_render_layers(visual_state, anim)
+            for layer in layers:
+                if self.sprite_manager.get_surface(layer.sprite_path) is None:
+                    return False
         return True
     
     def clear_cache(self) -> None:
@@ -300,9 +316,13 @@ class PaperdollRenderer:
     # INTERNAL METHODS
     # =========================================================================
     
-    def _get_render_layers(self, visual_state: Dict[str, Any]) -> List[RenderLayer]:
+    def _get_render_layers(self, visual_state: Dict[str, Any], animation: AnimationType = AnimationType.WALK) -> List[RenderLayer]:
         """
         Build the list of sprite layers to render for a visual state.
+        
+        Args:
+            visual_state: Character visual state data
+            animation: Animation type to load sprites for (idle, walk, slash, etc.)
         
         Returns layers sorted by render order (back to front).
         """
@@ -310,6 +330,9 @@ class PaperdollRenderer:
         
         appearance = visual_state.get("appearance", {})
         equipment = visual_state.get("equipment", {})
+        
+        # Map animation type to sprite directory name
+        anim_name = animation.value.lower()  # idle, walk, slash, etc.
         
         print(f"[DEBUG PAPERDOLL] _get_render_layers: appearance={appearance}, equipment={equipment}")
         
@@ -353,27 +376,23 @@ class PaperdollRenderer:
             eye_color = EyeColor.BROWN
         
         # Body layer
-        body_path = SpritePaths.body(body_type, skin_tone)
+        body_path = SpritePaths.body(body_type, skin_tone, animation=anim_name)
         layers.append(RenderLayer(SpriteLayer.BODY, body_path))
-        print(f"[DEBUG PAPERDOLL] Added body layer: {body_path}")
         
         # Head layer
-        head_path = SpritePaths.head(head_type, skin_tone)
+        head_path = SpritePaths.head(head_type, skin_tone, animation=anim_name)
         layers.append(RenderLayer(SpriteLayer.HEAD, head_path))
-        print(f"[DEBUG PAPERDOLL] Added head layer: {head_path}")
         
         # Eyes layer
         eye_age = get_eye_age_group(body_type, head_type)
-        eyes_path = SpritePaths.eyes(eye_color, eye_age)
+        eyes_path = SpritePaths.eyes(eye_color, eye_age, expression="default", animation=anim_name)
         layers.append(RenderLayer(SpriteLayer.EYES, eyes_path))
-        print(f"[DEBUG PAPERDOLL] Added eyes layer: {eyes_path}")
         
         # Hair layer (skip if bald)
         if hair_style != HairStyle.BALD:
-            hair_path = SpritePaths.hair(hair_style, hair_color)
+            hair_path = SpritePaths.hair(hair_style, hair_color, age_group="adult", animation=anim_name)
             if hair_path:
                 layers.append(RenderLayer(SpriteLayer.HAIR, hair_path))
-                print(f"[DEBUG PAPERDOLL] Added hair layer: {hair_path}")
         
         # Equipment layers
         for slot, equip_data in equipment.items():
@@ -427,14 +446,11 @@ class PaperdollRenderer:
         # Create output surface
         result = pygame.Surface((FRAME_SIZE, FRAME_SIZE), pygame.SRCALPHA)
         
-        print(f"[DEBUG PAPERDOLL] _composite_frame: compositing {len(layers)} layers, row={row}, col={col}")
-        
         for layer in layers:
             # Get the spritesheet surface
             sheet = self.sprite_manager.get_surface(layer.sprite_path)
             if sheet is None:
-                # Sprite not loaded yet, return None to trigger fallback
-                print(f"[DEBUG PAPERDOLL] MISSING SPRITE: {layer.sprite_path}")
+                # Sprite not loaded yet, skip this layer
                 continue
             
             # Check if row/col are valid for this sheet
