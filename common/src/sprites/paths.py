@@ -35,32 +35,34 @@ class SpritePaths:
     LPC_BASE = "lpc"
     
     @staticmethod
-    def body(body_type: BodyType, skin_tone: SkinTone) -> str:
+    def body(body_type: BodyType, skin_tone: SkinTone, animation: str = "walk") -> str:
         """
         Get the path for a body sprite sheet.
         
         Args:
             body_type: Body type (male, female, child, etc.)
             skin_tone: Skin color variant
+            animation: Animation type (walk, idle, slash, etc.). Defaults to "walk".
             
         Returns:
-            Path like "body/bodies/male/light.png"
+            Path like "body/bodies/male/walk/light.png"
         """
-        return f"body/bodies/{body_type.value}/{skin_tone.value}.png"
+        return f"body/bodies/{body_type.value}/{animation}/{skin_tone.value}.png"
     
     @staticmethod
-    def head(head_type: HeadType, skin_tone: SkinTone) -> str:
+    def head(head_type: HeadType, skin_tone: SkinTone, animation: str = "walk") -> str:
         """
         Get the path for a head sprite sheet.
         
         Args:
             head_type: Head type (includes race, e.g., "human/male")
             skin_tone: Skin color variant
+            animation: Animation type (walk, idle, slash, etc.). Defaults to "walk".
             
         Returns:
-            Path like "head/human/male/light.png"
+            Path like "head/heads/human/male/walk/light.png"
         """
-        return f"head/{head_type.value}/{skin_tone.value}.png"
+        return f"head/heads/{head_type.value}/{animation}/{skin_tone.value}.png"
     
     @staticmethod
     def eyes(

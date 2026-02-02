@@ -240,6 +240,7 @@ def get_server_status():
     
     return {
         "status": "ok",
+        "motd": settings.WELCOME_MOTD,
         "capacity": {
             "max_players": max_players,
             "current_players": current_players,

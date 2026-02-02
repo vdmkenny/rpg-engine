@@ -331,6 +331,25 @@ async def get_sprite_image(
         resolved_sprite = sprite_file.resolve()
         resolved_base = SPRITES_BASE_DIR.resolve()
         
+        # DEBUG: Print path resolution (temporary)
+        print(f"[SPRITE DEBUG] sprite_path={sprite_path}")
+        print(f"[SPRITE DEBUG] sprite_file={sprite_file}")
+        print(f"[SPRITE DEBUG] resolved_sprite={resolved_sprite}")
+        print(f"[SPRITE DEBUG] resolved_base={resolved_base}")
+        print(f"[SPRITE DEBUG] exists={resolved_sprite.exists()}")
+        print(f"[SPRITE DEBUG] startswith check={str(resolved_sprite).startswith(str(resolved_base))}")
+        
+        logger.debug(
+            "Resolving sprite path",
+            extra={
+                "sprite_path": sprite_path,
+                "sprite_file": str(sprite_file),
+                "resolved_sprite": str(resolved_sprite),
+                "resolved_base": str(resolved_base),
+                "exists": resolved_sprite.exists(),
+            }
+        )
+        
         # Check for path traversal attacks
         if not str(resolved_sprite).startswith(str(resolved_base)):
             logger.warning(
@@ -357,13 +376,18 @@ async def get_sprite_image(
     
     # Check if file exists
     if not resolved_sprite.exists() or not resolved_sprite.is_file():
-        logger.debug(
-            "Sprite file not found",
-            extra={"sprite_path": sprite_path, "user": current_user.username}
+        logger.warning(
+            "Sprite file not found - sprites may not be downloaded",
+            extra={
+                "sprite_path": sprite_path, 
+                "user": current_user.username,
+                "resolved_path": str(resolved_sprite),
+                "hint": "Run scripts/setup_lpc_sprites.py to download sprites"
+            }
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Sprite file not found: {sprite_path}"
+            detail=f"Sprite file not found: {sprite_path}. Run scripts/setup_lpc_sprites.py to download sprites."
         )
     
     # Verify it's an allowed image file type

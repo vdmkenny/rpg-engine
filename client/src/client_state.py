@@ -328,6 +328,7 @@ class ClientGameState:
     
     def update_visual_state(self, visual_state: Dict[str, Any], visual_hash: str) -> None:
         """Update player's paperdoll visual state."""
+        print(f"[DEBUG] update_visual_state called with visual_state={visual_state}")
         self.visual_state = visual_state
         self.visual_hash = visual_hash
     
@@ -468,6 +469,13 @@ class ClientGameState:
                         self.update_player_hp(
                             entity_data.get("current_hp", self.current_hp),
                             entity_data.get("max_hp", self.max_hp)
+                        )
+                    
+                    # Update visual state for paperdoll rendering
+                    if "visual_state" in entity_data and entity_data.get("visual_state"):
+                        self.update_visual_state(
+                            entity_data["visual_state"],
+                            entity_data.get("visual_hash", "")
                         )
                 elif player_id:
                     self._update_other_player(player_id, username, entity_data)

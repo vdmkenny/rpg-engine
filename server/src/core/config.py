@@ -97,6 +97,14 @@ class Settings(BaseSettings):
     # Logging settings
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    
+    # Welcome message settings from config.yml
+    WELCOME_MESSAGE: str = game_config.get("game", {}).get("welcome", {}).get(
+        "message", "Welcome to RPG Engine, {username}!"
+    )
+    WELCOME_MOTD: str = game_config.get("game", {}).get("welcome", {}).get(
+        "motd", "WebSocket Protocol - Enhanced with correlation IDs and structured responses"
+    )
 
     # Skill settings from config.yml
     SKILL_MAX_LEVEL: int = int(

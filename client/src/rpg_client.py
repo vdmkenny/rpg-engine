@@ -443,6 +443,15 @@ class RPGClient:
             self.game_state.display_x = float(self.game_state.x)
             self.game_state.display_y = float(self.game_state.y)
             
+            # Update visual state if provided
+            if "visual_state" in player_data:
+                self.game_state.update_visual_state(
+                    player_data.get("visual_state"),
+                    player_data.get("visual_hash", "")
+                )
+                # Preload sprites immediately after login
+                asyncio.create_task(self._preload_player_sprites())
+            
             # Update camera immediately
             self._update_camera(instant=True)
             
@@ -474,6 +483,7 @@ class RPGClient:
             entity_type = entity_data.get("type", "")
             
             if entity_type == "player":
+                player_id = entity_data.get("player_id", 0)
                 username = entity_data.get("username", "")
                 
                 if username == self.game_state.username:
@@ -491,6 +501,7 @@ class RPGClient:
                     
                     # Update visual state for paperdoll rendering
                     if "visual_state" in entity_data:
+                        print(f"[DEBUG] Received visual_state for own player: {entity_data.get('visual_state')}")
                         self.game_state.update_visual_state(
                             entity_data.get("visual_state"),
                             entity_data.get("visual_hash", "")
@@ -501,10 +512,10 @@ class RPGClient:
                     # Check if we need new chunks
                     await self._check_chunk_request()
                 else:
-                    # Update other player
-                    self.game_state._update_other_player(username, entity_data)
+                    # Update other player (use player_id as key)
+                    self.game_state._update_other_player(player_id, username, entity_data)
                     # Preload other player sprites if we have visual state
-                    other_player = self.game_state.other_players.get(username)
+                    other_player = self.game_state.other_players.get(player_id)
                     if other_player and other_player.visual_state:
                         asyncio.create_task(self._preload_entity_sprites(other_player))
             
@@ -562,6 +573,10 @@ class RPGClient:
             print(f"[DEBUG]   Entity: type={e.get('type')}, username={e.get('username')}, x={e.get('x')}, y={e.get('y')}")
         
         self.game_state.update_entities(entities, removed)
+        
+        # Preload sprites for own player if visual_state was updated
+        if self.game_state.visual_state:
+            asyncio.create_task(self._preload_player_sprites())
     
     async def _handle_chat_message(self, payload: Dict[str, Any]) -> None:
         """Handle incoming chat message."""
@@ -661,6 +676,7 @@ class RPGClient:
         error_code = payload.get("error_code", "UNKNOWN")
         message = payload.get("message", "An error occurred")
         
+        print(f"[ERROR] {error_code}: {message}")  # Debug log
         self.chat_window.add_message("Error", f"{error_code}: {message}", ChatChannel.LOCAL.value)
     
     async def _handle_server_shutdown(self, payload: Dict[str, Any]) -> None:
@@ -1432,18 +1448,21 @@ class RPGClient:
                     entity.visual_hash,
                     entity.facing_direction,
                     progress,
-                    render_size=TILE_SIZE,
+                    render_size=64,  # LPC sprites are 64x64
                 )
             else:
                 sprite = self.paperdoll_renderer.get_idle_frame(
                     entity.visual_state,
                     entity.visual_hash,
                     entity.facing_direction,
-                    render_size=TILE_SIZE,
+                    render_size=64,  # LPC sprites are 64x64
                 )
         
         if sprite:
-            self.screen.blit(sprite, (int(screen_x), int(screen_y)))
+            # Center sprite on tile (LPC: 64x64 sprite, 32x32 tile)
+            sprite_x = int(screen_x) - 16  # Center horizontally
+            sprite_y = int(screen_y) - 32  # Align sprite bottom with tile bottom
+            self.screen.blit(sprite, (sprite_x, sprite_y))
         else:
             # Fallback to colored rectangle
             if entity.entity_type == EntityType.MONSTER:
@@ -1454,14 +1473,14 @@ class RPGClient:
             pygame.draw.rect(self.screen, color, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE))
             pygame.draw.rect(self.screen, Colors.PANEL_BORDER, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE), 1)
         
-        # Draw health bar if damaged
+        # Draw health bar if damaged (above sprite)
         if entity.current_hp < entity.max_hp:
-            self._draw_health_bar(screen_x, screen_y - 8, TILE_SIZE, 4, entity.current_hp, entity.max_hp)
+            self._draw_health_bar(screen_x, screen_y - 24, TILE_SIZE, 4, entity.current_hp, entity.max_hp)
         
-        # Draw name
+        # Draw name (above sprite)
         name_surface = self.tiny_font.render(entity.display_name, True, Colors.TEXT_WHITE)
         name_x = int(screen_x + TILE_SIZE // 2 - name_surface.get_width() // 2)
-        self.screen.blit(name_surface, (name_x, int(screen_y) - 20))
+        self.screen.blit(name_surface, (name_x, int(screen_y) - 36))
     
     def _draw_other_players(self) -> None:
         """Draw other players."""
@@ -1492,28 +1511,31 @@ class RPGClient:
                     player.visual_hash,
                     player.facing_direction,
                     progress,
-                    render_size=TILE_SIZE,
+                    render_size=64,  # LPC sprites are 64x64
                 )
             else:
                 sprite = self.paperdoll_renderer.get_idle_frame(
                     player.visual_state,
                     player.visual_hash,
                     player.facing_direction,
-                    render_size=TILE_SIZE,
+                    render_size=64,  # LPC sprites are 64x64
                 )
         
         if sprite:
-            self.screen.blit(sprite, (int(screen_x), int(screen_y)))
+            # Center sprite on tile (LPC: 64x64 sprite, 32x32 tile)
+            sprite_x = int(screen_x) - 16  # Center horizontally
+            sprite_y = int(screen_y) - 32  # Align sprite bottom with tile bottom
+            self.screen.blit(sprite, (sprite_x, sprite_y))
         else:
             # Fallback to colored rectangle based on username hash
             color = self._get_player_color(username)
             pygame.draw.rect(self.screen, color, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE))
             pygame.draw.rect(self.screen, Colors.PANEL_BORDER, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE), 1)
         
-        # Draw name
+        # Draw name (above sprite)
         name_surface = self.tiny_font.render(username, True, Colors.TEXT_WHITE)
         name_x = int(screen_x + TILE_SIZE // 2 - name_surface.get_width() // 2)
-        self.screen.blit(name_surface, (name_x, int(screen_y) - 20))
+        self.screen.blit(name_surface, (name_x, int(screen_y) - 36))
     
     def _draw_player(self) -> None:
         """Draw the player character."""
@@ -1521,6 +1543,12 @@ class RPGClient:
             self.game_state.display_x * TILE_SIZE,
             self.game_state.display_y * TILE_SIZE
         )
+        
+        # Debug: Check if we have visual state
+        if not self.game_state.visual_state:
+            print(f"[DEBUG] No visual_state for player!")
+        if not self.game_state.visual_hash:
+            print(f"[DEBUG] No visual_hash for player!")
         
         # Try to render paperdoll sprite
         sprite = None
@@ -1535,34 +1563,35 @@ class RPGClient:
                     self.game_state.visual_hash,
                     self.game_state.facing_direction,
                     progress,
-                    render_size=TILE_SIZE,
+                    render_size=64,  # LPC sprites are 64x64
                 )
             else:
                 sprite = self.paperdoll_renderer.get_idle_frame(
                     self.game_state.visual_state,
                     self.game_state.visual_hash,
                     self.game_state.facing_direction,
-                    render_size=TILE_SIZE,
+                    render_size=64,  # LPC sprites are 64x64
                 )
         
         if sprite:
-            self.screen.blit(sprite, (int(screen_x), int(screen_y)))
-            # Draw white border to indicate own player
-            pygame.draw.rect(self.screen, Colors.TEXT_WHITE, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE), 2)
+            # Center sprite on tile (LPC: 64x64 sprite, 32x32 tile)
+            sprite_x = int(screen_x) - 16  # Center horizontally
+            sprite_y = int(screen_y) - 32  # Align sprite bottom with tile bottom
+            self.screen.blit(sprite, (sprite_x, sprite_y))
         else:
             # Fallback to colored rectangle
             color = self._get_player_color(self.game_state.username)
             pygame.draw.rect(self.screen, color, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE))
             pygame.draw.rect(self.screen, Colors.TEXT_WHITE, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE), 2)
         
-        # Draw name
+        # Draw name (above sprite)
         name_surface = self.tiny_font.render(self.game_state.username, True, Colors.TEXT_GREEN)
         name_x = int(screen_x + TILE_SIZE // 2 - name_surface.get_width() // 2)
-        self.screen.blit(name_surface, (name_x, int(screen_y) - 20))
+        self.screen.blit(name_surface, (name_x, int(screen_y) - 36))
         
-        # Draw health bar
+        # Draw health bar (above sprite)
         self._draw_health_bar(
-            screen_x, screen_y - 8, TILE_SIZE, 4,
+            screen_x, screen_y - 24, TILE_SIZE, 4,
             self.game_state.current_hp, self.game_state.max_hp
         )
     
@@ -1604,7 +1633,7 @@ class RPGClient:
             
             # Position
             msg_x = int(screen_x + TILE_SIZE // 2 - text_surface.get_width() // 2)
-            msg_y = int(screen_y - 40 - y_offset)
+            msg_y = int(screen_y - 24 - y_offset)
             
             # Background bubble
             bubble_rect = pygame.Rect(

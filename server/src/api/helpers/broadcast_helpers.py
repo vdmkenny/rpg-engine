@@ -5,6 +5,7 @@ Handles welcome messages and player join/leave broadcasting.
 """
 
 import traceback
+from typing import Optional
 
 import msgpack
 
@@ -13,6 +14,7 @@ from server.src.core.logging_config import get_logger
 from server.src.services.player_service import PlayerService
 from server.src.services.hp_service import HpService
 from server.src.services.connection_service import ConnectionService
+from server.src.services.visual_state_service import VisualStateService
 
 from common.src.protocol import (
     WSMessage,
@@ -33,25 +35,36 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
         player_id: Player's database ID
     """
     try:
-        # Use services for data access (not GSM directly)
+        # Use services for data access
         position = await PlayerService.get_player_position(player_id)
         current_hp, max_hp = await HpService.get_hp(player_id)
+        
+        # Get visual state (appearance + equipment)
+        visual_data = await VisualStateService.get_player_visual_state(player_id)
+        
+        # Build player payload
+        player_payload = {
+            "id": player_id,
+            "username": username,
+            "position": position,
+            "hp": {
+                "current_hp": current_hp,
+                "max_hp": max_hp
+            },
+        }
+        
+        # Add visual state if available
+        if visual_data:
+            player_payload["visual_hash"] = visual_data["visual_hash"]
+            player_payload["visual_state"] = visual_data["visual_state"]
         
         welcome_event = WSMessage(
             id=None,
             type=MessageType.EVENT_WELCOME,
             payload={
-                "message": f"Welcome to RPG Engine, {username}!",
-                "motd": "WebSocket Protocol - Enhanced with correlation IDs and structured responses",
-                "player": {
-                    "id": player_id,
-                    "username": username,
-                    "position": position,
-                    "hp": {
-                        "current_hp": current_hp,
-                        "max_hp": max_hp
-                    },
-                },
+                "message": settings.WELCOME_MESSAGE.format(username=username),
+                "motd": settings.WELCOME_MOTD,
+                "player": player_payload,
                 "config": {
                     "move_cooldown": settings.MOVE_COOLDOWN,
                     "animation_duration": settings.ANIMATION_DURATION,

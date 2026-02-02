@@ -319,16 +319,16 @@ def get_animation_row(animation: AnimationType, direction: Direction) -> int:
     """
     Get the spritesheet row for an animation and direction.
     
+    NOTE: LPC sprites store each animation in separate files (walk.png, idle.png, etc.)
+    where each file has 4 rows (one per direction). So we only use the direction offset,
+    not the animation row_offset (which is for unified spritesheets).
+    
     Args:
         animation: The animation type.
         direction: The facing direction.
         
     Returns:
-        Row index in the spritesheet.
+        Row index in the spritesheet (0-3 for UP, LEFT, DOWN, RIGHT).
     """
-    config = ANIMATION_CONFIGS.get(animation)
-    if config is None:
-        config = ANIMATION_CONFIGS[AnimationType.WALK]
-    
     direction_offset = DIRECTION_ROW_OFFSET.get(direction, 2)  # Default to DOWN
-    return config.row_offset + direction_offset
+    return direction_offset

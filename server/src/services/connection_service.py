@@ -366,6 +366,7 @@ class ConnectionService:
         """
         try:
             from server.src.api.connection_manager import ConnectionManager
+            from server.src.services.visual_state_service import VisualStateService
             
             # Get connection manager instance (should be singleton)
             manager = ConnectionManager()
@@ -393,13 +394,24 @@ class ConnectionService:
                         if player and PlayerService.is_player_online(player.id):
                             position_data = await PlayerService.get_player_position(player.id)
                             if position_data:
-                                existing_players.append({
+                                # Get visual state via service layer
+                                visual_data = await VisualStateService.get_player_visual_state(player.id)
+                                
+                                player_data = {
                                     "type": "player",
+                                    "player_id": player.id,
                                     "username": other_username,
                                     "x": position_data["x"],
                                     "y": position_data["y"], 
                                     "map_id": position_data["map_id"],
-                                })
+                                }
+                                
+                                # Add visual state if available
+                                if visual_data:
+                                    player_data["visual_hash"] = visual_data["visual_hash"]
+                                    player_data["visual_state"] = visual_data["visual_state"]
+                                
+                                existing_players.append(player_data)
                     except Exception as e:
                         logger.warning(
                             "Failed to get position for existing player",

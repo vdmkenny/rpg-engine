@@ -593,3 +593,28 @@ class PlayerService:
             })
         
         return players_on_map
+    
+    @staticmethod
+    async def get_player_appearance(player_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get player's appearance data from game state.
+        
+        Note: For online players only (welcome/join messages). 
+        Returns appearance from Valkey hot cache.
+        
+        Args:
+            player_id: Player ID
+            
+        Returns:
+            Appearance dict or None if not found
+        """
+        from .game_state_manager import get_game_state_manager
+        
+        state_manager = get_game_state_manager()
+        
+        # Get full player state (includes appearance)
+        player_data = await state_manager.get_player_full_state(player_id)
+        if not player_data:
+            return None
+        
+        return player_data.get("appearance")

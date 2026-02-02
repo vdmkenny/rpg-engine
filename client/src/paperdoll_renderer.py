@@ -139,9 +139,12 @@ class PaperdollRenderer:
         Returns:
             pygame.Surface or None if sprites not loaded
         """
+        print(f"[DEBUG PAPERDOLL] get_frame called: visual_hash={visual_hash}, animation={animation}, direction={direction}, frame={frame}")
+        
         # Check frame cache
         cache_key = (visual_hash, animation.value, direction.value, frame)
         if cache_key in self._frame_cache:
+            print(f"[DEBUG PAPERDOLL] Found in cache!")
             cached = self._frame_cache[cache_key]
             if render_size != FRAME_SIZE:
                 return pygame.transform.scale(cached, (render_size, render_size))
@@ -308,6 +311,8 @@ class PaperdollRenderer:
         appearance = visual_state.get("appearance", {})
         equipment = visual_state.get("equipment", {})
         
+        print(f"[DEBUG PAPERDOLL] _get_render_layers: appearance={appearance}, equipment={equipment}")
+        
         # Parse appearance data
         body_type_str = appearance.get("body_type", "male")
         skin_tone_str = appearance.get("skin_tone", "light")
@@ -350,21 +355,25 @@ class PaperdollRenderer:
         # Body layer
         body_path = SpritePaths.body(body_type, skin_tone)
         layers.append(RenderLayer(SpriteLayer.BODY, body_path))
+        print(f"[DEBUG PAPERDOLL] Added body layer: {body_path}")
         
         # Head layer
         head_path = SpritePaths.head(head_type, skin_tone)
         layers.append(RenderLayer(SpriteLayer.HEAD, head_path))
+        print(f"[DEBUG PAPERDOLL] Added head layer: {head_path}")
         
         # Eyes layer
         eye_age = get_eye_age_group(body_type, head_type)
         eyes_path = SpritePaths.eyes(eye_color, eye_age)
         layers.append(RenderLayer(SpriteLayer.EYES, eyes_path))
+        print(f"[DEBUG PAPERDOLL] Added eyes layer: {eyes_path}")
         
         # Hair layer (skip if bald)
         if hair_style != HairStyle.BALD:
             hair_path = SpritePaths.hair(hair_style, hair_color)
             if hair_path:
                 layers.append(RenderLayer(SpriteLayer.HAIR, hair_path))
+                print(f"[DEBUG PAPERDOLL] Added hair layer: {hair_path}")
         
         # Equipment layers
         for slot, equip_data in equipment.items():
@@ -418,11 +427,14 @@ class PaperdollRenderer:
         # Create output surface
         result = pygame.Surface((FRAME_SIZE, FRAME_SIZE), pygame.SRCALPHA)
         
+        print(f"[DEBUG PAPERDOLL] _composite_frame: compositing {len(layers)} layers, row={row}, col={col}")
+        
         for layer in layers:
             # Get the spritesheet surface
             sheet = self.sprite_manager.get_surface(layer.sprite_path)
             if sheet is None:
                 # Sprite not loaded yet, return None to trigger fallback
+                print(f"[DEBUG PAPERDOLL] MISSING SPRITE: {layer.sprite_path}")
                 continue
             
             # Check if row/col are valid for this sheet

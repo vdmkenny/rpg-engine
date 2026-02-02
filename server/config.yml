@@ -97,6 +97,14 @@ game:
   auth:
     # How long access tokens are valid (in minutes)
     access_token_expire_minutes: 30
+  
+  # Welcome message configuration
+  welcome:
+    # Message sent to players when they connect
+    # Use {username} placeholder to insert player's username
+    message: "Welcome to RPG Engine, {username}!"
+    # Message of the Day shown to all connecting players
+    motd: "WebSocket Protocol - Enhanced with correlation IDs and structured responses"
 
   # Skills configuration
   skills:

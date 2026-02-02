@@ -1087,7 +1087,6 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     
                     if own_player_data:
                         combined_visible_entities[f"player_{player_id}"] = own_player_data
-                        logger.info(f"[DEBUG] Added own player to combined_visible_entities: {player_id} at ({own_player_data.get('x')}, {own_player_data.get('y')})")
                     else:
                         logger.warning(f"[DEBUG] own_player_data is None for {player_id}")
                     

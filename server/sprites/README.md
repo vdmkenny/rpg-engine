@@ -18,8 +18,6 @@ See `ATTRIBUTION.md` for license and attribution requirements.
 
 ## Directory Structure
 
-After running the setup script:
-
 ```
 sprites/
 ├── ATTRIBUTION.md       # License and attribution info
@@ -36,19 +34,3 @@ sprites/
     ├── equipment/       # Armor, weapons, etc.
     └── manifest.json    # List of all available sprites
 ```
-
-## Serving Sprites
-
-Sprites are served via the `/api/sprites/{path}` endpoint.
-See `server/src/api/assets.py` for the sprite serving implementation.
-
-## Attribution Requirements
-
-**You MUST credit the original artists when using these sprites.**
-
-The sprites are licensed under:
-- CC-BY-SA 3.0 (Creative Commons Attribution-ShareAlike)
-- OGA-BY 3.0 (OpenGameArt Attribution)  
-- GPL 3.0 (GNU General Public License)
-
-See `CREDITS.csv` for detailed per-file attribution.

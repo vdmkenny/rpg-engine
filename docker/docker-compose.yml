@@ -56,9 +56,10 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ../server/src:/app/src
-      - ../server/alembic:/app/alembic
-      - ../server/alembic.ini:/app/alembic.ini
+      - ../server/src:/app/server/src
+      - ../server/alembic:/app/server/alembic
+      - ../server/alembic.ini:/app/server/alembic.ini
+      - ../server/sprites:/app/server/sprites
       - ../common/src:/app/common/src
 
   client:
