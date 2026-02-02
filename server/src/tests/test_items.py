@@ -148,9 +148,9 @@ class TestItemDefinitions:
 
     def test_from_name_case_insensitive(self):
         """from_name should be case-insensitive."""
-        assert ItemType.from_name("bronze_sword") == ItemType.BRONZE_SWORD
-        assert ItemType.from_name("BRONZE_SWORD") == ItemType.BRONZE_SWORD
-        assert ItemType.from_name("Bronze_Sword") == ItemType.BRONZE_SWORD
+        assert ItemType.from_name("bronze_shortsword") == ItemType.BRONZE_SHORTSWORD
+        assert ItemType.from_name("BRONZE_SHORTSWORD") == ItemType.BRONZE_SHORTSWORD
+        assert ItemType.from_name("Bronze_Shortsword") == ItemType.BRONZE_SHORTSWORD
 
     def test_from_name_returns_none_for_invalid(self):
         """from_name should return None for invalid item names."""
@@ -175,9 +175,9 @@ class TestItemDefinitions:
         assert ItemType.GOLD_COINS.value.is_stackable is True
         assert ItemType.GOLD_COINS.value.max_stack_size == STACK_SIZE_CURRENCY
 
-        # Bronze sword should not be stackable
-        assert ItemType.BRONZE_SWORD.value.is_stackable is False
-        assert ItemType.BRONZE_SWORD.value.max_stack_size == STACK_SIZE_SINGLE
+        # Bronze shortsword should not be stackable
+        assert ItemType.BRONZE_SHORTSWORD.value.is_stackable is False
+        assert ItemType.BRONZE_SHORTSWORD.value.max_stack_size == STACK_SIZE_SINGLE
 
 
 class TestStackSizes:
@@ -234,7 +234,7 @@ class TestItemStats:
 
     def test_weapons_have_positive_attack_stats(self):
         """Weapons should have positive attack bonuses."""
-        sword = ItemType.BRONZE_SWORD.value
+        sword = ItemType.BRONZE_SHORTSWORD.value
         assert sword.attack_bonus > 0 or sword.strength_bonus > 0
 
     def test_ranged_weapons_have_ranged_stats(self):
@@ -273,7 +273,7 @@ class TestTwoHandedItems:
 
     def test_regular_sword_is_one_handed(self):
         """Regular swords should not be two-handed."""
-        sword = ItemType.BRONZE_SWORD.value
+        sword = ItemType.BRONZE_SHORTSWORD.value
         assert sword.is_two_handed is False
 
 
@@ -332,10 +332,10 @@ class TestItemServiceSync:
         """Synced items should have correct stats from definitions."""
         await ItemService.sync_items_to_db()
 
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
-        assert item.attack_bonus == ItemType.BRONZE_SWORD.value.attack_bonus
-        assert item.strength_bonus == ItemType.BRONZE_SWORD.value.strength_bonus
+        assert item.attack_bonus == ItemType.BRONZE_SHORTSWORD.value.attack_bonus
+        assert item.strength_bonus == ItemType.BRONZE_SHORTSWORD.value.strength_bonus
 
 
 class TestItemServiceLookup:
@@ -346,17 +346,17 @@ class TestItemServiceLookup:
         """get_item_by_name should return the correct item."""
         await ItemService.sync_items_to_db()
 
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
-        assert item.display_name == "Bronze Sword"
+        assert item.display_name == "Bronze Shortsword"
 
     @pytest.mark.asyncio
     async def test_get_item_by_name_case_insensitive(self, session: AsyncSession, gsm):
         """get_item_by_name should be case-insensitive."""
         await ItemService.sync_items_to_db()
 
-        item1 = await ItemService.get_item_by_name("bronze_sword")
-        item2 = await ItemService.get_item_by_name("BRONZE_SWORD")
+        item1 = await ItemService.get_item_by_name("bronze_shortsword")
+        item2 = await ItemService.get_item_by_name("BRONZE_SHORTSWORD")
         assert item1 is not None
         assert item2 is not None
         assert item1.id == item2.id

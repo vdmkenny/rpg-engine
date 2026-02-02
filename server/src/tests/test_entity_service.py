@@ -219,14 +219,14 @@ class TestHumanoidDefToDict:
             description="Has equipment",
             behavior=EntityBehavior.GUARD,
             equipped_items={
-                EquipmentSlot.WEAPON: ItemType.IRON_SWORD,
+                EquipmentSlot.WEAPON: ItemType.IRON_SHORTSWORD,
                 EquipmentSlot.BODY: ItemType.BRONZE_PLATEBODY,
             },
         )
         
         result = EntityService.entity_def_to_dict("ARMED_GUARD", humanoid_def)
         
-        assert result["equipped_items"]["weapon"] == "IRON_SWORD"
+        assert result["equipped_items"]["weapon"] == "IRON_SHORTSWORD"
         assert result["equipped_items"]["body"] == "BRONZE_PLATEBODY"
 
     def test_humanoid_with_dialogue(self):

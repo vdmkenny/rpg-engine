@@ -253,38 +253,208 @@ class ItemType(Enum):
     """
 
     # =========================================================================
-    # WEAPONS - Melee
+    # WEAPONS - Melee (Wood Tier - Level 1, Poor rarity)
     # =========================================================================
-    BRONZE_SWORD = ItemDefinition(
-        display_name="Bronze Sword",
-        description="A basic bronze sword.",
+    WOODEN_CLUB = ItemDefinition(
+        display_name="Wooden Club",
+        description="A crude wooden club. Better than nothing.",
+        category=ItemCategory.WEAPON,
+        rarity=ItemRarity.POOR,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=200,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=1,
+        value=5,
+        attack_bonus=1,
+        strength_bonus=1,
+        attack_speed=3.0,
+        icon_sprite_id="icon_wooden_club",
+        equipped_sprite_id="equip_wooden_club",
+    )
+
+    # =========================================================================
+    # WEAPONS - Melee (Copper Tier - Level 1, Common rarity)
+    # Attack: 3, Strength: 2, Durability: 350, Value: 12
+    # =========================================================================
+    COPPER_DAGGER = ItemDefinition(
+        display_name="Copper Dagger",
+        description="A small copper dagger. Fast but weak.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=350,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=1,
+        value=8,
+        attack_bonus=2,
+        strength_bonus=1,
+        attack_speed=2.4,
+        icon_sprite_id="icon_copper_dagger",
+        equipped_sprite_id="equip_copper_dagger",
+    )
+
+    COPPER_SHORTSWORD = ItemDefinition(
+        display_name="Copper Shortsword",
+        description="A basic copper shortsword.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=350,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=1,
+        value=12,
+        attack_bonus=2,
+        strength_bonus=2,
+        attack_speed=3.0,
+        icon_sprite_id="icon_copper_shortsword",
+        equipped_sprite_id="equip_copper_shortsword",
+    )
+
+    COPPER_LONGSWORD = ItemDefinition(
+        display_name="Copper Longsword",
+        description="A copper longsword with decent reach.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=350,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=1,
+        value=15,
+        attack_bonus=3,
+        strength_bonus=2,
+        attack_speed=3.0,
+        icon_sprite_id="icon_copper_longsword",
+        equipped_sprite_id="equip_copper_longsword",
+    )
+
+    COPPER_MACE = ItemDefinition(
+        display_name="Copper Mace",
+        description="A copper mace. Good for crushing.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=350,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=1,
+        value=12,
+        attack_bonus=2,
+        strength_bonus=3,
+        attack_speed=3.0,
+        icon_sprite_id="icon_copper_mace",
+        equipped_sprite_id="equip_copper_mace",
+    )
+
+    COPPER_BATTLEAXE = ItemDefinition(
+        display_name="Copper Battleaxe",
+        description="A heavy copper battleaxe.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=350,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=1,
+        value=18,
+        attack_bonus=3,
+        strength_bonus=4,
+        attack_speed=3.6,
+        icon_sprite_id="icon_copper_battleaxe",
+        equipped_sprite_id="equip_copper_battleaxe",
+    )
+
+    COPPER_2H_SWORD = ItemDefinition(
+        display_name="Copper Two-Handed Sword",
+        description="A large copper sword requiring two hands.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        is_two_handed=True,
+        max_durability=400,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=1,
+        value=24,
+        attack_bonus=4,
+        strength_bonus=3,
+        attack_speed=4.2,
+        icon_sprite_id="icon_copper_2h_sword",
+        equipped_sprite_id="equip_copper_2h_sword",
+    )
+
+    # =========================================================================
+    # WEAPONS - Melee (Bronze Tier - Level 5, Common rarity)
+    # Attack: 5, Strength: 4, Durability: 500, Value: 20
+    # =========================================================================
+    BRONZE_DAGGER = ItemDefinition(
+        display_name="Bronze Dagger",
+        description="A small bronze dagger. Fast but weak.",
         category=ItemCategory.WEAPON,
         equipment_slot=EquipmentSlot.WEAPON,
         max_durability=500,
         required_skill=RequiredSkill.ATTACK,
-        required_level=1,
+        required_level=5,
+        value=14,
+        attack_bonus=3,
+        strength_bonus=2,
+        attack_speed=2.4,
+        icon_sprite_id="icon_bronze_dagger",
+        equipped_sprite_id="equip_bronze_dagger",
+    )
+
+    BRONZE_SHORTSWORD = ItemDefinition(
+        display_name="Bronze Shortsword",
+        description="A basic bronze shortsword.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=500,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=5,
         value=20,
         attack_bonus=4,
         strength_bonus=3,
         attack_speed=3.0,
-        icon_sprite_id="icon_bronze_sword",
-        equipped_sprite_id="equip_bronze_sword",
+        icon_sprite_id="icon_bronze_shortsword",
+        equipped_sprite_id="equip_bronze_shortsword",
     )
 
-    IRON_SWORD = ItemDefinition(
-        display_name="Iron Sword",
-        description="A sturdy iron sword.",
+    BRONZE_LONGSWORD = ItemDefinition(
+        display_name="Bronze Longsword",
+        description="A bronze longsword with decent reach.",
         category=ItemCategory.WEAPON,
         equipment_slot=EquipmentSlot.WEAPON,
-        max_durability=750,
+        max_durability=500,
         required_skill=RequiredSkill.ATTACK,
-        required_level=10,
-        value=50,
-        attack_bonus=10,
-        strength_bonus=7,
+        required_level=5,
+        value=25,
+        attack_bonus=5,
+        strength_bonus=4,
         attack_speed=3.0,
-        icon_sprite_id="icon_iron_sword",
-        equipped_sprite_id="equip_iron_sword",
+        icon_sprite_id="icon_bronze_longsword",
+        equipped_sprite_id="equip_bronze_longsword",
+    )
+
+    BRONZE_MACE = ItemDefinition(
+        display_name="Bronze Mace",
+        description="A bronze mace. Good for crushing.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=500,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=5,
+        value=20,
+        attack_bonus=4,
+        strength_bonus=5,
+        attack_speed=3.0,
+        icon_sprite_id="icon_bronze_mace",
+        equipped_sprite_id="equip_bronze_mace",
+    )
+
+    BRONZE_BATTLEAXE = ItemDefinition(
+        display_name="Bronze Battleaxe",
+        description="A heavy bronze battleaxe.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=500,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=5,
+        value=30,
+        attack_bonus=5,
+        strength_bonus=6,
+        attack_speed=3.6,
+        icon_sprite_id="icon_bronze_battleaxe",
+        equipped_sprite_id="equip_bronze_battleaxe",
     )
 
     BRONZE_2H_SWORD = ItemDefinition(
@@ -295,13 +465,221 @@ class ItemType(Enum):
         is_two_handed=True,
         max_durability=600,
         required_skill=RequiredSkill.ATTACK,
-        required_level=1,
-        value=30,
-        attack_bonus=6,
-        strength_bonus=8,
-        attack_speed=3.6,
+        required_level=5,
+        value=40,
+        attack_bonus=7,
+        strength_bonus=6,
+        attack_speed=4.2,
         icon_sprite_id="icon_bronze_2h_sword",
         equipped_sprite_id="equip_bronze_2h_sword",
+    )
+
+    # =========================================================================
+    # WEAPONS - Melee (Iron Tier - Level 10, Common rarity)
+    # Attack: 8, Strength: 6, Durability: 750, Value: 50
+    # =========================================================================
+    IRON_DAGGER = ItemDefinition(
+        display_name="Iron Dagger",
+        description="A small iron dagger. Fast but weak.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=750,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=10,
+        value=35,
+        attack_bonus=5,
+        strength_bonus=3,
+        attack_speed=2.4,
+        icon_sprite_id="icon_iron_dagger",
+        equipped_sprite_id="equip_iron_dagger",
+    )
+
+    IRON_SHORTSWORD = ItemDefinition(
+        display_name="Iron Shortsword",
+        description="A sturdy iron shortsword.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=750,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=10,
+        value=50,
+        attack_bonus=6,
+        strength_bonus=5,
+        attack_speed=3.0,
+        icon_sprite_id="icon_iron_shortsword",
+        equipped_sprite_id="equip_iron_shortsword",
+    )
+
+    IRON_LONGSWORD = ItemDefinition(
+        display_name="Iron Longsword",
+        description="An iron longsword with good reach.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=750,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=10,
+        value=60,
+        attack_bonus=8,
+        strength_bonus=6,
+        attack_speed=3.0,
+        icon_sprite_id="icon_iron_longsword",
+        equipped_sprite_id="equip_iron_longsword",
+    )
+
+    IRON_MACE = ItemDefinition(
+        display_name="Iron Mace",
+        description="An iron mace. Effective at crushing.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=750,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=10,
+        value=50,
+        attack_bonus=6,
+        strength_bonus=7,
+        attack_speed=3.0,
+        icon_sprite_id="icon_iron_mace",
+        equipped_sprite_id="equip_iron_mace",
+    )
+
+    IRON_BATTLEAXE = ItemDefinition(
+        display_name="Iron Battleaxe",
+        description="A heavy iron battleaxe.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=750,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=10,
+        value=75,
+        attack_bonus=8,
+        strength_bonus=9,
+        attack_speed=3.6,
+        icon_sprite_id="icon_iron_battleaxe",
+        equipped_sprite_id="equip_iron_battleaxe",
+    )
+
+    IRON_2H_SWORD = ItemDefinition(
+        display_name="Iron Two-Handed Sword",
+        description="A large iron sword requiring two hands.",
+        category=ItemCategory.WEAPON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        is_two_handed=True,
+        max_durability=900,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=10,
+        value=100,
+        attack_bonus=11,
+        strength_bonus=9,
+        attack_speed=4.2,
+        icon_sprite_id="icon_iron_2h_sword",
+        equipped_sprite_id="equip_iron_2h_sword",
+    )
+
+    # =========================================================================
+    # WEAPONS - Melee (Steel Tier - Level 20, Uncommon rarity)
+    # Attack: 12, Strength: 9, Durability: 1000, Value: 100
+    # =========================================================================
+    STEEL_DAGGER = ItemDefinition(
+        display_name="Steel Dagger",
+        description="A sharp steel dagger. Fast and deadly.",
+        category=ItemCategory.WEAPON,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=1000,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=20,
+        value=70,
+        attack_bonus=7,
+        strength_bonus=5,
+        attack_speed=2.4,
+        icon_sprite_id="icon_steel_dagger",
+        equipped_sprite_id="equip_steel_dagger",
+    )
+
+    STEEL_SHORTSWORD = ItemDefinition(
+        display_name="Steel Shortsword",
+        description="A well-crafted steel shortsword.",
+        category=ItemCategory.WEAPON,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=1000,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=20,
+        value=100,
+        attack_bonus=9,
+        strength_bonus=7,
+        attack_speed=3.0,
+        icon_sprite_id="icon_steel_shortsword",
+        equipped_sprite_id="equip_steel_shortsword",
+    )
+
+    STEEL_LONGSWORD = ItemDefinition(
+        display_name="Steel Longsword",
+        description="A fine steel longsword with excellent reach.",
+        category=ItemCategory.WEAPON,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=1000,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=20,
+        value=120,
+        attack_bonus=12,
+        strength_bonus=9,
+        attack_speed=3.0,
+        icon_sprite_id="icon_steel_longsword",
+        equipped_sprite_id="equip_steel_longsword",
+    )
+
+    STEEL_MACE = ItemDefinition(
+        display_name="Steel Mace",
+        description="A steel mace. Devastating crushing power.",
+        category=ItemCategory.WEAPON,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=1000,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=20,
+        value=100,
+        attack_bonus=9,
+        strength_bonus=11,
+        attack_speed=3.0,
+        icon_sprite_id="icon_steel_mace",
+        equipped_sprite_id="equip_steel_mace",
+    )
+
+    STEEL_BATTLEAXE = ItemDefinition(
+        display_name="Steel Battleaxe",
+        description="A massive steel battleaxe.",
+        category=ItemCategory.WEAPON,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        max_durability=1000,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=20,
+        value=150,
+        attack_bonus=12,
+        strength_bonus=14,
+        attack_speed=3.6,
+        icon_sprite_id="icon_steel_battleaxe",
+        equipped_sprite_id="equip_steel_battleaxe",
+    )
+
+    STEEL_2H_SWORD = ItemDefinition(
+        display_name="Steel Two-Handed Sword",
+        description="A massive steel sword requiring two hands.",
+        category=ItemCategory.WEAPON,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.WEAPON,
+        is_two_handed=True,
+        max_durability=1200,
+        required_skill=RequiredSkill.ATTACK,
+        required_level=20,
+        value=200,
+        attack_bonus=17,
+        strength_bonus=14,
+        attack_speed=4.2,
+        icon_sprite_id="icon_steel_2h_sword",
+        equipped_sprite_id="equip_steel_2h_sword",
     )
 
     # =========================================================================
@@ -342,7 +720,97 @@ class ItemType(Enum):
     )
 
     # =========================================================================
-    # ARMOR - Bronze (heavy, negative magic stats)
+    # ARMOR - Wood (Level 1, Poor rarity)
+    # =========================================================================
+    WOODEN_SHIELD = ItemDefinition(
+        display_name="Wooden Shield",
+        description="A crude wooden shield. Offers minimal protection.",
+        category=ItemCategory.ARMOR,
+        rarity=ItemRarity.POOR,
+        equipment_slot=EquipmentSlot.SHIELD,
+        max_durability=150,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=1,
+        value=5,
+        physical_defence_bonus=1,
+        magic_defence_bonus=0,
+        icon_sprite_id="icon_wooden_shield",
+        equipped_sprite_id="equip_wooden_shield",
+    )
+
+    # =========================================================================
+    # ARMOR - Copper (Level 1, Common rarity)
+    # Defence: 2, Durability: 300, Value: ~10
+    # =========================================================================
+    COPPER_HELMET = ItemDefinition(
+        display_name="Copper Helmet",
+        description="Basic head protection made of copper.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.HEAD,
+        max_durability=300,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=1,
+        value=10,
+        physical_defence_bonus=2,
+        magic_defence_bonus=0,
+        magic_attack_bonus=-1,  # Metal interferes with magic
+        icon_sprite_id="icon_copper_helmet",
+        equipped_sprite_id="equip_copper_helmet",
+    )
+
+    COPPER_PLATEBODY = ItemDefinition(
+        display_name="Copper Platebody",
+        description="Heavy copper chest armor.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.BODY,
+        max_durability=450,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=1,
+        value=28,
+        physical_defence_bonus=5,
+        magic_defence_bonus=1,
+        health_bonus=3,
+        magic_attack_bonus=-2,  # Heavy metal reduces magic ability
+        speed_bonus=-1,  # Heavy armor slows movement
+        icon_sprite_id="icon_copper_platebody",
+        equipped_sprite_id="equip_copper_platebody",
+    )
+
+    COPPER_PLATELEGS = ItemDefinition(
+        display_name="Copper Platelegs",
+        description="Heavy copper leg armor.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.LEGS,
+        max_durability=400,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=1,
+        value=20,
+        physical_defence_bonus=3,
+        magic_defence_bonus=0,
+        magic_attack_bonus=-1,  # Metal interferes with magic
+        icon_sprite_id="icon_copper_platelegs",
+        equipped_sprite_id="equip_copper_platelegs",
+    )
+
+    COPPER_SHIELD = ItemDefinition(
+        display_name="Copper Shield",
+        description="A basic copper shield.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.SHIELD,
+        max_durability=350,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=1,
+        value=18,
+        physical_defence_bonus=3,
+        magic_defence_bonus=0,
+        magic_attack_bonus=-1,  # Metal interferes with magic
+        icon_sprite_id="icon_copper_shield",
+        equipped_sprite_id="equip_copper_shield",
+    )
+
+    # =========================================================================
+    # ARMOR - Bronze (Level 5, Common rarity)
+    # Defence: 4, Durability: 500, Value: ~25
     # =========================================================================
     BRONZE_HELMET = ItemDefinition(
         display_name="Bronze Helmet",
@@ -351,7 +819,7 @@ class ItemType(Enum):
         equipment_slot=EquipmentSlot.HEAD,
         max_durability=400,
         required_skill=RequiredSkill.DEFENCE,
-        required_level=1,
+        required_level=5,
         value=15,
         physical_defence_bonus=3,
         magic_defence_bonus=1,
@@ -367,7 +835,7 @@ class ItemType(Enum):
         equipment_slot=EquipmentSlot.BODY,
         max_durability=600,
         required_skill=RequiredSkill.DEFENCE,
-        required_level=1,
+        required_level=5,
         value=40,
         physical_defence_bonus=8,
         magic_defence_bonus=2,
@@ -385,43 +853,13 @@ class ItemType(Enum):
         equipment_slot=EquipmentSlot.LEGS,
         max_durability=500,
         required_skill=RequiredSkill.DEFENCE,
-        required_level=1,
+        required_level=5,
         value=30,
         physical_defence_bonus=5,
         magic_defence_bonus=1,
         magic_attack_bonus=-2,  # Metal interferes with magic
         icon_sprite_id="icon_bronze_platelegs",
         equipped_sprite_id="equip_bronze_platelegs",
-    )
-
-    BRONZE_BOOTS = ItemDefinition(
-        display_name="Bronze Boots",
-        description="Heavy bronze boots.",
-        category=ItemCategory.ARMOR,
-        equipment_slot=EquipmentSlot.BOOTS,
-        max_durability=300,
-        required_skill=RequiredSkill.DEFENCE,
-        required_level=1,
-        value=12,
-        physical_defence_bonus=1,
-        magic_attack_bonus=-1,  # Metal interferes with magic
-        icon_sprite_id="icon_bronze_boots",
-        equipped_sprite_id="equip_bronze_boots",
-    )
-
-    BRONZE_GLOVES = ItemDefinition(
-        display_name="Bronze Gloves",
-        description="Heavy bronze gauntlets.",
-        category=ItemCategory.ARMOR,
-        equipment_slot=EquipmentSlot.GLOVES,
-        max_durability=300,
-        required_skill=RequiredSkill.DEFENCE,
-        required_level=1,
-        value=10,
-        physical_defence_bonus=1,
-        magic_attack_bonus=-1,  # Metal interferes with magic
-        icon_sprite_id="icon_bronze_gloves",
-        equipped_sprite_id="equip_bronze_gloves",
     )
 
     BRONZE_SHIELD = ItemDefinition(
@@ -431,13 +869,157 @@ class ItemType(Enum):
         equipment_slot=EquipmentSlot.SHIELD,
         max_durability=450,
         required_skill=RequiredSkill.DEFENCE,
-        required_level=1,
+        required_level=5,
         value=25,
         physical_defence_bonus=4,
         magic_defence_bonus=1,
         magic_attack_bonus=-2,  # Metal interferes with magic
         icon_sprite_id="icon_bronze_shield",
         equipped_sprite_id="equip_bronze_shield",
+    )
+
+    # =========================================================================
+    # ARMOR - Iron (Level 10, Common rarity)
+    # Defence: 6, Durability: 700, Value: ~50
+    # =========================================================================
+    IRON_HELMET = ItemDefinition(
+        display_name="Iron Helmet",
+        description="Sturdy head protection made of iron.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.HEAD,
+        max_durability=600,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=10,
+        value=40,
+        physical_defence_bonus=5,
+        magic_defence_bonus=1,
+        magic_attack_bonus=-2,  # Metal interferes with magic
+        icon_sprite_id="icon_iron_helmet",
+        equipped_sprite_id="equip_iron_helmet",
+    )
+
+    IRON_PLATEBODY = ItemDefinition(
+        display_name="Iron Platebody",
+        description="Heavy iron chest armor.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.BODY,
+        max_durability=900,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=10,
+        value=100,
+        physical_defence_bonus=12,
+        magic_defence_bonus=3,
+        health_bonus=8,
+        magic_attack_bonus=-4,  # Heavy metal reduces magic ability
+        speed_bonus=-1,  # Heavy armor slows movement
+        icon_sprite_id="icon_iron_platebody",
+        equipped_sprite_id="equip_iron_platebody",
+    )
+
+    IRON_PLATELEGS = ItemDefinition(
+        display_name="Iron Platelegs",
+        description="Heavy iron leg armor.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.LEGS,
+        max_durability=750,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=10,
+        value=75,
+        physical_defence_bonus=8,
+        magic_defence_bonus=2,
+        magic_attack_bonus=-3,  # Metal interferes with magic
+        icon_sprite_id="icon_iron_platelegs",
+        equipped_sprite_id="equip_iron_platelegs",
+    )
+
+    IRON_SHIELD = ItemDefinition(
+        display_name="Iron Shield",
+        description="A sturdy iron shield.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.SHIELD,
+        max_durability=700,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=10,
+        value=60,
+        physical_defence_bonus=6,
+        magic_defence_bonus=2,
+        magic_attack_bonus=-2,  # Metal interferes with magic
+        icon_sprite_id="icon_iron_shield",
+        equipped_sprite_id="equip_iron_shield",
+    )
+
+    # =========================================================================
+    # ARMOR - Steel (Level 20, Uncommon rarity)
+    # Defence: 9, Durability: 1000, Value: ~100
+    # =========================================================================
+    STEEL_HELMET = ItemDefinition(
+        display_name="Steel Helmet",
+        description="Fine head protection made of steel.",
+        category=ItemCategory.ARMOR,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.HEAD,
+        max_durability=900,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=20,
+        value=80,
+        physical_defence_bonus=8,
+        magic_defence_bonus=2,
+        magic_attack_bonus=-2,  # Metal interferes with magic
+        icon_sprite_id="icon_steel_helmet",
+        equipped_sprite_id="equip_steel_helmet",
+    )
+
+    STEEL_PLATEBODY = ItemDefinition(
+        display_name="Steel Platebody",
+        description="Heavy steel chest armor.",
+        category=ItemCategory.ARMOR,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.BODY,
+        max_durability=1200,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=20,
+        value=200,
+        physical_defence_bonus=18,
+        magic_defence_bonus=4,
+        health_bonus=12,
+        magic_attack_bonus=-5,  # Heavy metal reduces magic ability
+        speed_bonus=-1,  # Heavy armor slows movement
+        icon_sprite_id="icon_steel_platebody",
+        equipped_sprite_id="equip_steel_platebody",
+    )
+
+    STEEL_PLATELEGS = ItemDefinition(
+        display_name="Steel Platelegs",
+        description="Heavy steel leg armor.",
+        category=ItemCategory.ARMOR,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.LEGS,
+        max_durability=1000,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=20,
+        value=150,
+        physical_defence_bonus=12,
+        magic_defence_bonus=3,
+        magic_attack_bonus=-4,  # Metal interferes with magic
+        icon_sprite_id="icon_steel_platelegs",
+        equipped_sprite_id="equip_steel_platelegs",
+    )
+
+    STEEL_SHIELD = ItemDefinition(
+        display_name="Steel Shield",
+        description="A well-crafted steel shield.",
+        category=ItemCategory.ARMOR,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.SHIELD,
+        max_durability=950,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=20,
+        value=120,
+        physical_defence_bonus=9,
+        magic_defence_bonus=3,
+        magic_attack_bonus=-3,  # Metal interferes with magic
+        icon_sprite_id="icon_steel_shield",
+        equipped_sprite_id="equip_steel_shield",
     )
 
     # =========================================================================
@@ -473,6 +1055,170 @@ class ItemType(Enum):
         ranged_attack_bonus=1,  # Good for archers
         icon_sprite_id="icon_leather_chaps",
         equipped_sprite_id="equip_leather_chaps",
+    )
+
+    LEATHER_BOOTS = ItemDefinition(
+        display_name="Leather Boots",
+        description="Light leather boots.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.BOOTS,
+        max_durability=250,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=1,
+        value=12,
+        physical_defence_bonus=1,
+        magic_defence_bonus=1,
+        icon_sprite_id="icon_leather_boots",
+        equipped_sprite_id="equip_leather_boots",
+    )
+
+    LEATHER_GLOVES = ItemDefinition(
+        display_name="Leather Gloves",
+        description="Light leather gloves.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.GLOVES,
+        max_durability=250,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=1,
+        value=10,
+        physical_defence_bonus=1,
+        magic_defence_bonus=1,
+        icon_sprite_id="icon_leather_gloves",
+        equipped_sprite_id="equip_leather_gloves",
+    )
+
+    # =========================================================================
+    # ARMOR - Hard Leather (Level 10, balanced, no magic penalty)
+    # =========================================================================
+    HARD_LEATHER_BODY = ItemDefinition(
+        display_name="Hard Leather Body",
+        description="Hardened leather chest armor.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.BODY,
+        max_durability=550,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=10,
+        value=60,
+        physical_defence_bonus=6,
+        magic_defence_bonus=5,
+        ranged_attack_bonus=3,  # Good for archers
+        icon_sprite_id="icon_hard_leather_body",
+        equipped_sprite_id="equip_hard_leather_body",
+    )
+
+    HARD_LEATHER_CHAPS = ItemDefinition(
+        display_name="Hard Leather Chaps",
+        description="Hardened leather leg armor.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.LEGS,
+        max_durability=500,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=10,
+        value=45,
+        physical_defence_bonus=4,
+        magic_defence_bonus=3,
+        ranged_attack_bonus=2,  # Good for archers
+        icon_sprite_id="icon_hard_leather_chaps",
+        equipped_sprite_id="equip_hard_leather_chaps",
+    )
+
+    HARD_LEATHER_BOOTS = ItemDefinition(
+        display_name="Hard Leather Boots",
+        description="Hardened leather boots.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.BOOTS,
+        max_durability=400,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=10,
+        value=35,
+        physical_defence_bonus=2,
+        magic_defence_bonus=2,
+        icon_sprite_id="icon_hard_leather_boots",
+        equipped_sprite_id="equip_hard_leather_boots",
+    )
+
+    HARD_LEATHER_GLOVES = ItemDefinition(
+        display_name="Hard Leather Gloves",
+        description="Hardened leather gloves.",
+        category=ItemCategory.ARMOR,
+        equipment_slot=EquipmentSlot.GLOVES,
+        max_durability=400,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=10,
+        value=30,
+        physical_defence_bonus=2,
+        magic_defence_bonus=2,
+        icon_sprite_id="icon_hard_leather_gloves",
+        equipped_sprite_id="equip_hard_leather_gloves",
+    )
+
+    # =========================================================================
+    # ARMOR - Studded Leather (Level 20, Uncommon, balanced)
+    # =========================================================================
+    STUDDED_LEATHER_BODY = ItemDefinition(
+        display_name="Studded Leather Body",
+        description="Leather chest armor reinforced with metal studs.",
+        category=ItemCategory.ARMOR,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.BODY,
+        max_durability=700,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=20,
+        value=120,
+        physical_defence_bonus=9,
+        magic_defence_bonus=6,
+        ranged_attack_bonus=4,  # Good for archers
+        icon_sprite_id="icon_studded_leather_body",
+        equipped_sprite_id="equip_studded_leather_body",
+    )
+
+    STUDDED_LEATHER_CHAPS = ItemDefinition(
+        display_name="Studded Leather Chaps",
+        description="Leather leg armor reinforced with metal studs.",
+        category=ItemCategory.ARMOR,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.LEGS,
+        max_durability=650,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=20,
+        value=90,
+        physical_defence_bonus=6,
+        magic_defence_bonus=4,
+        ranged_attack_bonus=3,  # Good for archers
+        icon_sprite_id="icon_studded_leather_chaps",
+        equipped_sprite_id="equip_studded_leather_chaps",
+    )
+
+    STUDDED_LEATHER_BOOTS = ItemDefinition(
+        display_name="Studded Leather Boots",
+        description="Leather boots reinforced with metal studs.",
+        category=ItemCategory.ARMOR,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.BOOTS,
+        max_durability=550,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=20,
+        value=70,
+        physical_defence_bonus=3,
+        magic_defence_bonus=3,
+        icon_sprite_id="icon_studded_leather_boots",
+        equipped_sprite_id="equip_studded_leather_boots",
+    )
+
+    STUDDED_LEATHER_GLOVES = ItemDefinition(
+        display_name="Studded Leather Gloves",
+        description="Leather gloves reinforced with metal studs.",
+        category=ItemCategory.ARMOR,
+        rarity=ItemRarity.UNCOMMON,
+        equipment_slot=EquipmentSlot.GLOVES,
+        max_durability=550,
+        required_skill=RequiredSkill.DEFENCE,
+        required_level=20,
+        value=60,
+        physical_defence_bonus=3,
+        magic_defence_bonus=3,
+        icon_sprite_id="icon_studded_leather_gloves",
+        equipped_sprite_id="equip_studded_leather_gloves",
     )
 
     # =========================================================================

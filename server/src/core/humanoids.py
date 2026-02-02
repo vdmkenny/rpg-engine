@@ -103,13 +103,13 @@ class HumanoidID(Enum):
             SkillType.HITPOINTS: 100,
         },
         equipped_items={
-            EquipmentSlot.WEAPON: ItemType.IRON_SWORD,
+            EquipmentSlot.WEAPON: ItemType.IRON_SHORTSWORD,
             EquipmentSlot.BODY: ItemType.BRONZE_PLATEBODY,
             EquipmentSlot.LEGS: ItemType.BRONZE_PLATELEGS,
             EquipmentSlot.HEAD: ItemType.BRONZE_HELMET,
             EquipmentSlot.SHIELD: ItemType.BRONZE_SHIELD,
-            EquipmentSlot.BOOTS: ItemType.BRONZE_BOOTS,
-            EquipmentSlot.GLOVES: ItemType.BRONZE_GLOVES,
+            EquipmentSlot.BOOTS: ItemType.LEATHER_BOOTS,
+            EquipmentSlot.GLOVES: ItemType.LEATHER_GLOVES,
         },
         dialogue=["Move along, citizen.", "I'm watching you."],
     )

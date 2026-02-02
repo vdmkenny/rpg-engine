@@ -328,7 +328,7 @@ class TestCombatService:
             
             # Mock equipment with bonuses (async method)
             mock_gsm.get_equipment = AsyncMock(return_value={
-                "weapon": {"item_id": "BRONZE_SWORD"},
+                "weapon": {"item_id": "BRONZE_SHORTSWORD"},
                 "chest": {"item_id": "BRONZE_CHESTPLATE"}
             })
             
@@ -337,7 +337,7 @@ class TestCombatService:
             
             # Mock item metadata with bonuses
             def get_item_meta(item_id):
-                if item_id == "BRONZE_SWORD":
+                if item_id == "BRONZE_SHORTSWORD":
                     return {"attack_bonus": 10, "strength_bonus": 8, "physical_defence_bonus": 0}
                 elif item_id == "BRONZE_CHESTPLATE":
                     return {"attack_bonus": 0, "strength_bonus": 0, "physical_defence_bonus": 15}

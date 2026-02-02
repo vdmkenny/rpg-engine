@@ -289,7 +289,7 @@ class TestPlayerVisibility:
                 "current_hp": 50,
                 "max_hp": 100,
                 "appearance": {"skin_tone": 1, "hair_style": "short", "hair_color": "#4A3728"},
-                "equipped_items": {"weapon": "BRONZE_SWORD"},
+                "equipped_items": {"weapon": "BRONZE_SHORTSWORD"},
             },
             {
                 "id": "viewer",
@@ -310,7 +310,7 @@ class TestPlayerVisibility:
         player_data = visible["player1"]
         assert player_data["type"] == "player"
         assert player_data["appearance"] == {"skin_tone": 1, "hair_style": "short", "hair_color": "#4A3728"}
-        assert player_data["equipped_items"] == {"weapon": "BRONZE_SWORD"}
+        assert player_data["equipped_items"] == {"weapon": "BRONZE_SHORTSWORD"}
     
     def test_get_visible_players_excludes_self(self):
         """Test that viewing player is excluded from visibility."""
@@ -406,11 +406,10 @@ class TestBuildEquippedItemsMap:
         
         class MockGSM:
             def get_cached_item_meta(self, item_id):
-                items = {1: {"name": "BRONZE_SWORD"}, 2: {"name": "WOODEN_SHIELD"}}
-                return items.get(item_id)
-        
+                items = {1: {"name": "BRONZE_SHORTSWORD"}, 2: {"name": "WOODEN_SHIELD"}}
+            
         result = _build_equipped_items_map(equipment, MockGSM())
-        assert result == {"weapon": "BRONZE_SWORD", "shield": "WOODEN_SHIELD"}
+        assert result == {"weapon": "BRONZE_SHORTSWORD", "shield": "WOODEN_SHIELD"}
     
     def test_equipment_with_uncached_item(self):
         """Test equipment with item not in cache is skipped."""
@@ -421,8 +420,8 @@ class TestBuildEquippedItemsMap:
         
         class MockGSM:
             def get_cached_item_meta(self, item_id):
-                items = {1: {"name": "BRONZE_SWORD"}}
+                items = {1: {"name": "BRONZE_SHORTSWORD"}}
                 return items.get(item_id)
         
         result = _build_equipped_items_map(equipment, MockGSM())
-        assert result == {"weapon": "BRONZE_SWORD"}
+        assert result == {"weapon": "BRONZE_SHORTSWORD"}
