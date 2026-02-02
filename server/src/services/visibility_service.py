@@ -97,11 +97,28 @@ class VisibilityService:
             removed_ids = previous_entity_ids - current_entity_ids
             potential_updates = current_entity_ids & previous_entity_ids
             
+            # DEBUG: Log when player's own entity is added (first time)
+            for entity_id in added_ids:
+                if entity_id.startswith("player_"):
+                    logger.info(
+                        f"[DEBUG] Player entity ADDED to visibility: {entity_id}, "
+                        f"pos=({visible_entities[entity_id].get('x')}, {visible_entities[entity_id].get('y')})"
+                    )
+            
             # Check for actual updates (entity data changed)
             updated_ids = set()
             for entity_id in potential_updates:
-                if visible_entities[entity_id] != previous_entities.get(entity_id, {}):
+                current_data = visible_entities[entity_id]
+                previous_data = previous_entities.get(entity_id, {})
+                if current_data != previous_data:
                     updated_ids.add(entity_id)
+                    # DEBUG: Log what changed for player entities
+                    if entity_id.startswith("player_"):
+                        logger.info(
+                            f"[DEBUG] Player entity changed: {entity_id}, "
+                            f"old=({previous_data.get('x')}, {previous_data.get('y')}), "
+                            f"new=({current_data.get('x')}, {current_data.get('y')})"
+                        )
             
             # Update cache with new state
             self._player_visible_cache[username] = visible_entities.copy()

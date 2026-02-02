@@ -10,7 +10,8 @@ import msgpack
 
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
-from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.player_service import PlayerService
+from server.src.services.hp_service import HpService
 from server.src.services.connection_service import ConnectionService
 
 from common.src.protocol import (
@@ -32,9 +33,9 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
         player_id: Player's database ID
     """
     try:
-        gsm = get_game_state_manager()
-        position = await gsm.get_player_position(player_id)
-        hp_data = await gsm.get_player_hp(player_id)
+        # Use services for data access (not GSM directly)
+        position = await PlayerService.get_player_position(player_id)
+        current_hp, max_hp = await HpService.get_hp(player_id)
         
         welcome_event = WSMessage(
             id=None,
@@ -46,7 +47,10 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
                     "id": player_id,
                     "username": username,
                     "position": position,
-                    "hp": hp_data,
+                    "hp": {
+                        "current_hp": current_hp,
+                        "max_hp": max_hp
+                    },
                 },
                 "config": {
                     "move_cooldown": settings.MOVE_COOLDOWN,
@@ -109,8 +113,7 @@ async def handle_player_join_broadcast(
         connection_manager: ConnectionManager instance
     """
     try:
-        gsm = get_game_state_manager()
-        position = await gsm.get_player_position(player_id)
+        position = await PlayerService.get_player_position(player_id)
         
         if not position:
             logger.error(

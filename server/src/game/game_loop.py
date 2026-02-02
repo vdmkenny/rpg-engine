@@ -753,7 +753,7 @@ async def send_diff_update(
         
         update_message = WSMessage(
             id=None,  # No correlation ID for events
-            type=MessageType.EVENT_STATE_UPDATE,
+            type=MessageType.EVENT_GAME_UPDATE,
             payload={
                 "entities": entities,
                 "removed_entities": [e.get("username") or str(e.get("id", "")) for e in diff["removed"]],
@@ -966,6 +966,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     continue
                     
                 player_usernames = list(map_connections.keys())
+                logger.debug(f"[GAMELOOP] Processing map {map_id} with {len(player_usernames)} players: {player_usernames}")
                 
                 gsm = get_game_state_manager()
                 visibility_service = get_visibility_service()
@@ -1118,14 +1119,18 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
 
                 # For each connected player, compute and send their personalized diff
                 for username in player_usernames:
+                    logger.debug(f"[GAMELOOP] Processing player: {username}")
                     if username not in player_positions:
+                        logger.debug(f"[GAMELOOP] Player {username} not in player_positions, skipping")
                         continue
                         
                     websocket = map_connections.get(username)
                     if not websocket:
+                        logger.debug(f"[GAMELOOP] No websocket for {username}, skipping")
                         continue
                     
                     player_x, player_y = player_positions[username]
+                    logger.debug(f"[GAMELOOP] Player {username} at ({player_x}, {player_y})")
                     
                     # Get player entities currently visible to this player
                     current_visible_players = get_visible_entities(
@@ -1175,7 +1180,32 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     # Combine players and ground items into single visibility state
                     combined_visible_entities = {}
                     
-                    # Add players with 'player_' prefix to avoid ID conflicts with ground items
+                    # Add the player's own data (so client can track its own position)
+                    own_player_data = None
+                    for entity in all_player_data:
+                        if entity.get("username") == username:
+                            own_player_data = {
+                                "type": "player",
+                                "username": username,
+                                "x": entity.get("x", player_x),
+                                "y": entity.get("y", player_y),
+                                "current_hp": entity.get("current_hp", 0),
+                                "max_hp": entity.get("max_hp", 0),
+                                "facing_direction": entity.get("facing_direction", "DOWN"),
+                            }
+                            if "visual_hash" in entity:
+                                own_player_data["visual_hash"] = entity["visual_hash"]
+                            if "visual_state" in entity:
+                                own_player_data["visual_state"] = entity["visual_state"]
+                            break
+                    
+                    if own_player_data:
+                        combined_visible_entities[f"player_{username}"] = own_player_data
+                        logger.info(f"[DEBUG] Added own player to combined_visible_entities: {username} at ({own_player_data.get('x')}, {own_player_data.get('y')})")
+                    else:
+                        logger.warning(f"[DEBUG] own_player_data is None for {username}")
+                    
+                    # Add other players with 'player_' prefix to avoid ID conflicts with ground items
                     for player_username, player_data in current_visible_players.items():
                         combined_visible_entities[f"player_{player_username}"] = player_data
                     

@@ -1016,7 +1016,7 @@ class MapManager:
         }
 
     async def validate_chunk_request_security(
-        self, player_id: int, map_id: str, chunk_x: int, chunk_y: int, radius: int = 1
+        self, player_id: int, map_id: str, center_x: int, center_y: int, radius: int = 1
     ) -> bool:
         """
         Validate that a player can request the specified chunks (security check).
@@ -1027,8 +1027,8 @@ class MapManager:
         Args:
             player_id: Player making the request
             map_id: Map being requested
-            chunk_x: Center chunk X coordinate
-            chunk_y: Center chunk Y coordinate
+            center_x: Center tile X coordinate
+            center_y: Center tile Y coordinate
             radius: Chunk radius being requested
 
         Returns:
@@ -1037,12 +1037,9 @@ class MapManager:
         # Import here to avoid circular dependency
         from .player_service import PlayerService
         
-        # Check if player has access to this general area
-        center_tile_x = chunk_x * 16  # Convert chunk to tile coordinates
-        center_tile_y = chunk_y * 16
-        
+        # Validate position access using tile coordinates directly
         position_valid = await PlayerService.validate_player_position_access(
-            player_id, map_id, center_tile_x, center_tile_y
+            player_id, map_id, center_x, center_y
         )
         
         if not position_valid:
@@ -1051,7 +1048,7 @@ class MapManager:
                 extra={
                     "player_id": player_id,
                     "map_id": map_id,
-                    "chunk": {"x": chunk_x, "y": chunk_y},
+                    "center": {"x": center_x, "y": center_y},
                     "radius": radius,
                 }
             )

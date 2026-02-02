@@ -100,14 +100,22 @@ class QueryHandlerMixin:
             )
     
     async def _handle_query_stats(self, message: WSMessage) -> None:
-        """Handle QUERY_STATS - retrieve aggregated player stats."""
+        """Handle QUERY_STATS - retrieve aggregated player stats and skills."""
         try:
+            from server.src.services.skill_service import SkillService
+            
             stats_data = await EquipmentService.get_total_stats(self.player_id)
+            
+            # Get skills in list format (consistent with other responses)
+            skills_list = await SkillService.get_player_skills(self.player_id)
+            total_level = sum(s.get("current_level", 1) for s in skills_list)
             
             await self._send_data_response(
                 message.id,
                 {
                     "stats": stats_data.model_dump(),
+                    "skills": skills_list,
+                    "total_level": total_level,
                     "query_type": "stats"
                 }
             )

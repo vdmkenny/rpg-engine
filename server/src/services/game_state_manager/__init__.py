@@ -3094,6 +3094,16 @@ class GameStateManager:
         async with self._db_session() as db:
             from server.src.models.player import Player
             
+            # Default appearance for new players (required for paperdoll rendering)
+            default_appearance = {
+                "body_type": "male",
+                "skin_tone": "light",
+                "head_type": "human/male",
+                "hair_style": "plain",
+                "hair_color": "brown",
+                "eye_color": "brown",
+            }
+            
             # Create player record
             player = Player(
                 username=username,
@@ -3101,6 +3111,7 @@ class GameStateManager:
                 x_coord=x,
                 y_coord=y,
                 map_id=map_id,
+                appearance=default_appearance,
             )
             
             db.add(player)

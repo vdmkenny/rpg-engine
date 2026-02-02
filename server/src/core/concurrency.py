@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import logging
 
-from glide import GlideClient
+from glide import GlideClient, Batch
 from prometheus_client import Counter, Histogram, Gauge
 
 from server.src.core.logging_config import get_logger
@@ -403,99 +403,56 @@ class ValkeyAtomicOperations:
         self.base_retry_delay = base_retry_delay  # Base delay for exponential backoff
     
     @asynccontextmanager
-    async def transaction(self, description: str = "valkey_transaction") -> AsyncGenerator[GlideClient, None]:
+    async def transaction(self, description: str = "valkey_transaction") -> AsyncGenerator[Batch, None]:
         """
-        Execute Valkey operations within a transaction (MULTI/EXEC) with retry logic.
+        Execute Valkey operations within an atomic batch (transaction).
         
         Args:
             description: Description for monitoring purposes
             
         Yields:
-            Valkey client configured for transaction mode
+            Batch object to queue operations on. Operations are executed when context exits.
         """
         start_time = time.time()
-        last_error = None
         
-        for attempt in range(self.max_retries + 1):
-            try:
-                # Add delay for retries (exponential backoff)
-                if attempt > 0:
-                    delay = self.base_retry_delay * (2 ** (attempt - 1))
-                    await asyncio.sleep(delay)
-                    logger.debug(
-                        "Retrying Valkey transaction",
-                        extra={
-                            "description": description,
-                            "attempt": attempt + 1,
-                            "delay": delay
-                        }
-                    )
-                
-                # Start Valkey transaction
-                transaction_client = self.valkey.multi()
-                
-                logger.debug(
-                    "Valkey transaction started",
-                    extra={
-                        "description": description,
-                        "attempt": attempt + 1
-                    }
-                )
-                
-                yield transaction_client
-                
-                # Execute transaction
-                results = await transaction_client.exec()
-                
-                duration = time.time() - start_time
-                VALKEY_TRANSACTION_DURATION.observe(duration)
-                
-                logger.debug(
-                    "Valkey transaction completed",
-                    extra={
-                        "description": description,
-                        "duration": duration,
-                        "operations_count": len(results) if results else 0,
-                        "attempts": attempt + 1
-                    }
-                )
-                
-                # Success - exit retry loop
-                return
-                
-            except Exception as e:
-                last_error = e
-                duration = time.time() - start_time
-                
-                if attempt < self.max_retries:
-                    logger.warning(
-                        "Valkey transaction failed, retrying",
-                        extra={
-                            "description": description,
-                            "duration": duration,
-                            "error": str(e),
-                            "attempt": attempt + 1,
-                            "max_retries": self.max_retries
-                        }
-                    )
-                    continue
-                else:
-                    # Final attempt failed
-                    logger.error(
-                        "Valkey transaction failed after all retries",
-                        extra={
-                            "description": description,
-                            "duration": duration,
-                            "error": str(e),
-                            "total_attempts": attempt + 1,
-                            "traceback": traceback.format_exc()
-                        }
-                    )
-                    raise
+        # Create atomic batch (equivalent to MULTI/EXEC transaction)
+        batch = Batch(is_atomic=True)
         
-        # This should never be reached due to the raise above, but just in case
-        if last_error:
-            raise last_error
+        logger.debug(
+            "Valkey transaction started",
+            extra={"description": description}
+        )
+        
+        try:
+            yield batch
+            
+            # Execute the batch atomically when context exits
+            results = await self.valkey.exec(batch, raise_on_error=True)
+            
+            duration = time.time() - start_time
+            VALKEY_TRANSACTION_DURATION.observe(duration)
+            
+            logger.debug(
+                "Valkey transaction completed",
+                extra={
+                    "description": description,
+                    "duration": duration,
+                    "operations_count": len(results) if results else 0,
+                }
+            )
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            logger.error(
+                "Valkey transaction failed",
+                extra={
+                    "description": description,
+                    "duration": duration,
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
+                }
+            )
+            raise
     
     async def atomic_player_update(
         self, 

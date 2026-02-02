@@ -113,10 +113,10 @@ class GSMAtomicOperations:
         """
         valkey_ops = self._get_valkey_ops()
         
-        async def _hp_operation(tx):
+        try:
             player_key = f"player:{player_id}"
             
-            # Get current player state
+            # Get current player state (before transaction)
             current_data = await self.gsm.valkey.hgetall(player_key)
             if not current_data:
                 return False
@@ -131,24 +131,21 @@ class GSMAtomicOperations:
             if new_max_hp is not None:
                 player_data["max_hp"] = str(new_max_hp)
             
-            # Write updated player state
-            await tx.hset(player_key, player_data)
-            
-            # Update equipment if changes provided
-            if equipment_changes:
-                equipment_key = f"equipment:{player_id}"
-                for slot, equipment_data in equipment_changes.items():
-                    await tx.hset(equipment_key, {slot: json.dumps(equipment_data)})
-                await tx.sadd("dirty:equipment", [str(player_id)])
-            
-            # Mark position as dirty (for HP sync)
-            await tx.sadd("dirty:position", [str(player_id)])
+            async with valkey_ops.transaction(f"hp_update_player_{player_id}") as tx:
+                # Write updated player state (Batch methods are synchronous)
+                tx.hset(player_key, player_data)
+                
+                # Update equipment if changes provided
+                if equipment_changes:
+                    equipment_key = f"equipment:{player_id}"
+                    for slot, equipment_data in equipment_changes.items():
+                        tx.hset(equipment_key, {slot: json.dumps(equipment_data)})
+                    tx.sadd("dirty:equipment", [str(player_id)])
+                
+                # Mark position as dirty (for HP sync)
+                tx.sadd("dirty:position", [str(player_id)])
             
             return True
-        
-        try:
-            async with valkey_ops.transaction(f"hp_update_player_{player_id}") as tx:
-                return await _hp_operation(tx)
                 
         except Exception as e:
             logger.error(
@@ -183,10 +180,10 @@ class GSMAtomicOperations:
         """
         valkey_ops = self._get_valkey_ops()
         
-        async def _position_operation(tx):
+        try:
             player_key = f"player:{player_id}"
             
-            # Get current player state
+            # Get current player state (before transaction)
             current_data = await self.gsm.valkey.hgetall(player_key)
             if not current_data:
                 return False
@@ -201,17 +198,14 @@ class GSMAtomicOperations:
             player_data["y"] = str(y)  
             player_data["map_id"] = map_id
             
-            # Write updated state
-            await tx.hset(player_key, player_data)
-            
-            # Mark as dirty for database sync
-            await tx.sadd("dirty:position", [str(player_id)])
+            async with valkey_ops.transaction(f"position_update_player_{player_id}") as tx:
+                # Write updated state (Batch methods are synchronous)
+                tx.hset(player_key, player_data)
+                
+                # Mark as dirty for database sync
+                tx.sadd("dirty:position", [str(player_id)])
             
             return True
-        
-        try:
-            async with valkey_ops.transaction(f"position_update_player_{player_id}") as tx:
-                return await _position_operation(tx)
                 
         except Exception as e:
             logger.error(

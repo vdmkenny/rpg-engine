@@ -139,8 +139,8 @@ class GSMBatchOps:
             
             # Clear dirty flags atomically AFTER successful database commit
             async with atomic_ops.transaction("position_sync_cleanup") as tx:
-                # Clear all position flags at once
-                await tx.delete(["dirty:position"])
+                # Clear all position flags at once (Batch methods are synchronous)
+                tx.delete(["dirty:position"])
                 
             logger.debug(
                 "Synced player positions",
@@ -198,7 +198,7 @@ class GSMBatchOps:
             # Use atomic transaction to ensure all flags are cleared together
             async with atomic_ops.transaction("inventory_sync_cleanup") as tx:
                 for player_id in dirty_players:
-                    await tx.srem("dirty:inventory", str(player_id))
+                    tx.srem("dirty:inventory", [str(player_id)])
                 
             logger.debug("Inventory sync completed", extra={"player_count": len(dirty_players)})
             
@@ -255,7 +255,7 @@ class GSMBatchOps:
             # Clear dirty flags atomically AFTER successful database commit
             async with atomic_ops.transaction("equipment_sync_cleanup") as tx:
                 for player_id in dirty_players:
-                    await tx.srem("dirty:equipment", str(player_id))
+                    tx.srem("dirty:equipment", [str(player_id)])
                 
             logger.debug("Equipment sync completed", extra={"player_count": len(dirty_players)})
             
@@ -311,7 +311,7 @@ class GSMBatchOps:
             # Clear dirty flags atomically AFTER successful database commit
             async with atomic_ops.transaction("skills_sync_cleanup") as tx:
                 for player_id in dirty_players:
-                    await tx.srem("dirty:skills", str(player_id))
+                    tx.srem("dirty:skills", [str(player_id)])
                 
             logger.debug("Skills sync completed", extra={"player_count": len(dirty_players)})
             
@@ -382,7 +382,7 @@ class GSMBatchOps:
             # Clear dirty flags atomically AFTER successful database commit
             async with atomic_ops.transaction("ground_items_sync_cleanup") as tx:
                 for map_id in dirty_maps:
-                    await tx.srem("dirty:ground_items", map_id)
+                    tx.srem("dirty:ground_items", [map_id])
                 
             logger.debug("Ground items sync completed", extra={"map_count": len(dirty_maps)})
             

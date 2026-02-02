@@ -8,6 +8,8 @@ entity respawn logic.
 import traceback
 from typing import Dict, List, Optional, Set, Tuple, Union
 
+from glide import RangeByScore, ScoreBoundary
+
 from server.src.core.entities import (
     EntityState,
     EntityType,
@@ -172,10 +174,13 @@ class EntitySpawnService:
         
         # Get entities ready to respawn (score <= current time)
         current_time = _utc_timestamp()
-        ready_to_respawn = await gsm.valkey.zrangebyscore(
+        score_query = RangeByScore(
+            start=ScoreBoundary(0, is_inclusive=True),
+            end=ScoreBoundary(current_time, is_inclusive=True),
+        )
+        ready_to_respawn = await gsm.valkey.zrange(
             ENTITY_RESPAWN_QUEUE_KEY,
-            min=0,
-            max=current_time,
+            score_query,
         )
         
         if not ready_to_respawn:

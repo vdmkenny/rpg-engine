@@ -1,5 +1,11 @@
 """
-Refactored RPG Client - Main client class using separated components.
+Refactored RPG Client - Thin client architecture.
+
+All game logic is server-side. This client:
+- Receives state from server via WebSocket
+- Renders visuals based on server state
+- Sends user input commands to server
+- Downloads sprites/assets from server via HTTP
 """
 
 import pygame
@@ -8,704 +14,1175 @@ import websockets
 import msgpack
 import aiohttp
 import sys
-import json
 import os
 import time
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 # Import common protocol
 workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(workspace_root)
-from common.src.protocol import MessageType, WSMessage, Direction, ChatChannel
 
-# Import our separated components
+from common.src.protocol import (
+    MessageType, WSMessage, Direction, ChatChannel,
+    COMMAND_TYPES, QUERY_TYPES, EVENT_TYPES, RESPONSE_TYPES,
+    PROTOCOL_VERSION
+)
+
+# Import client components
 from game_states import GameState
-from entities import Player, FloatingMessage
+from client_state import ClientGameState, EntityType, Entity, GroundItem, HitSplat
+from protocol_handler import ProtocolHandler
 from chunk_manager import ChunkManager
-from ui_components import InputField, Button, ChatWindow
 from tileset_manager import TilesetManager
+from sprite_manager import SpriteManager
+from paperdoll_renderer import PaperdollRenderer, create_fallback_sprite
+from ui_panels import (
+    Colors, UIPanel, InventoryPanel, EquipmentPanel, StatsPanel,
+    StatusOrb, Minimap, ChatWindow, ContextMenu, ContextMenuItem, Tooltip,
+    HelpPanel, HelpButton, LogoutButton, TabbedSidePanel
+)
+from common.src.sprites.enums import AnimationType
 
-# Screen Constants
+# =============================================================================
+# CONSTANTS
+# =============================================================================
+
 WINDOW_WIDTH = 1024
 WINDOW_HEIGHT = 768
 FPS = 60
-
-# Colors
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
-RED = (255, 0, 0)
-GREEN = (0, 255, 0)
-BLUE = (0, 0, 255)
-GRAY = (128, 128, 128)
-BROWN = (139, 69, 19)
-
-# Game Constants
 TILE_SIZE = 32
-MILLISECONDS_TO_SECONDS = 1000.0
-MOVEMENT_ANIMATION_DURATION = 0.2  # seconds
-CLIENT_MOVE_COOLDOWN = 0.2  # seconds
-ANIMATION_START = -1000.0  # Far in the past so first move is allowed
-ANIMATION_COMPLETE = 1.0
-WEBSOCKET_TIMEOUT = 0.1  # seconds
-CHUNK_REQUEST_DISTANCE = 8  # tiles
+CHUNK_SIZE = 16
 
+# Movement timing
+MOVE_COOLDOWN = 0.5  # seconds between moves (must match server rate limit)
+MOVE_DURATION = 0.2  # animation duration
+
+# Network
+WEBSOCKET_TIMEOUT = 0.05  # seconds
+CHUNK_REQUEST_DISTANCE = 8  # tiles before requesting new chunks
+
+# Server
+SERVER_BASE_URL = "http://localhost:8000"
+WEBSOCKET_URL = "ws://localhost:8000/ws"
+
+# Client protocol support
+CLIENT_SUPPORTED_PROTOCOL = "2.0"  # Minimum protocol version this client supports
+
+
+# =============================================================================
+# MAIN CLIENT CLASS
+# =============================================================================
 
 class RPGClient:
     """
-    Main RPG client application using Pygame.
+    Thin RPG client - renders server state and sends user input.
+    
+    All game logic is handled server-side. The client:
+    1. Authenticates via HTTP
+    2. Connects WebSocket for real-time updates
+    3. Renders game state received from server
+    4. Sends user commands (move, attack, use item, etc.)
+    5. Downloads sprites/assets from server HTTP endpoints
     """
-
+    
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
         pygame.display.set_caption("RPG Client")
         self.clock = pygame.time.Clock()
+        
+        # Fonts
         self.font = pygame.font.Font(None, 36)
         self.small_font = pygame.font.Font(None, 24)
-
-        # Game state
+        self.tiny_font = pygame.font.Font(None, 18)
+        
+        # Game state (received from server)
+        self.game_state = ClientGameState()
         self.state = GameState.LOGIN
-        self.player = Player()
-        self.other_players = {}  # Track other players by username
-        self.camera_x = 0
-        self.camera_y = 0
-        self.target_camera_x = 0
-        self.target_camera_y = 0
-        self.chunk_manager = ChunkManager()
         
-        # Tileset management
-        self.tileset_manager = TilesetManager()
-        self.current_map_id = None
-
+        # Protocol handler for WebSocket communication
+        self.protocol = ProtocolHandler()
+        self._register_event_handlers()
+        
         # Network
-        self.websocket = None
-        self.jwt_token = None
-
-        # Movement and timing
-        self.keys_pressed = set()  # Track currently held keys
-        self.last_move_time = ANIMATION_START  # Track timing for movement rate limiting
-        self.move_cooldown = CLIENT_MOVE_COOLDOWN  # Minimum time between moves (configurable)
-
-        # UI elements
-        self.create_ui_elements()
-
-        # Status
+        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
+        self.jwt_token: Optional[str] = None
+        self.http_session: Optional[aiohttp.ClientSession] = None
+        
+        # Map and rendering
+        self.chunk_manager = ChunkManager()
+        self.tileset_manager = TilesetManager()
+        self.sprite_manager = SpriteManager(SERVER_BASE_URL)
+        self.paperdoll_renderer = PaperdollRenderer(self.sprite_manager)
+        self.current_map_id: Optional[str] = None
+        
+        # Camera
+        self.camera_x = 0.0
+        self.camera_y = 0.0
+        self.target_camera_x = 0.0
+        self.target_camera_y = 0.0
+        
+        # Input state
+        self.keys_pressed: set = set()
+        self.last_move_time = 0.0
+        
+        # UI Components
+        self._init_ui()
+        
+        # Login form fields
+        self.username_text = ""
+        self.password_text = ""
+        self.email_text = ""
+        self.active_field = "username"
         self.status_message = ""
-        self.status_color = BLACK
-
-        # Chat system
-        chat_x = 10
-        chat_y = WINDOW_HEIGHT - 250
-        chat_width = 400
-        chat_height = 200
-        self.chat_window = ChatWindow(chat_x, chat_y, chat_width, chat_height, self.small_font, self)
-
-    def create_ui_elements(self):
-        """Create UI elements for forms."""
-        center_x = WINDOW_WIDTH // 2
-
-        # Login form
-        self.username_field = InputField(
-            center_x - 150, 300, 300, 40, self.font, "Username"
+        self.status_color = Colors.TEXT_WHITE
+    
+    def _init_ui(self) -> None:
+        """Initialize UI components."""
+        # Status orbs (top-left area)
+        self.hp_orb = StatusOrb(70, 70, 25, Colors.HP_GREEN, "HP")
+        self.prayer_orb = StatusOrb(40, 110, 20, Colors.TEXT_CYAN, "Pray")
+        self.run_orb = StatusOrb(100, 110, 20, Colors.TEXT_YELLOW, "Run")
+        
+        # Minimap (top-right)
+        self.minimap = Minimap(WINDOW_WIDTH - 85, 75, 60)
+        
+        # OSRS-style tabbed side panel (bottom-right, mirroring chat position)
+        self.side_panel = TabbedSidePanel(
+            WINDOW_WIDTH - 214, WINDOW_HEIGHT - 322,  # Same height as chat (312 panel + 10 margin)
+            on_inventory_click=self._on_inventory_click,
+            on_equipment_click=self._on_equipment_click,
+            on_logout=self._on_logout_click
         )
-        self.password_field = InputField(
-            center_x - 150, 360, 300, 40, self.font, "Password", password=True
+        
+        # Keep old panels for compatibility but hide them
+        panel_x = WINDOW_WIDTH - 170
+        self.inventory_panel = InventoryPanel(
+            panel_x, 300,
+            on_slot_click=self._on_inventory_click
         )
-        self.email_field = InputField(center_x - 150, 420, 300, 40, self.font, "Email")
-
-        self.login_button = Button(center_x - 80, 480, 160, 40, "Login", self.font)
-        self.register_button = Button(
-            center_x - 80, 530, 160, 40, "Register", self.font
+        self.inventory_panel.visible = False
+        
+        self.equipment_panel = EquipmentPanel(
+            panel_x, 50,
+            on_slot_click=self._on_equipment_click
         )
-        self.switch_button = Button(
-            center_x - 80, 580, 160, 40, "Switch to Register", self.font
+        self.equipment_panel.visible = False
+        
+        self.stats_panel = StatsPanel(panel_x - 210, 50)
+        self.stats_panel.visible = False
+        
+        # Chat window (bottom-left, wider for readability)
+        self.chat_window = ChatWindow(
+            10, WINDOW_HEIGHT - 220,
+            550, 210,
+            self.small_font,
+            on_send=self._on_chat_send
         )
-
-    def set_status(self, message, color=BLACK):
-        """Set status message."""
-        self.status_message = message
-        self.status_color = color
-
-    async def send_message(self, message):
-        """Send a message via WebSocket."""
-        if not self.websocket:
+        
+        # Context menu and tooltip
+        self.context_menu = ContextMenu()
+        self.tooltip = Tooltip()
+        
+        # Help panel and button
+        self.help_panel = HelpPanel(WINDOW_WIDTH // 2 - 140, WINDOW_HEIGHT // 2 - 170)
+        self.help_button = HelpButton(WINDOW_WIDTH - 40, 10)
+        
+        # Protocol version warning
+        self.protocol_warning: Optional[str] = None
+        self.protocol_warning_time: float = 0.0
+        
+        # Tab buttons for panel switching (legacy)
+        self.active_panel = "inventory"
+    
+    def _register_event_handlers(self) -> None:
+        """Register handlers for server events."""
+        self.protocol.register_event_handler(
+            MessageType.EVENT_WELCOME, self._handle_welcome
+        )
+        self.protocol.register_event_handler(
+            MessageType.EVENT_GAME_STATE_UPDATE, self._handle_game_state_update
+        )
+        self.protocol.register_event_handler(
+            MessageType.EVENT_STATE_UPDATE, self._handle_state_update
+        )
+        self.protocol.register_event_handler(
+            MessageType.EVENT_GAME_UPDATE, self._handle_game_update
+        )
+        self.protocol.register_event_handler(
+            MessageType.EVENT_CHAT_MESSAGE, self._handle_chat_message
+        )
+        self.protocol.register_event_handler(
+            MessageType.EVENT_PLAYER_JOINED, self._handle_player_joined
+        )
+        self.protocol.register_event_handler(
+            MessageType.EVENT_PLAYER_LEFT, self._handle_player_left
+        )
+        self.protocol.register_event_handler(
+            MessageType.EVENT_COMBAT_ACTION, self._handle_combat_action
+        )
+        self.protocol.register_event_handler(
+            MessageType.EVENT_PLAYER_DIED, self._handle_player_died
+        )
+        self.protocol.register_event_handler(
+            MessageType.EVENT_PLAYER_RESPAWN, self._handle_player_respawn
+        )
+        self.protocol.register_event_handler(
+            MessageType.RESP_DATA, self._handle_data_response
+        )
+        self.protocol.register_event_handler(
+            MessageType.RESP_ERROR, self._handle_error_response
+        )
+        self.protocol.register_event_handler(
+            MessageType.EVENT_SERVER_SHUTDOWN, self._handle_server_shutdown
+        )
+    
+    # =========================================================================
+    # NETWORK - HTTP Authentication
+    # =========================================================================
+    
+    async def _get_http_session(self) -> aiohttp.ClientSession:
+        """Get or create HTTP session."""
+        if self.http_session is None:
+            self.http_session = aiohttp.ClientSession()
+        return self.http_session
+    
+    async def attempt_login(self) -> None:
+        """Attempt login via HTTP, then connect WebSocket."""
+        if not self.username_text or not self.password_text:
+            self.status_message = "Please enter username and password"
+            self.status_color = Colors.TEXT_RED
             return
+        
+        self.status_message = "Logging in..."
+        self.status_color = Colors.TEXT_WHITE
+        
+        try:
+            session = await self._get_http_session()
             
-        packed_data = msgpack.packb(message.model_dump())
-        if packed_data is not None:
-            await self.websocket.send(packed_data)
-
-    async def send_chat_message(self, channel, message):
-        """Send a chat message through WebSocket."""
-        if not self.websocket:
-            print("Cannot send message - not connected to server")
-            return
-
-        try:
-            chat_message = WSMessage(
-                type=MessageType.SEND_CHAT_MESSAGE,
-                payload={
-                    "channel": channel.lower(),
-                    "message": message
-                }
-            )
-
-            await self.send_message(chat_message)
-        except Exception as e:
-            print(f"Error sending chat message: {e}")
-
-    async def process_pending_chat(self):
-        """Process any pending chat messages from the chat window."""
-        if self.chat_window.pending_message:
-            channel, message = self.chat_window.pending_message
-            self.chat_window.pending_message = None
-            await self.send_chat_message(channel, message)
-
-    async def attempt_login(self):
-        """Attempt to login with entered credentials."""
-        username = self.username_field.text
-        password = self.password_field.text
-
-        if not username or not password:
-            self.set_status("Please enter username and password", RED)
-            return
-
-        self.set_status("Logging in...", WHITE)
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                login_data = {"username": username, "password": password}
-
-                async with session.post(
-                    "http://localhost:8000/auth/login", data=login_data
-                ) as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        self.set_status(f"Login failed: {error_text}", RED)
-                        return
-
-                    login_response = await resp.json()
-                    self.jwt_token = login_response.get("access_token")
-
-                    if not self.jwt_token:
-                        self.set_status("No access token received", RED)
-                        return
-                    
-                    # Set up tileset manager with authentication
-                    self.tileset_manager.set_auth_token(self.jwt_token)
-
+            async with session.post(
+                f"{SERVER_BASE_URL}/auth/login",
+                data={"username": self.username_text, "password": self.password_text}
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    self.status_message = f"Login failed: {error_text}"
+                    self.status_color = Colors.TEXT_RED
+                    return
+                
+                data = await resp.json()
+                self.jwt_token = data.get("access_token")
+            
+            if not self.jwt_token:
+                self.status_message = "No access token received"
+                self.status_color = Colors.TEXT_RED
+                return
+            
+            # Set up tileset manager with auth
+            self.tileset_manager.set_auth_token(self.jwt_token)
+            
+            # Set up sprite manager with auth for paperdoll sprites
+            self.sprite_manager.set_auth_token(self.jwt_token)
+            
             # Connect WebSocket
-            try:
-                self.websocket = await websockets.connect(
-                    "ws://localhost:8000/ws", 
-                    additional_headers={"Authorization": f"Bearer {self.jwt_token}"}
-                )
-
-                # Send authentication message
-                auth_message = WSMessage(
-                    type=MessageType.AUTHENTICATE,
-                    payload={"token": self.jwt_token}
-                )
-
-                await self.send_message(auth_message)
-
-                self.player.username = username
-                self.state = GameState.PLAYING
-                self.set_status("Connected!", GREEN)
-
-            except Exception as e:
-                self.set_status(f"WebSocket connection failed: {e}", RED)
-
+            await self._connect_websocket()
+            
         except Exception as e:
-            self.set_status(f"Connection error: {e}", RED)
-
-    async def attempt_register(self):
-        """Attempt to register with entered credentials."""
-        username = self.username_field.text
-        password = self.password_field.text
-        email = self.email_field.text
-
-        if not username or not password or not email:
-            self.set_status("Please fill all fields", RED)
+            self.status_message = f"Connection error: {e}"
+            self.status_color = Colors.TEXT_RED
+    
+    async def attempt_register(self) -> None:
+        """Attempt registration via HTTP."""
+        if not self.username_text or not self.password_text or not self.email_text:
+            self.status_message = "Please fill all fields"
+            self.status_color = Colors.TEXT_RED
             return
-
-        self.set_status("Registering...", WHITE)
-
+        
+        self.status_message = "Registering..."
+        self.status_color = Colors.TEXT_WHITE
+        
         try:
-            async with aiohttp.ClientSession() as session:
-                register_data = {
-                    "username": username,
-                    "password": password,
-                    "email": email,
+            session = await self._get_http_session()
+            
+            async with session.post(
+                f"{SERVER_BASE_URL}/auth/register",
+                json={
+                    "username": self.username_text,
+                    "password": self.password_text,
+                    "email": self.email_text
                 }
-
-                async with session.post(
-                    "http://localhost:8000/auth/register", json=register_data
-                ) as resp:
-                    if resp.status == 201:  # HTTP 201 Created
-                        self.set_status(
-                            "Registration successful! You can now login.", GREEN
-                        )
-                        self.state = GameState.LOGIN
-                        self.switch_button.text = "Switch to Register"
-                    else:
-                        error_text = await resp.text()
-                        self.set_status(f"Registration failed: {error_text}", RED)
-
-        except Exception as e:
-            self.set_status(f"Connection error: {e}", RED)
-
-    def draw_login_form(self):
-        """Draw login/register form."""
-        self.screen.fill(BLACK)
-
-        # Draw title
-        title = "Login" if self.state == GameState.LOGIN else "Register"
-        title_surface = self.font.render(title, True, WHITE)
-        title_rect = title_surface.get_rect(center=(WINDOW_WIDTH // 2, 200))
-        self.screen.blit(title_surface, title_rect)
-
-        # Draw fields
-        if self.state == GameState.LOGIN:
-            fields = [self.username_field, self.password_field]
-            buttons = [self.login_button, self.switch_button]
-        else:
-            fields = [self.username_field, self.password_field, self.email_field]
-            buttons = [self.register_button, self.switch_button]
-
-        for field in fields:
-            field.draw(self.screen)
-
-        for button in buttons:
-            button.draw(self.screen)
-
-        # Draw status message
-        if self.status_message:
-            status_surface = self.font.render(self.status_message, True, self.status_color)
-            status_rect = status_surface.get_rect(center=(WINDOW_WIDTH // 2, 650))
-            self.screen.blit(status_surface, status_rect)
-
-    def draw_game(self):
-        """Draw the game view."""
-        # Clear screen
-        self.screen.fill(BLACK)
-
-        # Draw chunks
-        for chunk_key, chunk_data in self.chunk_manager.chunks.items():
-            chunk_x, chunk_y = chunk_key
-            self.draw_chunk(chunk_x, chunk_y, chunk_data)
-
-        # Draw players
-        self.draw_player(self.player.username, self.player)
-        for player_id, player in self.other_players.items():
-            self.draw_player(player_id, player)
-
-        # Draw floating messages
-        self.draw_floating_messages()
-
-        # Draw UI
-        fps = int(self.clock.get_fps())
-        fps_text = self.small_font.render(f"FPS: {fps}", True, WHITE)
-        self.screen.blit(fps_text, (10, 10))
-
-        # Draw chat window
-        self.chat_window.draw(self.screen)
-
-    def draw_chunk(self, chunk_x, chunk_y, chunk_data):
-        """Draw a single chunk."""
-        # Calculate chunk position in world coordinates
-        chunk_size = 16  # tiles per chunk
-        chunk_world_x = chunk_x * chunk_size * TILE_SIZE
-        chunk_world_y = chunk_y * chunk_size * TILE_SIZE
-
-        # Convert to screen coordinates
-        chunk_screen_x, chunk_screen_y = self.world_to_screen(chunk_world_x, chunk_world_y)
-
-        # Skip if chunk is not visible
-        if (chunk_screen_x > WINDOW_WIDTH or 
-            chunk_screen_y > WINDOW_HEIGHT or
-            chunk_screen_x + chunk_size * TILE_SIZE < 0 or
-            chunk_screen_y + chunk_size * TILE_SIZE < 0):
-            return
-
-        # Draw tiles in the chunk
-        tiles = chunk_data.get("tiles", [])
-        
-        if not tiles:
-            return
-        
-        # Handle both flat array and 2D array formats
-        if tiles and isinstance(tiles[0], list):
-            # 2D array format
-            for tile_y in range(min(chunk_size, len(tiles))):
-                for tile_x in range(min(chunk_size, len(tiles[tile_y]))):
-                    tile_type = tiles[tile_y][tile_x]
-                    self.draw_tile(
-                        chunk_screen_x + tile_x * TILE_SIZE,
-                        chunk_screen_y + tile_y * TILE_SIZE,
-                        tile_type
-                    )
-        else:
-            # Flat array format
-            for tile_y in range(chunk_size):
-                for tile_x in range(chunk_size):
-                    tile_index = tile_y * chunk_size + tile_x
-                    if tile_index < len(tiles):
-                        tile_type = tiles[tile_index]
-                        self.draw_tile(
-                            chunk_screen_x + tile_x * TILE_SIZE,
-                            chunk_screen_y + tile_y * TILE_SIZE,
-                            tile_type
-                        )
-
-    def draw_tile(self, screen_x, screen_y, tile_data):
-        """Draw a single tile using sprites when available, otherwise colors."""
-        # Handle new tile format with layers and properties
-        if isinstance(tile_data, dict):
-            properties = tile_data.get('properties', {})
-            collision_layers = properties.get('collision_layers', {})
-            
-            # Check if it's out of bounds
-            if properties.get('out_of_bounds', False):
-                color = (64, 64, 64)  # Dark gray for out of bounds
-                pygame.draw.rect(
-                    self.screen,
-                    color,
-                    (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE)
-                )
-                return
-            
-            # Handle multi-layer tiles
-            layers = tile_data.get('layers', [])
-            if layers:
-                # Draw each layer in order (bottom to top)
-                sprites_rendered = 0
-                for layer_info in layers:
-                    gid = layer_info.get('gid', 0)
-                    if gid > 0 and self.current_map_id:
-                        # Enable sprite rendering with correct tileset mapping
-                        sprite = self.tileset_manager.get_tile_sprite(gid, self.current_map_id)
-                        if sprite:
-                            self.screen.blit(sprite, (int(screen_x), int(screen_y)))
-                            sprites_rendered += 1
-                        # Continue to next layer even if this one fails - don't break!
-                        # Each layer should be independent
-                            
-                # Add collision overlay if needed
-                if collision_layers:
-                    self._draw_collision_overlay(screen_x, screen_y, collision_layers)
-                return
-            
-            # Handle single-layer tiles (backward compatibility)
-            tile_type = tile_data.get('gid', 0)
-            if tile_type > 0 and self.current_map_id:
-                sprite = self.tileset_manager.get_tile_sprite(tile_type, self.current_map_id)
-                if sprite:
-                    self.screen.blit(sprite, (int(screen_x), int(screen_y)))
-                    if collision_layers:
-                        self._draw_collision_overlay(screen_x, screen_y, collision_layers)
-                    return
+            ) as resp:
+                if resp.status == 201:
+                    self.status_message = "Registration successful! You can now login."
+                    self.status_color = Colors.TEXT_GREEN
+                    self.state = GameState.LOGIN
                 else:
-                    # Fallback to colored rectangle
-                    self._draw_fallback_tile(screen_x, screen_y, tile_type, collision_layers)
-                    return
-        else:
-            # Handle legacy integer tile types
-            tile_type = tile_data
-            self._draw_fallback_tile(screen_x, screen_y, tile_type, {})
-
-    def _draw_fallback_tile(self, screen_x, screen_y, tile_type, collision_layers):
-        """Draw a colored rectangle as fallback when sprites aren't available."""
-        # Determine color based on tile type or collision info
-        if collision_layers:
-            # Prioritize collision layers for visual feedback
-            if 'tree' in collision_layers:
-                color = (34, 139, 34)  # Forest green for trees
-            elif 'building' in collision_layers:
-                color = (139, 69, 19)  # Saddle brown for buildings
-            elif 'water' in collision_layers:
-                color = (30, 144, 255)  # Dodger blue for water
-            elif 'farm' in collision_layers:
-                color = (255, 215, 0)  # Gold for farm areas
-            elif 'grass' in collision_layers:
-                color = (50, 205, 50)  # Lime green for grass
-            elif 'obstacles' in collision_layers or 'collision' in collision_layers:
-                color = (105, 105, 105)  # Dim gray for obstacles
-            else:
-                # Fallback for unknown collision layers
-                color = (255, 69, 0)  # Red orange for unknown collision
-        elif isinstance(tile_type, int):
-            # Enhanced color mapping based on more granular GID ranges
-            if tile_type == 0:
-                color = (0, 0, 0)  # Black for empty
-            elif 1 <= tile_type <= 20:  # Basic ground tiles
-                color = (85, 107, 47)  # Dark olive green for ground
-            elif 21 <= tile_type <= 100:  # Decorative ground
-                color = (107, 142, 35)  # Olive drab
-            elif 101 <= tile_type <= 200:  # Various terrain
-                color = (154, 205, 50)  # Yellow green
-            elif 201 <= tile_type <= 300:  # More terrain
-                color = (124, 252, 0)  # Lawn green
-            elif 301 <= tile_type <= 400:  # Tree/nature tiles (this should be our tree layer!)
-                color = (34, 139, 34)  # Forest green for trees
-            elif 401 <= tile_type <= 576:  # Upper waterfall range
-                color = (70, 130, 180)  # Steel blue for waterfall
-            elif 577 <= tile_type <= 1000:  # Base chip tiles
-                color = (160, 82, 45)  # Saddle brown for base terrain
-            elif 1001 <= tile_type <= 1640:  # More base tiles
-                color = (210, 180, 140)  # Tan
-            elif 1641 <= tile_type <= 2000:  # Grass range start
-                color = (0, 128, 0)  # Green
-            elif 2001 <= tile_type <= 2168:  # Grass range end
-                color = (50, 205, 50)  # Lime green
-            elif 2169 <= tile_type <= 3000:  # Water range start
-                color = (0, 191, 255)  # Deep sky blue
-            elif 3001 <= tile_type <= 5240:  # Water range middle-end
-                color = (30, 144, 255)  # Dodger blue
-            elif 5241 <= tile_type <= 5288:  # Flower range
-                color = (255, 20, 147)  # Deep pink for flowers
-            else:
-                color = (128, 128, 128)  # Gray for unknown
-        else:
-            # Handle legacy types
-            if tile_type == 0:  # Grass
-                color = GREEN
-            elif tile_type == 1:  # Stone
-                color = GRAY
-            elif tile_type == 2:  # Water
-                color = BLUE
-            elif tile_type == 3:  # Sand
-                color = (255, 255, 0)  # Yellow
-            elif tile_type == 4:  # Wall/Rock
-                color = BROWN
-            else:
-                color = RED
-
-        # Draw colored rectangle
-        pygame.draw.rect(
-            self.screen,
-            color,
-            (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE)
-        )
-
-    def _draw_collision_overlay(self, screen_x, screen_y, collision_layers):
-        """Draw semi-transparent collision overlays."""
-        overlay = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
-        if 'tree' in collision_layers:
-            overlay.fill((34, 139, 34, 80))  # Semi-transparent green
-        elif 'building' in collision_layers:
-            overlay.fill((139, 69, 19, 80))  # Semi-transparent brown
-        elif 'water' in collision_layers:
-            overlay.fill((30, 144, 255, 80))  # Semi-transparent blue
-        elif 'farm' in collision_layers:
-            overlay.fill((255, 215, 0, 80))  # Semi-transparent gold
-        elif 'grass' in collision_layers:
-            overlay.fill((50, 205, 50, 80))  # Semi-transparent lime
-        elif 'obstacles' in collision_layers or 'collision' in collision_layers:
-            overlay.fill((105, 105, 105, 80))  # Semi-transparent gray
-        else:
-            overlay.fill((255, 69, 0, 80))  # Semi-transparent red orange
-        self.screen.blit(overlay, (int(screen_x), int(screen_y)))
-
-    def draw_player(self, player_id, player):
-        """Draw a player."""
-        # Convert world position to screen position
-        screen_x, screen_y = self.world_to_screen(
-            player.display_x * TILE_SIZE, 
-            player.display_y * TILE_SIZE
-        )
-
-        # Skip if player is not visible
-        if (screen_x < -TILE_SIZE or screen_y < -TILE_SIZE or
-            screen_x > WINDOW_WIDTH or screen_y > WINDOW_HEIGHT):
+                    error_text = await resp.text()
+                    self.status_message = f"Registration failed: {error_text}"
+                    self.status_color = Colors.TEXT_RED
+                    
+        except Exception as e:
+            self.status_message = f"Connection error: {e}"
+            self.status_color = Colors.TEXT_RED
+    
+    # =========================================================================
+    # NETWORK - WebSocket
+    # =========================================================================
+    
+    async def _connect_websocket(self) -> None:
+        """Connect to WebSocket and authenticate."""
+        try:
+            self.websocket = await websockets.connect(
+                WEBSOCKET_URL,
+                additional_headers={"Authorization": f"Bearer {self.jwt_token}"}
+            )
+            
+            # Send authentication command
+            auth_msg = self.protocol.create_command(
+                MessageType.CMD_AUTHENTICATE,
+                {"token": self.jwt_token}
+            )
+            await self._send_message(auth_msg)
+            
+            self.game_state.username = self.username_text
+            self.state = GameState.PLAYING
+            self.status_message = "Connected!"
+            self.status_color = Colors.TEXT_GREEN
+            
+            # Clear any stale sprite caches and start preloading common sprites
+            self.sprite_manager.clear_memory_cache()
+            self.sprite_manager.clear_failed()
+            self.paperdoll_renderer.clear_cache()
+            
+        except Exception as e:
+            self.status_message = f"WebSocket failed: {e}"
+            self.status_color = Colors.TEXT_RED
+    
+    async def _send_message(self, message: WSMessage) -> None:
+        """Send a message via WebSocket."""
+        if self.websocket:
+            packed = msgpack.packb(message.model_dump())
+            await self.websocket.send(packed)
+    
+    async def _receive_messages(self) -> None:
+        """Receive and process WebSocket messages."""
+        if not self.websocket:
             return
-
-        # Draw player sprite
-        color = self.get_player_color(player_id)
-        pygame.draw.rect(
-            self.screen,
-            color,
-            (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE)
-        )
-
-        # Draw player name
-        name_surface = self.small_font.render(player.username, True, WHITE)
-        name_x = int(screen_x + TILE_SIZE // 2 - name_surface.get_width() // 2)
-        name_y = int(screen_y - 20)
-        self.screen.blit(name_surface, (name_x, name_y))
-
-    def draw_floating_messages(self):
-        """Draw floating chat messages above players."""
-        current_time = time.time()
-
-        # Draw messages for main player
-        self.draw_player_floating_messages(self.player, current_time)
-
-        # Draw messages for other players
-        for player in self.other_players.values():
-            self.draw_player_floating_messages(player, current_time)
-
-    def draw_player_floating_messages(self, player, current_time):
-        """Draw floating messages for a specific player."""
-        screen_x, screen_y = self.world_to_screen(
-            player.display_x * TILE_SIZE, 
-            player.display_y * TILE_SIZE
-        )
-
-        # Draw messages stacked above the player
-        y_offset = 0
-        for message in player.floating_messages:
-            if not message.is_expired(current_time):
-                self.draw_floating_message(
-                    screen_x + TILE_SIZE // 2,
-                    screen_y - 40 - y_offset,
-                    message.message,
-                    message.get_alpha(current_time)
+        
+        try:
+            data = await asyncio.wait_for(
+                self.websocket.recv(),
+                timeout=WEBSOCKET_TIMEOUT
+            )
+            message = msgpack.unpackb(data, raw=False)
+            # DEBUG: Log all incoming message types
+            msg_type = message.get("type", "UNKNOWN")
+            if msg_type not in ("EVENT_GAME_STATE_UPDATE",):  # Skip noisy ones
+                print(f"[DEBUG] Received message type: {msg_type}")
+            await self.protocol.handle_message(message)
+            
+        except asyncio.TimeoutError:
+            pass  # Normal, no message waiting
+        except Exception as e:
+            print(f"WebSocket error: {e}")
+    
+    # =========================================================================
+    # EVENT HANDLERS - Server Events
+    # =========================================================================
+    
+    async def _handle_welcome(self, payload: Dict[str, Any]) -> None:
+        """Handle welcome event with initial player data."""
+        player_data = payload.get("player", {})
+        config_data = payload.get("config", {})
+        
+        # Display welcome message and motd in chat
+        welcome_message = payload.get("message", "")
+        motd = payload.get("motd", "")
+        if welcome_message:
+            self.chat_window.add_message("Server", welcome_message, ChatChannel.LOCAL.value)
+        if motd:
+            self.chat_window.add_message("MOTD", motd, ChatChannel.LOCAL.value)
+        
+        # Check protocol version from server (inside config object)
+        server_version = config_data.get("protocol_version", "1.0")
+        self._check_protocol_version(server_version)
+        
+        if player_data:
+            # Server sends nested position and hp objects
+            position = player_data.get("position", {})
+            hp_data = player_data.get("hp", {})
+            
+            self.game_state.x = position.get("x", 0) if position else 0
+            self.game_state.y = position.get("y", 0) if position else 0
+            self.game_state.map_id = position.get("map_id", "samplemap") if position else "samplemap"
+            self.game_state.current_hp = hp_data.get("current_hp", 10) if hp_data else 10
+            self.game_state.max_hp = hp_data.get("max_hp", 10) if hp_data else 10
+            
+            # Initialize display position
+            self.game_state.display_x = float(self.game_state.x)
+            self.game_state.display_y = float(self.game_state.y)
+            
+            # Update camera immediately
+            self._update_camera(instant=True)
+            
+            # Load tilesets for map
+            if self.game_state.map_id:
+                self.current_map_id = self.game_state.map_id
+                try:
+                    await self.tileset_manager.load_map_tilesets(self.current_map_id)
+                except Exception as e:
+                    print(f"Failed to load tilesets: {e}")
+            
+            # Request initial chunks
+            await self._request_chunks()
+            
+            # Request initial inventory/equipment/stats
+            await self._query_inventory()
+            await self._query_equipment()
+            await self._query_stats()
+        
+        # Update timing from config
+        if config_data:
+            self.game_state.move_duration = config_data.get("animation_duration", MOVE_DURATION)
+    
+    async def _handle_game_state_update(self, payload: Dict[str, Any]) -> None:
+        """Handle game state update (entity positions, etc.)."""
+        entities = payload.get("entities", [])
+        
+        for entity_data in entities:
+            entity_type = entity_data.get("type", "")
+            
+            if entity_type == "player":
+                username = entity_data.get("username", "")
+                
+                if username == self.game_state.username:
+                    # Update own player position
+                    new_x = entity_data.get("x", self.game_state.x)
+                    new_y = entity_data.get("y", self.game_state.y)
+                    self.game_state.update_player_position(new_x, new_y)
+                    
+                    # Update HP if provided
+                    if "current_hp" in entity_data:
+                        self.game_state.update_player_hp(
+                            entity_data.get("current_hp", self.game_state.current_hp),
+                            entity_data.get("max_hp", self.game_state.max_hp)
+                        )
+                    
+                    # Update visual state for paperdoll rendering
+                    if "visual_state" in entity_data:
+                        self.game_state.update_visual_state(
+                            entity_data.get("visual_state"),
+                            entity_data.get("visual_hash", "")
+                        )
+                        # Start preloading sprites in background
+                        asyncio.create_task(self._preload_player_sprites())
+                    
+                    # Check if we need new chunks
+                    await self._check_chunk_request()
+                else:
+                    # Update other player
+                    self.game_state._update_other_player(username, entity_data)
+                    # Preload other player sprites if we have visual state
+                    other_player = self.game_state.other_players.get(username)
+                    if other_player and other_player.visual_state:
+                        asyncio.create_task(self._preload_entity_sprites(other_player))
+            
+            elif entity_type in ["npc", "monster", "humanoid"]:
+                instance_id = entity_data.get("instance_id", 0)
+                self.game_state._update_entity(instance_id, entity_data)
+            
+            elif entity_type == "ground_item":
+                ground_item_id = entity_data.get("ground_item_id", "")
+                self.game_state._update_ground_item(ground_item_id, entity_data)
+        
+        # Handle removed entities
+        removed = payload.get("removed_entities", [])
+        for entity_id in removed:
+            try:
+                int_id = int(entity_id)
+                self.game_state.entities.pop(int_id, None)
+            except ValueError:
+                self.game_state.ground_items.pop(entity_id, None)
+    
+    async def _handle_state_update(self, payload: Dict[str, Any]) -> None:
+        """Handle state update (inventory, equipment, skills changes)."""
+        systems = payload.get("systems", {})
+        
+        if "inventory" in systems:
+            self.game_state.set_inventory(systems["inventory"])
+            self._update_inventory_ui()
+        
+        if "equipment" in systems:
+            self.game_state.set_equipment(systems["equipment"])
+            self._update_equipment_ui()
+        
+        if "stats" in systems:
+            self.game_state.set_stats(systems["stats"])
+        
+        if "skills" in systems:
+            self.game_state.set_skills(systems["skills"])
+            self._update_stats_ui()
+        
+        if "player" in systems:
+            player = systems["player"]
+            if "current_hp" in player:
+                self.game_state.update_player_hp(
+                    player.get("current_hp"),
+                    player.get("max_hp", self.game_state.max_hp)
                 )
-                y_offset += 25
-
-    def draw_floating_message(self, center_x, center_y, text, alpha):
-        """Draw a single floating message."""
-        # Create message surface
-        text_surface = self.small_font.render(text, True, WHITE)
-        text_width, text_height = text_surface.get_size()
-
-        # Create bubble background
-        bubble_padding = 8
-        bubble_width = text_width + bubble_padding * 2
-        bubble_height = text_height + bubble_padding * 2
-
-        bubble_surface = pygame.Surface((bubble_width, bubble_height), pygame.SRCALPHA)
-        bubble_color = (0, 0, 0, min(180, alpha))
-        pygame.draw.rect(bubble_surface, bubble_color, bubble_surface.get_rect(), border_radius=8)
-
-        # Position bubble centered above player
-        bubble_x = int(center_x - bubble_width // 2)
-        bubble_y = int(center_y - bubble_height)
-
-        # Apply alpha to text
-        if alpha < 255:
-            text_surface.set_alpha(alpha)
-
-        # Draw bubble and text
-        self.screen.blit(bubble_surface, (bubble_x, bubble_y))
-        self.screen.blit(text_surface, (bubble_x + bubble_padding, bubble_y + bubble_padding))
-
-    def world_to_screen(self, world_x, world_y):
-        """Convert world coordinates to screen coordinates."""
-        return world_x - self.camera_x, world_y - self.camera_y
-
-    def get_player_color(self, player_id):
-        """Get a color for a player based on their ID."""
-        # Generate a color based on player ID
-        hash_val = hash(player_id)
-        r = (hash_val & 0xFF0000) >> 16
-        g = (hash_val & 0x00FF00) >> 8
-        b = hash_val & 0x0000FF
-
-        # Ensure colors are bright enough
-        r = max(100, r)
-        g = max(100, g)
-        b = max(100, b)
-
-        return (r, g, b)
-
-    async def handle_login_events(self, event):
-        """Handle login/register form events."""
-        if self.state == GameState.LOGIN:
-            fields = [self.username_field, self.password_field]
-            buttons = [self.login_button, self.switch_button]
-        else:  # REGISTER
-            fields = [self.username_field, self.password_field, self.email_field]
-            buttons = [self.register_button, self.switch_button]
-
-        # Handle field events
-        for field in fields:
-            field.handle_event(event)
-
-        # Handle button events
-        for button in buttons:
-            if button.handle_event(event):
-                if button == self.login_button:
-                    await self.attempt_login()
-                elif button == self.register_button:
-                    await self.attempt_register()
-                elif button == self.switch_button:
-                    if self.state == GameState.LOGIN:
-                        self.state = GameState.REGISTER
-                        self.switch_button.text = "Switch to Login"
-                    else:
-                        self.state = GameState.LOGIN
-                        self.switch_button.text = "Switch to Register"
-
-    async def handle_game_events(self, event):
-        """Handle game events."""
-        # Handle chat window events first
-        if self.chat_window.handle_event(event):
+    
+    async def _handle_game_update(self, payload: Dict[str, Any]) -> None:
+        """Handle game update (entities visibility changes)."""
+        entities = payload.get("entities", [])
+        removed = payload.get("removed_entities", [])
+        
+        print(f"[DEBUG] _handle_game_update: received {len(entities)} entities, {len(removed)} removed")
+        for e in entities:
+            print(f"[DEBUG]   Entity: type={e.get('type')}, username={e.get('username')}, x={e.get('x')}, y={e.get('y')}")
+        
+        self.game_state.update_entities(entities, removed)
+    
+    async def _handle_chat_message(self, payload: Dict[str, Any]) -> None:
+        """Handle incoming chat message."""
+        sender = payload.get("sender", payload.get("username", "Unknown"))
+        message = payload.get("message", "")
+        channel = payload.get("channel", ChatChannel.LOCAL.value)
+        
+        self.chat_window.add_message(sender, message, channel)
+        
+        # Add floating message for local chat
+        if channel == ChatChannel.LOCAL.value:
+            if sender == self.game_state.username:
+                self.game_state.add_floating_message(message)
+            elif sender in self.game_state.other_players:
+                # Add to other player's floating messages
+                pass  # TODO: track floating messages per player
+    
+    async def _handle_player_joined(self, payload: Dict[str, Any]) -> None:
+        """Handle player joined event."""
+        player_data = payload.get("player", {})
+        username = player_data.get("username", "")
+        
+        if username and username != self.game_state.username:
+            self.chat_window.add_message("System", f"{username} has joined.", ChatChannel.LOCAL.value)
+    
+    async def _handle_player_left(self, payload: Dict[str, Any]) -> None:
+        """Handle player left event."""
+        username = payload.get("username", "")
+        
+        if username:
+            self.game_state.remove_player(username)
+            self.chat_window.add_message("System", f"{username} has left.", ChatChannel.LOCAL.value)
+    
+    async def _handle_combat_action(self, payload: Dict[str, Any]) -> None:
+        """Handle combat action event (hit splats, etc.)."""
+        attacker = payload.get("attacker", "")
+        target = payload.get("target", "")
+        damage = payload.get("damage", 0)
+        is_miss = payload.get("is_miss", False)
+        target_type = payload.get("target_type", "")
+        target_id = payload.get("target_id")
+        
+        # Create hit splat on target
+        if target == self.game_state.username:
+            # Hit on our player
+            self.game_state.hit_splats.append(HitSplat(
+                damage=damage,
+                is_miss=is_miss,
+                timestamp=time.time()
+            ))
+        # TODO: Add hit splats to other entities
+    
+    async def _handle_player_died(self, payload: Dict[str, Any]) -> None:
+        """Handle player death event."""
+        username = payload.get("username", "")
+        
+        if username == self.game_state.username:
+            self.chat_window.add_message("System", "Oh dear, you are dead!", ChatChannel.LOCAL.value)
+    
+    async def _handle_player_respawn(self, payload: Dict[str, Any]) -> None:
+        """Handle player respawn event."""
+        if "x" in payload and "y" in payload:
+            self.game_state.update_player_position(
+                payload["x"], payload["y"], animate=False
+            )
+            self.game_state.current_hp = payload.get("current_hp", self.game_state.max_hp)
+            self._update_camera(instant=True)
+    
+    async def _handle_data_response(self, payload: Dict[str, Any]) -> None:
+        """Handle query data response."""
+        query_type = payload.get("query_type", "")
+        
+        if query_type == "inventory":
+            self.game_state.set_inventory(payload.get("inventory", {}))
+            self._update_inventory_ui()
+        
+        elif query_type == "equipment":
+            self.game_state.set_equipment(payload.get("equipment", {}))
+            self._update_equipment_ui()
+        
+        elif query_type == "stats":
+            self.game_state.set_stats(payload.get("stats", {}))
+            # Also handle skills data if present
+            if "skills" in payload:
+                self.game_state.set_skills(payload.get("skills", {}))
+                self._update_stats_ui()
+        
+        elif query_type == "map_chunks":
+            chunks = payload.get("chunks", [])
+            for chunk in chunks:
+                self.chunk_manager.add_chunk(chunk)
+    
+    async def _handle_error_response(self, payload: Dict[str, Any]) -> None:
+        """Handle error response."""
+        error_code = payload.get("error_code", "UNKNOWN")
+        message = payload.get("message", "An error occurred")
+        
+        self.chat_window.add_message("Error", f"{error_code}: {message}", ChatChannel.LOCAL.value)
+    
+    async def _handle_server_shutdown(self, payload: Dict[str, Any]) -> None:
+        """Handle server shutdown notification."""
+        message = payload.get("message", "Server is shutting down")
+        countdown = payload.get("countdown_seconds")
+        
+        if countdown:
+            self.chat_window.add_message("Server", f"{message} (in {countdown}s)", ChatChannel.LOCAL.value)
+        else:
+            self.chat_window.add_message("Server", message, ChatChannel.LOCAL.value)
+        
+        # Disconnect and return to login screen
+        await self._handle_logout()
+    
+    def _check_protocol_version(self, server_version: str) -> None:
+        """Check if server protocol version is compatible with client."""
+        try:
+            # Parse versions as tuples for comparison (e.g., "2.0" -> (2, 0))
+            client_parts = tuple(int(x) for x in CLIENT_SUPPORTED_PROTOCOL.split("."))
+            server_parts = tuple(int(x) for x in server_version.split("."))
+            
+            if server_parts > client_parts:
+                # Server has newer protocol, warn user
+                self.protocol_warning = (
+                    f"Server uses protocol v{server_version}, "
+                    f"client supports v{CLIENT_SUPPORTED_PROTOCOL}. "
+                    "Some features may not work correctly. Consider updating your client."
+                )
+                self.protocol_warning_time = time.time()
+                
+                # Also add to chat
+                self.chat_window.add_message(
+                    "System",
+                    f"Warning: Protocol mismatch - server v{server_version}, client v{CLIENT_SUPPORTED_PROTOCOL}",
+                    ChatChannel.LOCAL.value
+                )
+                print(f"Protocol Warning: {self.protocol_warning}")
+            elif server_parts < client_parts:
+                # Client is newer than server (less critical)
+                self.chat_window.add_message(
+                    "System",
+                    f"Note: Server uses older protocol v{server_version}",
+                    ChatChannel.LOCAL.value
+                )
+        except (ValueError, AttributeError) as e:
+            print(f"Could not parse protocol version: {e}")
+    
+    # =========================================================================
+    # COMMANDS - Send to Server
+    # =========================================================================
+    
+    async def _send_move(self, direction: Direction) -> None:
+        """Send move command to server."""
+        msg = self.protocol.create_command(
+            MessageType.CMD_MOVE,
+            {"direction": direction.value}
+        )
+        await self._send_message(msg)
+        self.last_move_time = time.time()
+    
+    async def _send_chat(self, channel: str, message: str) -> None:
+        """Send chat message to server."""
+        msg = self.protocol.create_command(
+            MessageType.CMD_CHAT_SEND,
+            {"channel": channel, "message": message}
+        )
+        await self._send_message(msg)
+    
+    async def _send_attack(self, target_type: str, target_id: int) -> None:
+        """Send attack command to server."""
+        msg = self.protocol.create_command(
+            MessageType.CMD_ATTACK,
+            {"target_type": target_type, "target_id": target_id}
+        )
+        await self._send_message(msg)
+    
+    async def _send_pickup(self, ground_item_id: str) -> None:
+        """Send pickup command to server."""
+        msg = self.protocol.create_command(
+            MessageType.CMD_ITEM_PICKUP,
+            {"ground_item_id": ground_item_id}
+        )
+        await self._send_message(msg)
+    
+    async def _send_drop(self, slot: int, quantity: int = 1) -> None:
+        """Send drop command to server."""
+        msg = self.protocol.create_command(
+            MessageType.CMD_ITEM_DROP,
+            {"inventory_slot": slot, "quantity": quantity}
+        )
+        await self._send_message(msg)
+    
+    async def _send_equip(self, slot: int) -> None:
+        """Send equip command to server."""
+        msg = self.protocol.create_command(
+            MessageType.CMD_ITEM_EQUIP,
+            {"inventory_slot": slot}
+        )
+        await self._send_message(msg)
+    
+    async def _send_unequip(self, equipment_slot: str) -> None:
+        """Send unequip command to server."""
+        msg = self.protocol.create_command(
+            MessageType.CMD_ITEM_UNEQUIP,
+            {"equipment_slot": equipment_slot}
+        )
+        await self._send_message(msg)
+    
+    async def _request_chunks(self) -> None:
+        """Request map chunks around player."""
+        msg = self.protocol.create_query(
+            MessageType.QUERY_MAP_CHUNKS,
+            {
+                "map_id": self.game_state.map_id,
+                "center_x": self.game_state.x,
+                "center_y": self.game_state.y,
+                "radius": 2
+            }
+        )
+        await self._send_message(msg)
+        self.game_state.last_chunk_request_x = self.game_state.x
+        self.game_state.last_chunk_request_y = self.game_state.y
+    
+    async def _query_inventory(self) -> None:
+        """Query inventory from server."""
+        msg = self.protocol.create_query(MessageType.QUERY_INVENTORY, {})
+        await self._send_message(msg)
+    
+    async def _query_equipment(self) -> None:
+        """Query equipment from server."""
+        msg = self.protocol.create_query(MessageType.QUERY_EQUIPMENT, {})
+        await self._send_message(msg)
+    
+    async def _query_stats(self) -> None:
+        """Query stats from server."""
+        msg = self.protocol.create_query(MessageType.QUERY_STATS, {})
+        await self._send_message(msg)
+    
+    async def _check_chunk_request(self) -> None:
+        """Check if we need to request new chunks."""
+        dx = abs(self.game_state.x - self.game_state.last_chunk_request_x)
+        dy = abs(self.game_state.y - self.game_state.last_chunk_request_y)
+        
+        if dx + dy >= CHUNK_REQUEST_DISTANCE:
+            await self._request_chunks()
+    
+    async def _preload_player_sprites(self) -> None:
+        """Preload sprites for the player's paperdoll."""
+        if not self.game_state.visual_state or not self.game_state.visual_hash:
             return
-
-        # Handle movement
+        
+        try:
+            await self.paperdoll_renderer.preload_character(
+                self.game_state.visual_state,
+                self.game_state.visual_hash
+            )
+        except Exception as e:
+            print(f"Error preloading player sprites: {e}")
+    
+    async def _preload_entity_sprites(self, entity: Entity) -> None:
+        """Preload sprites for an entity's paperdoll."""
+        if not entity.visual_state or not entity.visual_hash:
+            return
+        
+        try:
+            await self.paperdoll_renderer.preload_character(
+                entity.visual_state,
+                entity.visual_hash
+            )
+        except Exception as e:
+            print(f"Error preloading entity sprites: {e}")
+    
+    # =========================================================================
+    # UI CALLBACKS
+    # =========================================================================
+    
+    def _on_inventory_click(self, slot: int, button: int) -> None:
+        """Handle inventory slot click."""
+        if slot not in self.game_state.inventory:
+            return
+        
+        item = self.game_state.inventory[slot]
+        
+        if button == 1:  # Left click - use/equip
+            if item.equipable:
+                asyncio.create_task(self._send_equip(slot))
+        elif button == 3:  # Right click - context menu
+            self._show_inventory_context_menu(slot, item)
+    
+    def _on_equipment_click(self, slot: str, button: int) -> None:
+        """Handle equipment slot click."""
+        if slot not in self.game_state.equipment:
+            return
+        
+        if button == 1:  # Left click - unequip
+            asyncio.create_task(self._send_unequip(slot))
+        elif button == 3:  # Right click - context menu
+            self._show_equipment_context_menu(slot)
+    
+    def _on_chat_send(self, channel: str, message: str) -> None:
+        """Handle chat send from UI."""
+        asyncio.create_task(self._send_chat(channel, message))
+    
+    def _on_logout_click(self) -> None:
+        """Handle logout button click from tabbed panel."""
+        asyncio.create_task(self._handle_logout())
+    
+    def _show_inventory_context_menu(self, slot: int, item) -> None:
+        """Show context menu for inventory item."""
+        mouse_pos = pygame.mouse.get_pos()
+        
+        items = [
+            ContextMenuItem("Use", lambda: None, Colors.TEXT_WHITE),
+        ]
+        
+        if item.equipable:
+            items.append(ContextMenuItem(
+                "Equip",
+                lambda s=slot: asyncio.create_task(self._send_equip(s)),
+                Colors.TEXT_WHITE
+            ))
+        
+        items.append(ContextMenuItem(
+            "Drop",
+            lambda s=slot: asyncio.create_task(self._send_drop(s)),
+            Colors.TEXT_RED
+        ))
+        
+        items.append(ContextMenuItem("Examine", lambda: None, Colors.TEXT_CYAN))
+        
+        self.context_menu.show(mouse_pos[0], mouse_pos[1], items)
+    
+    def _show_equipment_context_menu(self, slot: str) -> None:
+        """Show context menu for equipment slot."""
+        mouse_pos = pygame.mouse.get_pos()
+        
+        items = [
+            ContextMenuItem(
+                "Unequip",
+                lambda s=slot: asyncio.create_task(self._send_unequip(s)),
+                Colors.TEXT_WHITE
+            ),
+            ContextMenuItem("Examine", lambda: None, Colors.TEXT_CYAN),
+        ]
+        
+        self.context_menu.show(mouse_pos[0], mouse_pos[1], items)
+    
+    def _update_inventory_ui(self) -> None:
+        """Update inventory panel with current state."""
+        items = {}
+        for slot, item in self.game_state.inventory.items():
+            items[slot] = {
+                "item_id": item.item_id,
+                "name": item.name,
+                "quantity": item.quantity,
+                "rarity": item.rarity,
+            }
+        self.inventory_panel.set_items(items)
+        self.side_panel.set_items(items)
+    
+    def _update_equipment_ui(self) -> None:
+        """Update equipment panel with current state."""
+        equipment = {}
+        for slot, item in self.game_state.equipment.items():
+            equipment[slot] = {
+                "item_id": item.item_id,
+                "name": item.name,
+                "rarity": item.rarity,
+            }
+        self.equipment_panel.set_equipment(equipment)
+        self.side_panel.set_equipment(equipment)
+    
+    def _update_stats_ui(self) -> None:
+        """Update stats panel with current skills."""
+        skills = {}
+        for name, skill in self.game_state.skills.items():
+            skills[name] = {
+                "level": skill.level,
+                "experience": skill.experience,
+            }
+        self.stats_panel.set_skills(skills)
+        self.side_panel.set_skills(skills)
+    
+    # =========================================================================
+    # INPUT HANDLING
+    # =========================================================================
+    
+    async def _handle_login_event(self, event: pygame.event.Event) -> None:
+        """Handle events in login/register state."""
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_TAB:
+                # Cycle through fields
+                if self.state == GameState.LOGIN:
+                    fields = ["username", "password"]
+                else:
+                    fields = ["username", "password", "email"]
+                idx = fields.index(self.active_field) if self.active_field in fields else 0
+                self.active_field = fields[(idx + 1) % len(fields)]
+            
+            elif event.key == pygame.K_RETURN:
+                if self.state == GameState.LOGIN:
+                    await self.attempt_login()
+                else:
+                    await self.attempt_register()
+            
+            elif event.key == pygame.K_BACKSPACE:
+                if self.active_field == "username":
+                    self.username_text = self.username_text[:-1]
+                elif self.active_field == "password":
+                    self.password_text = self.password_text[:-1]
+                elif self.active_field == "email":
+                    self.email_text = self.email_text[:-1]
+            
+            elif event.unicode and event.unicode.isprintable():
+                if self.active_field == "username":
+                    self.username_text += event.unicode
+                elif self.active_field == "password":
+                    self.password_text += event.unicode
+                elif self.active_field == "email":
+                    self.email_text += event.unicode
+        
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            # Check for button clicks
+            mouse_pos = event.pos
+            
+            # Simple button areas
+            center_x = WINDOW_WIDTH // 2
+            
+            # Input field click detection
+            username_rect = pygame.Rect(center_x - 150, 300, 300, 40)
+            password_rect = pygame.Rect(center_x - 150, 360, 300, 40)
+            email_rect = pygame.Rect(center_x - 150, 420, 300, 40)
+            
+            if username_rect.collidepoint(mouse_pos):
+                self.active_field = "username"
+            elif password_rect.collidepoint(mouse_pos):
+                self.active_field = "password"
+            elif email_rect.collidepoint(mouse_pos) and self.state == GameState.REGISTER:
+                self.active_field = "email"
+            
+            # Login/Register button
+            btn_rect = pygame.Rect(center_x - 80, 480, 160, 40)
+            if btn_rect.collidepoint(mouse_pos):
+                if self.state == GameState.LOGIN:
+                    await self.attempt_login()
+                else:
+                    await self.attempt_register()
+            
+            # Switch mode button
+            switch_rect = pygame.Rect(center_x - 80, 530, 160, 40)
+            if switch_rect.collidepoint(mouse_pos):
+                if self.state == GameState.LOGIN:
+                    self.state = GameState.REGISTER
+                else:
+                    self.state = GameState.LOGIN
+                # Reset active field to username when switching modes
+                self.active_field = "username"
+    
+    async def _handle_game_event(self, event: pygame.event.Event) -> None:
+        """Handle events in playing state."""
+        # Help panel takes high priority when visible
+        if self.help_panel.handle_event(event):
+            return
+        
+        # Help button
+        if self.help_button.handle_event(event):
+            self.help_panel.visible = not self.help_panel.visible
+            return
+        
+        # Context menu takes priority
+        if self.context_menu.handle_event(event):
+            return
+        
+        # Tabbed side panel (OSRS-style)
+        side_panel_action = self.side_panel.handle_event(event)
+        if side_panel_action:
+            if side_panel_action == "logout":
+                await self._handle_logout()
+            return
+        
+        # Chat window
+        if self.chat_window.handle_event(event):
+            # Process pending chat message
+            if self.chat_window.pending_message:
+                channel, message = self.chat_window.pending_message
+                self.chat_window.pending_message = None
+                await self._send_chat(channel, message)
+            return
+        
+        # Track key state for movement
         if event.type == pygame.KEYDOWN:
             self.keys_pressed.add(event.key)
+            
+            # Toggle help with ? key (shift+/)
+            if event.unicode == "?":
+                self.help_panel.visible = not self.help_panel.visible
+                return
+            
+            # ESC closes help panel (and other panels)
+            if event.key == pygame.K_ESCAPE:
+                if self.help_panel.visible:
+                    self.help_panel.visible = False
+                    return
+            
+            # Toggle tabs with I/E/S keys
+            if event.key == pygame.K_i:
+                self.side_panel.active_tab = "inventory"
+            elif event.key == pygame.K_e:
+                self.side_panel.active_tab = "equipment"
+            elif event.key == pygame.K_s and not (pygame.key.get_mods() & pygame.KMOD_CTRL):
+                self.side_panel.active_tab = "stats"
+            elif event.key == pygame.K_t:
+                if not self.chat_window.input_focused:
+                    self.chat_window.input_focused = True
+            elif event.key == pygame.K_c:
+                # Toggle chat visibility (only when not typing)
+                if not self.chat_window.input_focused:
+                    self.chat_window.toggle_visibility()
+        
         elif event.type == pygame.KEYUP:
             self.keys_pressed.discard(event.key)
-
-        # Handle chat toggle
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_t:
-            if not self.chat_window.input_focused:
-                self.chat_window.input_focused = True
-
-    def handle_chat_message(self, payload):
-        """Handle incoming chat messages."""
-        chat_username = payload.get("username", "Unknown")
-        chat_message = payload.get("message", "")
-        channel = payload.get("channel", ChatChannel.LOCAL.value)
-
-        # Add to chat window
-        self.chat_window.add_message(chat_username, chat_message, channel)
-
-        # For local chat, add floating message above player's head
-        if channel == ChatChannel.LOCAL.value:
-            current_time = time.time()
-            floating_msg = FloatingMessage(chat_message, current_time)
-
-            if chat_username == self.player.username:
-                self.player.floating_messages.append(floating_msg)
-            elif chat_username in self.other_players:
-                self.other_players[chat_username].floating_messages.append(floating_msg)
-
-    def update_camera(self):
-        """Update camera to follow player's animated position with smooth interpolation."""
-        # Calculate target camera position
-        self.target_camera_x = self.player.display_x * TILE_SIZE - WINDOW_WIDTH // 2
-        self.target_camera_y = self.player.display_y * TILE_SIZE - WINDOW_HEIGHT // 2
         
-        # Smooth camera interpolation (0.1 = smooth, 0.5 = responsive, 1.0 = instant)
-        camera_speed = 0.15
-        self.camera_x += (self.target_camera_x - self.camera_x) * camera_speed
-        self.camera_y += (self.target_camera_y - self.camera_y) * camera_speed
-
-    async def process_movement(self):
-        """Process continuous movement based on held keys."""
-        if not self.websocket:
-            return
-
-        current_time = pygame.time.get_ticks() / MILLISECONDS_TO_SECONDS
-
-        # Check if enough time has passed since last move
-        if current_time - self.last_move_time < self.move_cooldown:
-            return
-
-        # Allow next movement when animation is nearly complete (85% done) for smoother continuous movement
-        if self.player.is_moving:
-            animation_progress = (current_time - self.player.move_start_time) / MOVEMENT_ANIMATION_DURATION
-            if animation_progress < 0.95:  # Still too early in the animation
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            # Handle game world clicks
+            if event.button == 1:  # Left click
+                await self._handle_world_click(event.pos)
+            elif event.button == 3:  # Right click
+                await self._handle_world_right_click(event.pos)
+    
+    async def _handle_logout(self) -> None:
+        """Handle logout - disconnect and return to login screen."""
+        # Close websocket connection
+        if self.websocket:
+            try:
+                await self.websocket.close()
+            except Exception:
+                pass
+            self.websocket = None
+        
+        # Reset game state
+        self.game_state.reset()
+        
+        # Reset authentication
+        self.auth_token = None
+        self.player_id = None
+        
+        # Clear paperdoll cache
+        self.paperdoll_renderer.clear_cache()
+        
+        # Clear chunk manager
+        self.chunk_manager.chunks.clear()
+        
+        # Reset to login state
+        self.state = GameState.LOGIN
+        self.login_error = None
+        self.username_input = ""
+        self.password_input = ""
+        self.email_input = ""
+        self.active_field = "username"
+        
+        # Add system message
+        print("Logged out successfully")
+    
+    async def _handle_world_click(self, pos: Tuple[int, int]) -> None:
+        """Handle left click in game world."""
+        world_x, world_y = self._screen_to_world(pos)
+        tile_x = int(world_x // TILE_SIZE)
+        tile_y = int(world_y // TILE_SIZE)
+        
+        # Check for entity at position
+        for instance_id, entity in self.game_state.entities.items():
+            if entity.x == tile_x and entity.y == tile_y:
+                if entity.is_attackable:
+                    await self._send_attack("entity", instance_id)
                 return
-
-        # Don't move if chat is focused
+        
+        # Check for ground item at position
+        for ground_item_id, item in self.game_state.ground_items.items():
+            if item.x == tile_x and item.y == tile_y:
+                await self._send_pickup(ground_item_id)
+                return
+    
+    async def _handle_world_right_click(self, pos: Tuple[int, int]) -> None:
+        """Handle right click in game world."""
+        world_x, world_y = self._screen_to_world(pos)
+        tile_x = int(world_x // TILE_SIZE)
+        tile_y = int(world_y // TILE_SIZE)
+        
+        # Check for entity at position
+        for instance_id, entity in self.game_state.entities.items():
+            if entity.x == tile_x and entity.y == tile_y:
+                self._show_entity_context_menu(pos, entity)
+                return
+        
+        # Check for ground item
+        for ground_item_id, item in self.game_state.ground_items.items():
+            if item.x == tile_x and item.y == tile_y:
+                self._show_ground_item_context_menu(pos, item)
+                return
+    
+    def _show_entity_context_menu(self, pos: Tuple[int, int], entity: Entity) -> None:
+        """Show context menu for entity."""
+        items = []
+        
+        if entity.is_attackable:
+            items.append(ContextMenuItem(
+                f"Attack {entity.display_name}",
+                lambda e=entity: asyncio.create_task(self._send_attack("entity", e.instance_id)),
+                Colors.TEXT_RED
+            ))
+        
+        items.append(ContextMenuItem(f"Examine {entity.display_name}", lambda: None, Colors.TEXT_CYAN))
+        
+        self.context_menu.show(pos[0], pos[1], items)
+    
+    def _show_ground_item_context_menu(self, pos: Tuple[int, int], item: GroundItem) -> None:
+        """Show context menu for ground item."""
+        items = [
+            ContextMenuItem(
+                f"Take {item.display_name}",
+                lambda i=item: asyncio.create_task(self._send_pickup(i.ground_item_id)),
+                Colors.TEXT_WHITE
+            ),
+            ContextMenuItem(f"Examine {item.display_name}", lambda: None, Colors.TEXT_CYAN),
+        ]
+        
+        self.context_menu.show(pos[0], pos[1], items)
+    
+    async def _process_movement(self) -> None:
+        """Process continuous movement from held keys."""
         if self.chat_window.input_focused:
             return
-
+        
+        current_time = time.time()
+        if current_time - self.last_move_time < MOVE_COOLDOWN:
+            return
+        
+        # Check if still animating
+        if self.game_state.is_moving:
+            progress = (current_time - self.game_state.move_start_time) / self.game_state.move_duration
+            if progress < 0.9:
+                return
+        
+        # Determine direction
         direction = None
         if pygame.K_w in self.keys_pressed or pygame.K_UP in self.keys_pressed:
             direction = Direction.UP
@@ -715,339 +1192,589 @@ class RPGClient:
             direction = Direction.LEFT
         elif pygame.K_d in self.keys_pressed or pygame.K_RIGHT in self.keys_pressed:
             direction = Direction.RIGHT
-
+        
         if direction:
-            try:
-                move_message = WSMessage(
-                    type=MessageType.MOVE_INTENT,
-                    payload={"direction": direction}
-                )
-
-                await self.send_message(move_message)
-                self.last_move_time = current_time
-
-            except Exception as e:
-                print(f"Error sending move: {e}")
-
-    def update_animations(self):
-        """Update player movement animations."""
-        current_time = pygame.time.get_ticks() / MILLISECONDS_TO_SECONDS
-
-        # Update main player animation
-        self.update_player_animation(self.player, current_time)
-
-        # Update other players' animations
-        for other_player in self.other_players.values():
-            self.update_player_animation(other_player, current_time)
-
-        # Update floating messages
-        self.update_floating_messages()
-
-    def update_player_animation(self, player, current_time):
-        """Update animation for a specific player."""
-        if player.is_moving:
-            elapsed_time = current_time - player.move_start_time
-            animation_progress = min(elapsed_time / player.move_duration, ANIMATION_COMPLETE)
-
-            if animation_progress >= ANIMATION_COMPLETE:
-                # Animation complete
-                player.display_x = float(player.x)
-                player.display_y = float(player.y)
-                player.is_moving = False
-            else:
-                # Interpolate position
-                start_x = getattr(player, '_start_x', float(player.x))
-                start_y = getattr(player, '_start_y', float(player.y))
-
-                player.display_x = start_x + (player.x - start_x) * animation_progress
-                player.display_y = start_y + (player.y - start_y) * animation_progress
-
-    def update_floating_messages(self):
-        """Remove expired floating messages from all players."""
-        current_time = time.time()
-
-        # Clean up player's messages
-        self.player.floating_messages = [
-            msg for msg in self.player.floating_messages 
-            if not msg.is_expired(current_time)
+            await self._send_move(direction)
+    
+    # =========================================================================
+    # RENDERING
+    # =========================================================================
+    
+    def _update_camera(self, instant: bool = False) -> None:
+        """Update camera to follow player."""
+        self.target_camera_x = self.game_state.display_x * TILE_SIZE - WINDOW_WIDTH // 2
+        self.target_camera_y = self.game_state.display_y * TILE_SIZE - WINDOW_HEIGHT // 2
+        
+        if instant:
+            self.camera_x = self.target_camera_x
+            self.camera_y = self.target_camera_y
+        else:
+            lerp = 0.15
+            self.camera_x += (self.target_camera_x - self.camera_x) * lerp
+            self.camera_y += (self.target_camera_y - self.camera_y) * lerp
+    
+    def _world_to_screen(self, world_x: float, world_y: float) -> Tuple[float, float]:
+        """Convert world coordinates to screen coordinates."""
+        return world_x - self.camera_x, world_y - self.camera_y
+    
+    def _screen_to_world(self, screen_pos: Tuple[int, int]) -> Tuple[float, float]:
+        """Convert screen coordinates to world coordinates."""
+        return screen_pos[0] + self.camera_x, screen_pos[1] + self.camera_y
+    
+    def _draw_login_form(self) -> None:
+        """Draw login/register form."""
+        self.screen.fill(Colors.PANEL_BG)
+        
+        center_x = WINDOW_WIDTH // 2
+        
+        # Title
+        title = "Login" if self.state == GameState.LOGIN else "Register"
+        title_surface = self.font.render(title, True, Colors.TEXT_ORANGE)
+        self.screen.blit(title_surface, (center_x - title_surface.get_width() // 2, 150))
+        
+        # Fields
+        fields = [
+            ("Username", self.username_text, "username", 300),
+            ("Password", "*" * len(self.password_text), "password", 360),
         ]
-
-        # Clean up other players' messages
-        for other_player in self.other_players.values():
-            other_player.floating_messages = [
-                msg for msg in other_player.floating_messages 
-                if not msg.is_expired(current_time)
-            ]
-
-    async def request_chunks(self, map_id, center_x, center_y, radius=2):
-        """Request map chunks from the server."""
-        if not self.websocket:
-            return
-
-        try:
-            chunk_request = WSMessage(
-                type=MessageType.REQUEST_CHUNKS,
-                payload={
-                    "map_id": map_id,
-                    "center_x": center_x,
-                    "center_y": center_y,
-                    "radius": radius
-                }
-            )
-
-            await self.send_message(chunk_request)
-        except Exception as e:
-            print(f"Error requesting chunks: {e}")
-
-    async def websocket_handler(self):
-        """Handle WebSocket messages."""
-        while self.websocket and self.state == GameState.PLAYING:
-            try:
-                message_data = await asyncio.wait_for(
-                    self.websocket.recv(), 
-                    timeout=WEBSOCKET_TIMEOUT
-                )
-                message = msgpack.unpackb(message_data, raw=False)
-
-                await self.handle_server_message(message)
-
-            except asyncio.TimeoutError:
-                # Timeout is normal, continue listening
-                continue
-            except Exception as e:
-                print(f"WebSocket error: {e}")
-                break
-
-    async def handle_server_message(self, message):
-        """Handle incoming server messages."""
-        msg_type = message.get("type")
-        payload = message.get("payload", {})
-
-        if msg_type == MessageType.WELCOME.value:
-            await self.handle_welcome_message(payload)
-        elif msg_type == MessageType.CHUNK_DATA.value:
-            self.handle_chunk_data(payload)
-        elif msg_type == MessageType.EVENT_GAME_STATE_UPDATE.value:
-            await self.handle_game_state_update(payload)
-        elif msg_type == MessageType.NEW_CHAT_MESSAGE.value:
-            self.handle_chat_message(payload)
-        elif msg_type == MessageType.PLAYER_DISCONNECT.value:
-            self.handle_player_disconnect(payload)
-        elif msg_type == MessageType.ERROR.value:
-            self.handle_error_message(payload)
-
-    async def handle_welcome_message(self, payload):
-        """Handle welcome message and initial player data."""
-        player_data = payload.get("player", {})
-        config_data = payload.get("config", {})
-
-        if player_data:
-            self.player.x = player_data.get("x", self.player.x)
-            self.player.y = player_data.get("y", self.player.y)
-            self.player.map_id = player_data.get("map_id", self.player.map_id)
-
-            # Initialize display coordinates to match logical position
-            self.player.display_x = float(self.player.x)
-            self.player.display_y = float(self.player.y)
-
-            self.update_camera()
-            # Initialize chunk request tracking
-            self.player.last_chunk_request_x = self.player.x
-            self.player.last_chunk_request_y = self.player.y
+        
+        if self.state == GameState.REGISTER:
+            fields.append(("Email", self.email_text, "email", 420))
+        
+        for label, value, field_name, y_pos in fields:
+            # Label
+            label_surface = self.small_font.render(label, True, Colors.TEXT_WHITE)
+            self.screen.blit(label_surface, (center_x - 150, y_pos - 20))
             
-            # Load tilesets for the current map
-            if self.player.map_id and self.player.map_id != self.current_map_id:
-                self.current_map_id = self.player.map_id
-                try:
-                    await self.tileset_manager.load_map_tilesets(self.current_map_id)
-                    print(f"Loaded tilesets for map: {self.current_map_id}")
-                except Exception as e:
-                    print(f"Failed to load tilesets for map {self.current_map_id}: {e}")
-
-        # Update timing from server config
-        if config_data:
-            self.move_cooldown = config_data.get("move_cooldown", self.move_cooldown)
-            self.player.move_duration = config_data.get(
-                "animation_duration", self.player.move_duration
+            # Field background
+            field_rect = pygame.Rect(center_x - 150, y_pos, 300, 40)
+            pygame.draw.rect(self.screen, Colors.SLOT_BG, field_rect)
+            
+            border_color = Colors.TEXT_ORANGE if self.active_field == field_name else Colors.SLOT_BORDER
+            pygame.draw.rect(self.screen, border_color, field_rect, 2)
+            
+            # Field text
+            text_surface = self.font.render(value, True, Colors.TEXT_WHITE)
+            self.screen.blit(text_surface, (field_rect.x + 10, field_rect.y + 8))
+        
+        # Buttons
+        btn_y = 480 if self.state == GameState.LOGIN else 500
+        
+        # Login/Register button
+        btn_rect = pygame.Rect(center_x - 80, btn_y, 160, 40)
+        pygame.draw.rect(self.screen, Colors.STONE_MEDIUM, btn_rect)
+        pygame.draw.rect(self.screen, Colors.STONE_HIGHLIGHT, btn_rect, 2)
+        
+        btn_text = "Login" if self.state == GameState.LOGIN else "Register"
+        btn_surface = self.font.render(btn_text, True, Colors.TEXT_WHITE)
+        self.screen.blit(btn_surface, (center_x - btn_surface.get_width() // 2, btn_y + 8))
+        
+        # Switch mode button
+        switch_rect = pygame.Rect(center_x - 80, btn_y + 50, 160, 40)
+        pygame.draw.rect(self.screen, Colors.STONE_DARK, switch_rect)
+        pygame.draw.rect(self.screen, Colors.SLOT_BORDER, switch_rect, 2)
+        
+        switch_text = "Register" if self.state == GameState.LOGIN else "Login"
+        switch_surface = self.small_font.render(f"Go to {switch_text}", True, Colors.TEXT_GRAY)
+        self.screen.blit(switch_surface, (center_x - switch_surface.get_width() // 2, btn_y + 60))
+        
+        # Status message
+        if self.status_message:
+            status_surface = self.small_font.render(self.status_message, True, self.status_color)
+            self.screen.blit(status_surface, (center_x - status_surface.get_width() // 2, 650))
+    
+    def _draw_game(self) -> None:
+        """Draw the game world and UI."""
+        self.screen.fill((0, 0, 0))
+        
+        # Draw map chunks
+        self._draw_chunks()
+        
+        # Draw ground items
+        self._draw_ground_items()
+        
+        # Draw entities (NPCs, monsters)
+        self._draw_entities()
+        
+        # Draw other players
+        self._draw_other_players()
+        
+        # Draw own player
+        self._draw_player()
+        
+        # Draw floating messages
+        self._draw_floating_messages()
+        
+        # Draw hit splats
+        self._draw_hit_splats()
+        
+        # Draw UI
+        self._draw_ui()
+    
+    def _draw_chunks(self) -> None:
+        """Draw visible map chunks."""
+        for (chunk_x, chunk_y), chunk_data in self.chunk_manager.chunks.items():
+            self._draw_chunk(chunk_x, chunk_y, chunk_data)
+    
+    def _draw_chunk(self, chunk_x: int, chunk_y: int, chunk_data: Dict) -> None:
+        """Draw a single chunk."""
+        chunk_world_x = chunk_x * CHUNK_SIZE * TILE_SIZE
+        chunk_world_y = chunk_y * CHUNK_SIZE * TILE_SIZE
+        
+        screen_x, screen_y = self._world_to_screen(chunk_world_x, chunk_world_y)
+        
+        # Culling
+        if (screen_x > WINDOW_WIDTH or screen_y > WINDOW_HEIGHT or
+            screen_x + CHUNK_SIZE * TILE_SIZE < 0 or screen_y + CHUNK_SIZE * TILE_SIZE < 0):
+            return
+        
+        tiles = chunk_data.get("tiles", [])
+        if not tiles:
+            return
+        
+        # Handle 2D and flat array formats
+        if tiles and isinstance(tiles[0], list):
+            for ty in range(min(CHUNK_SIZE, len(tiles))):
+                for tx in range(min(CHUNK_SIZE, len(tiles[ty]))):
+                    tile_data = tiles[ty][tx]
+                    self._draw_tile(screen_x + tx * TILE_SIZE, screen_y + ty * TILE_SIZE, tile_data)
+        else:
+            for ty in range(CHUNK_SIZE):
+                for tx in range(CHUNK_SIZE):
+                    idx = ty * CHUNK_SIZE + tx
+                    if idx < len(tiles):
+                        self._draw_tile(screen_x + tx * TILE_SIZE, screen_y + ty * TILE_SIZE, tiles[idx])
+    
+    def _draw_tile(self, screen_x: float, screen_y: float, tile_data: Any) -> None:
+        """Draw a single tile."""
+        if isinstance(tile_data, dict):
+            # Multi-layer tile format
+            layers = tile_data.get("layers", [])
+            for layer in layers:
+                gid = layer.get("gid", 0)
+                if gid > 0 and self.current_map_id:
+                    sprite = self.tileset_manager.get_tile_sprite(gid, self.current_map_id)
+                    if sprite:
+                        self.screen.blit(sprite, (int(screen_x), int(screen_y)))
+        elif isinstance(tile_data, int) and tile_data > 0:
+            if self.current_map_id:
+                sprite = self.tileset_manager.get_tile_sprite(tile_data, self.current_map_id)
+                if sprite:
+                    self.screen.blit(sprite, (int(screen_x), int(screen_y)))
+    
+    def _draw_ground_items(self) -> None:
+        """Draw ground items."""
+        for item in self.game_state.ground_items.values():
+            screen_x, screen_y = self._world_to_screen(item.x * TILE_SIZE, item.y * TILE_SIZE)
+            
+            if -TILE_SIZE < screen_x < WINDOW_WIDTH and -TILE_SIZE < screen_y < WINDOW_HEIGHT:
+                # Draw simple item indicator
+                pygame.draw.rect(
+                    self.screen, Colors.TEXT_YELLOW,
+                    (int(screen_x) + 8, int(screen_y) + 8, 16, 16)
+                )
+                pygame.draw.rect(
+                    self.screen, Colors.PANEL_BORDER,
+                    (int(screen_x) + 8, int(screen_y) + 8, 16, 16), 1
+                )
+    
+    def _draw_entities(self) -> None:
+        """Draw NPCs and monsters."""
+        for entity in self.game_state.entities.values():
+            self._draw_entity(entity)
+    
+    def _draw_entity(self, entity: Entity) -> None:
+        """Draw a single entity."""
+        screen_x, screen_y = self._world_to_screen(
+            entity.display_x * TILE_SIZE,
+            entity.display_y * TILE_SIZE
+        )
+        
+        if not (-TILE_SIZE < screen_x < WINDOW_WIDTH and -TILE_SIZE < screen_y < WINDOW_HEIGHT):
+            return
+        
+        # Try to render paperdoll sprite for humanoid entities
+        sprite = None
+        if entity.visual_state and entity.visual_hash:
+            if entity.is_moving:
+                # Calculate walk progress
+                current_time = time.time()
+                elapsed = current_time - entity.move_start_time
+                progress = min(elapsed / self.game_state.move_duration, 1.0)
+                sprite = self.paperdoll_renderer.get_walk_frame(
+                    entity.visual_state,
+                    entity.visual_hash,
+                    entity.facing_direction,
+                    progress,
+                    render_size=TILE_SIZE,
+                )
+            else:
+                sprite = self.paperdoll_renderer.get_idle_frame(
+                    entity.visual_state,
+                    entity.visual_hash,
+                    entity.facing_direction,
+                    render_size=TILE_SIZE,
+                )
+        
+        if sprite:
+            self.screen.blit(sprite, (int(screen_x), int(screen_y)))
+        else:
+            # Fallback to colored rectangle
+            if entity.entity_type == EntityType.MONSTER:
+                color = Colors.TEXT_RED
+            else:
+                color = Colors.TEXT_YELLOW
+            
+            pygame.draw.rect(self.screen, color, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE))
+            pygame.draw.rect(self.screen, Colors.PANEL_BORDER, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE), 1)
+        
+        # Draw health bar if damaged
+        if entity.current_hp < entity.max_hp:
+            self._draw_health_bar(screen_x, screen_y - 8, TILE_SIZE, 4, entity.current_hp, entity.max_hp)
+        
+        # Draw name
+        name_surface = self.tiny_font.render(entity.display_name, True, Colors.TEXT_WHITE)
+        name_x = int(screen_x + TILE_SIZE // 2 - name_surface.get_width() // 2)
+        self.screen.blit(name_surface, (name_x, int(screen_y) - 20))
+    
+    def _draw_other_players(self) -> None:
+        """Draw other players."""
+        for username, player in self.game_state.other_players.items():
+            self._draw_other_player(username, player)
+    
+    def _draw_other_player(self, username: str, player: Entity) -> None:
+        """Draw another player."""
+        screen_x, screen_y = self._world_to_screen(
+            player.display_x * TILE_SIZE,
+            player.display_y * TILE_SIZE
+        )
+        
+        if not (-TILE_SIZE < screen_x < WINDOW_WIDTH and -TILE_SIZE < screen_y < WINDOW_HEIGHT):
+            return
+        
+        # Try to render paperdoll sprite
+        sprite = None
+        if player.visual_state and player.visual_hash:
+            if player.is_moving:
+                # Calculate walk progress
+                current_time = time.time()
+                elapsed = current_time - player.move_start_time
+                progress = min(elapsed / self.game_state.move_duration, 1.0)
+                sprite = self.paperdoll_renderer.get_walk_frame(
+                    player.visual_state,
+                    player.visual_hash,
+                    player.facing_direction,
+                    progress,
+                    render_size=TILE_SIZE,
+                )
+            else:
+                sprite = self.paperdoll_renderer.get_idle_frame(
+                    player.visual_state,
+                    player.visual_hash,
+                    player.facing_direction,
+                    render_size=TILE_SIZE,
+                )
+        
+        if sprite:
+            self.screen.blit(sprite, (int(screen_x), int(screen_y)))
+        else:
+            # Fallback to colored rectangle based on username hash
+            color = self._get_player_color(username)
+            pygame.draw.rect(self.screen, color, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE))
+            pygame.draw.rect(self.screen, Colors.PANEL_BORDER, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE), 1)
+        
+        # Draw name
+        name_surface = self.tiny_font.render(username, True, Colors.TEXT_WHITE)
+        name_x = int(screen_x + TILE_SIZE // 2 - name_surface.get_width() // 2)
+        self.screen.blit(name_surface, (name_x, int(screen_y) - 20))
+    
+    def _draw_player(self) -> None:
+        """Draw the player character."""
+        screen_x, screen_y = self._world_to_screen(
+            self.game_state.display_x * TILE_SIZE,
+            self.game_state.display_y * TILE_SIZE
+        )
+        
+        # Try to render paperdoll sprite
+        sprite = None
+        if self.game_state.visual_state and self.game_state.visual_hash:
+            if self.game_state.is_moving:
+                # Calculate walk progress
+                current_time = time.time()
+                elapsed = current_time - self.game_state.move_start_time
+                progress = min(elapsed / self.game_state.move_duration, 1.0)
+                sprite = self.paperdoll_renderer.get_walk_frame(
+                    self.game_state.visual_state,
+                    self.game_state.visual_hash,
+                    self.game_state.facing_direction,
+                    progress,
+                    render_size=TILE_SIZE,
+                )
+            else:
+                sprite = self.paperdoll_renderer.get_idle_frame(
+                    self.game_state.visual_state,
+                    self.game_state.visual_hash,
+                    self.game_state.facing_direction,
+                    render_size=TILE_SIZE,
+                )
+        
+        if sprite:
+            self.screen.blit(sprite, (int(screen_x), int(screen_y)))
+            # Draw white border to indicate own player
+            pygame.draw.rect(self.screen, Colors.TEXT_WHITE, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE), 2)
+        else:
+            # Fallback to colored rectangle
+            color = self._get_player_color(self.game_state.username)
+            pygame.draw.rect(self.screen, color, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE))
+            pygame.draw.rect(self.screen, Colors.TEXT_WHITE, (int(screen_x), int(screen_y), TILE_SIZE, TILE_SIZE), 2)
+        
+        # Draw name
+        name_surface = self.tiny_font.render(self.game_state.username, True, Colors.TEXT_GREEN)
+        name_x = int(screen_x + TILE_SIZE // 2 - name_surface.get_width() // 2)
+        self.screen.blit(name_surface, (name_x, int(screen_y) - 20))
+        
+        # Draw health bar
+        self._draw_health_bar(
+            screen_x, screen_y - 8, TILE_SIZE, 4,
+            self.game_state.current_hp, self.game_state.max_hp
+        )
+    
+    def _draw_health_bar(
+        self, x: float, y: float, width: int, height: int,
+        current: int, maximum: int
+    ) -> None:
+        """Draw a health bar."""
+        # Background
+        pygame.draw.rect(self.screen, Colors.HP_BG, (int(x), int(y), width, height))
+        
+        # Fill
+        if maximum > 0:
+            fill_width = int(width * current / maximum)
+            pygame.draw.rect(self.screen, Colors.HP_GREEN, (int(x), int(y), fill_width, height))
+        
+        # Border
+        pygame.draw.rect(self.screen, Colors.HP_BORDER, (int(x), int(y), width, height), 1)
+    
+    def _draw_floating_messages(self) -> None:
+        """Draw floating chat messages."""
+        current_time = time.time()
+        
+        screen_x, screen_y = self._world_to_screen(
+            self.game_state.display_x * TILE_SIZE,
+            self.game_state.display_y * TILE_SIZE
+        )
+        
+        y_offset = 0
+        for msg in self.game_state.floating_messages:
+            alpha = msg.get_alpha(current_time)
+            
+            # Create message surface
+            text_surface = self.small_font.render(msg.message, True, Colors.TEXT_WHITE)
+            
+            # Apply alpha
+            if alpha < 255:
+                text_surface.set_alpha(alpha)
+            
+            # Position
+            msg_x = int(screen_x + TILE_SIZE // 2 - text_surface.get_width() // 2)
+            msg_y = int(screen_y - 40 - y_offset)
+            
+            # Background bubble
+            bubble_rect = pygame.Rect(
+                msg_x - 4, msg_y - 2,
+                text_surface.get_width() + 8, text_surface.get_height() + 4
             )
-
-        # Request initial chunks
-        await self.request_chunks(self.player.map_id, self.player.x, self.player.y)
-
-    def handle_chunk_data(self, payload):
-        """Handle chunk data from server."""
-        chunks = payload.get("chunks", [])
-        for chunk in chunks:
-            self.chunk_manager.add_chunk(chunk)
-
-    async def handle_game_state_update(self, payload):
-        """Handle position updates from server."""
-        entities = payload.get("entities", [])
-
-        for entity in entities:
-            if entity.get("type") == "player":
-                username = entity.get("username")
-
-                if username == self.player.username:
-                    await self.update_own_player(entity)
-                else:
-                    self.update_other_player(username, entity)
-
-    async def update_own_player(self, entity):
-        """Update our own player from server data."""
-        # Store old position for animation
-        old_x, old_y = self.player.x, self.player.y
-
-        # Update our player's position based on server
-        new_x = entity.get("x", self.player.x)
-        new_y = entity.get("y", self.player.y)
-
-        # Check if position actually changed
-        if new_x != old_x or new_y != old_y:
-            self.player.x = new_x
-            self.player.y = new_y
-
-            # Start smooth animation from old position to new position
-            self.player._start_x = float(old_x)
-            self.player._start_y = float(old_y)
-            self.player.display_x = float(old_x)
-            self.player.display_y = float(old_y)
-            self.player.is_moving = True
-            self.player.move_start_time = pygame.time.get_ticks() / MILLISECONDS_TO_SECONDS
-
-            # Update facing direction based on movement
-            if new_x > old_x:
-                self.player.facing_direction = Direction.RIGHT
-            elif new_x < old_x:
-                self.player.facing_direction = Direction.LEFT
-            elif new_y > old_y:
-                self.player.facing_direction = Direction.DOWN
-            elif new_y < old_y:
-                self.player.facing_direction = Direction.UP
-
-            self.update_camera()
-
-        # Check if we need to request new chunks
-        distance_from_last_request = abs(
-            self.player.x - self.player.last_chunk_request_x
-        ) + abs(self.player.y - self.player.last_chunk_request_y)
-
-        if distance_from_last_request >= CHUNK_REQUEST_DISTANCE:
-            await self.request_chunks(
-                self.player.map_id, self.player.x, self.player.y
-            )
-            self.player.last_chunk_request_x = self.player.x
-            self.player.last_chunk_request_y = self.player.y
-
-    def update_other_player(self, username, entity):
-        """Update other players from server data."""
-        new_x = entity.get("x", 0)
-        new_y = entity.get("y", 0)
-
-        if username not in self.other_players:
-            # New player joined
-            self.other_players[username] = Player()
-            self.other_players[username].username = username
-
-        other_player = self.other_players[username]
-        old_x, old_y = other_player.x, other_player.y
-
-        # Update position if changed
-        if new_x != old_x or new_y != old_y:
-            other_player.x = new_x
-            other_player.y = new_y
-
-            # Start smooth animation for other player too
-            other_player._start_x = float(old_x) if old_x else float(new_x)
-            other_player._start_y = float(old_y) if old_y else float(new_y)
-            other_player.display_x = float(old_x) if old_x else float(new_x)
-            other_player.display_y = float(old_y) if old_y else float(new_y)
-            other_player.is_moving = True
-            other_player.move_start_time = pygame.time.get_ticks() / MILLISECONDS_TO_SECONDS
-
-            # Update facing direction
-            if new_x > old_x:
-                other_player.facing_direction = Direction.RIGHT
-            elif new_x < old_x:
-                other_player.facing_direction = Direction.LEFT
-            elif new_y > old_y:
-                other_player.facing_direction = Direction.DOWN
-            elif new_y < old_y:
-                other_player.facing_direction = Direction.UP
-
-    def handle_player_disconnect(self, payload):
-        """Handle player disconnection."""
-        disconnected_username = payload.get("username")
-        if disconnected_username and disconnected_username in self.other_players:
-            del self.other_players[disconnected_username]
-
-    def handle_error_message(self, payload):
-        """Handle error messages from server."""
-        error_msg = payload.get("message", "Unknown error")
-        self.set_status(f"Server error: {error_msg}", RED)
-
-    async def run(self):
-        """Main game loop with separate WebSocket task."""
+            bubble_surface = pygame.Surface((bubble_rect.width, bubble_rect.height), pygame.SRCALPHA)
+            pygame.draw.rect(bubble_surface, (0, 0, 0, min(180, alpha)), bubble_surface.get_rect(), border_radius=4)
+            self.screen.blit(bubble_surface, bubble_rect.topleft)
+            
+            self.screen.blit(text_surface, (msg_x, msg_y))
+            y_offset += 25
+    
+    def _draw_hit_splats(self) -> None:
+        """Draw hit splat damage indicators."""
+        current_time = time.time()
+        
+        screen_x, screen_y = self._world_to_screen(
+            self.game_state.display_x * TILE_SIZE,
+            self.game_state.display_y * TILE_SIZE
+        )
+        
+        for splat in self.game_state.hit_splats:
+            y_offset = splat.get_y_offset(current_time)
+            
+            # Splat color
+            if splat.is_heal:
+                color = Colors.HIT_SPLAT_HEAL
+            elif splat.is_miss:
+                color = Colors.HIT_SPLAT_MISS
+            else:
+                color = Colors.HIT_SPLAT_DAMAGE
+            
+            # Draw splat circle
+            splat_x = int(screen_x + TILE_SIZE // 2)
+            splat_y = int(screen_y + TILE_SIZE // 2 + y_offset)
+            
+            pygame.draw.circle(self.screen, color, (splat_x, splat_y), 12)
+            pygame.draw.circle(self.screen, Colors.PANEL_BORDER, (splat_x, splat_y), 12, 1)
+            
+            # Draw damage number
+            text = str(splat.damage) if not splat.is_miss else "0"
+            text_surface = self.tiny_font.render(text, True, Colors.TEXT_WHITE)
+            self.screen.blit(text_surface, (splat_x - text_surface.get_width() // 2, splat_y - text_surface.get_height() // 2))
+    
+    def _draw_ui(self) -> None:
+        """Draw all UI elements."""
+        # HP orb
+        self.hp_orb.set_value(self.game_state.current_hp, self.game_state.max_hp)
+        self.hp_orb.draw(self.screen, self.small_font)
+        
+        # Minimap
+        other_players = [(p.x, p.y) for p in self.game_state.other_players.values()]
+        npcs = [(e.x, e.y) for e in self.game_state.entities.values() if e.entity_type == EntityType.NPC]
+        monsters = [(e.x, e.y) for e in self.game_state.entities.values() if e.entity_type == EntityType.MONSTER]
+        
+        self.minimap.update(
+            self.game_state.x, self.game_state.y,
+            other_players, npcs, monsters
+        )
+        self.minimap.draw(self.screen, self.small_font)
+        
+        # Help button (top-right, before minimap)
+        self.help_button.draw(self.screen, self.small_font)
+        
+        # OSRS-style tabbed side panel (bottom-right)
+        self.side_panel.draw(self.screen, self.small_font)
+        
+        # Chat window
+        self.chat_window.draw(self.screen, self.small_font)
+        
+        # Context menu (on top of everything)
+        self.context_menu.draw(self.screen, self.small_font)
+        
+        # Tooltip
+        self.tooltip.draw(self.screen, self.small_font)
+        
+        # Help panel (on top of everything except context menu)
+        self.help_panel.draw(self.screen, self.small_font)
+        
+        # Protocol version warning (fades out after 10 seconds)
+        if self.protocol_warning and time.time() - self.protocol_warning_time < 10.0:
+            self._draw_protocol_warning()
+        
+        # FPS counter
+        fps = int(self.clock.get_fps())
+        fps_text = self.tiny_font.render(f"FPS: {fps}", True, Colors.TEXT_WHITE)
+        self.screen.blit(fps_text, (10, 10))
+    
+    def _draw_protocol_warning(self) -> None:
+        """Draw protocol version warning banner."""
+        if not self.protocol_warning:
+            return
+        
+        # Calculate fade (fade out over last 3 seconds of 10-second display)
+        elapsed = time.time() - self.protocol_warning_time
+        alpha = 255
+        if elapsed > 7.0:
+            alpha = int(255 * (1.0 - (elapsed - 7.0) / 3.0))
+        
+        # Create warning banner
+        padding = 10
+        warning_font = pygame.font.Font(None, 20)
+        text_surface = warning_font.render(self.protocol_warning, True, Colors.TEXT_YELLOW)
+        
+        banner_width = text_surface.get_width() + padding * 2
+        banner_height = text_surface.get_height() + padding * 2
+        banner_x = (WINDOW_WIDTH - banner_width) // 2
+        banner_y = 50
+        
+        # Semi-transparent background
+        banner_surface = pygame.Surface((banner_width, banner_height), pygame.SRCALPHA)
+        pygame.draw.rect(banner_surface, (80, 60, 0, min(200, alpha)), banner_surface.get_rect(), border_radius=5)
+        pygame.draw.rect(banner_surface, (255, 200, 0, alpha), banner_surface.get_rect(), 2, border_radius=5)
+        
+        self.screen.blit(banner_surface, (banner_x, banner_y))
+        
+        # Text with alpha
+        text_surface.set_alpha(alpha)
+        self.screen.blit(text_surface, (banner_x + padding, banner_y + padding))
+    
+    def _get_player_color(self, username: str) -> Tuple[int, int, int]:
+        """Get color for a player based on username hash."""
+        h = hash(username)
+        r = max(100, (h & 0xFF0000) >> 16)
+        g = max(100, (h & 0x00FF00) >> 8)
+        b = max(100, h & 0x0000FF)
+        return (r, g, b)
+    
+    # =========================================================================
+    # MAIN LOOP
+    # =========================================================================
+    
+    async def run(self) -> None:
+        """Main game loop."""
         running = True
-        websocket_task = None
-
+        
         while running:
             # Handle events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
-
+                
                 if self.state in [GameState.LOGIN, GameState.REGISTER]:
-                    await self.handle_login_events(event)
+                    await self._handle_login_event(event)
                 elif self.state == GameState.PLAYING:
-                    await self.handle_game_events(event)
-
-            # Start WebSocket handler when entering PLAYING state
-            if self.websocket and self.state == GameState.PLAYING and websocket_task is None:
-                websocket_task = asyncio.create_task(self.websocket_handler())
-            elif self.state != GameState.PLAYING and websocket_task is not None:
-                # Cancel WebSocket task when leaving PLAYING state
-                websocket_task.cancel()
-                websocket_task = None
-
-            # Process continuous movement and animations
+                    await self._handle_game_event(event)
+            
+            # Game logic (playing state)
             if self.state == GameState.PLAYING:
-                await self.process_movement()
-                await self.process_pending_chat()  # Process any pending chat messages
-                self.update_animations()
-                self.update_camera()  # Update camera every frame for smooth movement
-
-            # Draw
+                # Receive WebSocket messages
+                await self._receive_messages()
+                
+                # Process movement
+                await self._process_movement()
+                
+                # Update animations
+                self.game_state.update_animations(time.time(), self.game_state.move_duration)
+                
+                # Update camera
+                self._update_camera()
+                
+                # Clean up protocol
+                self.protocol.cleanup_expired_requests()
+            
+            # Render
             if self.state in [GameState.LOGIN, GameState.REGISTER]:
-                self.draw_login_form()
+                self._draw_login_form()
             elif self.state == GameState.PLAYING:
-                self.draw_game()
-
+                self._draw_game()
+            
             pygame.display.flip()
             self.clock.tick(FPS)
             
-            # Small yield to allow other async tasks to run
+            # Yield to other async tasks
             await asyncio.sleep(0)
-
-        # Cleanup
-        if websocket_task:
-            websocket_task.cancel()
-            try:
-                await websocket_task
-            except asyncio.CancelledError:
-                pass
         
+        # Cleanup
         if self.websocket:
             await self.websocket.close()
-        
-        # Cleanup tileset manager
+        if self.http_session:
+            await self.http_session.close()
         await self.tileset_manager.close()
+        await self.sprite_manager.close()
+        
+        # Clear paperdoll renderer cache
+        self.paperdoll_renderer.clear_cache()
         
         pygame.quit()
 
 
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
+
 async def main():
-    """Main function."""
+    """Main entry point."""
     client = RPGClient()
     await client.run()
 
