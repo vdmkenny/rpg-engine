@@ -693,6 +693,8 @@ async def items_synced(gsm: GameStateManager) -> None:
     """
     from server.src.services.item_service import ItemService
     await ItemService.sync_items_to_db()
+    # Reload cache after syncing to pick up any new items
+    await gsm.load_item_cache_from_db()
 
 
 @pytest_asyncio.fixture(scope="function")  

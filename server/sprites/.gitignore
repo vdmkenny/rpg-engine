@@ -1,0 +1,9 @@
+# Downloaded LPC assets - run scripts/setup_lpc_sprites.py to populate
+lpc/
+
+# Keep these tracked
+!CREDITS.csv
+!LICENSE-*
+!ATTRIBUTION.md
+!README.md
+!.gitignore

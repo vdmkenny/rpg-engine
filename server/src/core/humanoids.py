@@ -9,7 +9,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List
 
-from .appearance import AppearanceData, AppearancePresets
+from common.src.sprites import AppearanceData, AppearancePresets
 from .entities import EntityBehavior
 from .items import EquipmentSlot, ItemType
 from .skills import SkillType

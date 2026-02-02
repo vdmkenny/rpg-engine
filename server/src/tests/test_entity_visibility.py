@@ -206,14 +206,15 @@ class TestEntityVisibility:
         
         assert len(visible) == 3
         
-        # Check guard - humanoid with appearance and equipment
+        # Check guard - humanoid with visual state (new sprite system)
         guard_data = visible["entity_1"]
         assert guard_data["display_name"] == "Village Guard"
         assert guard_data["behavior_type"] == "GUARD"
         assert guard_data["is_attackable"] is True
         assert guard_data["entity_type"] == "humanoid_npc"
-        assert "appearance" in guard_data
-        assert "equipped_items" in guard_data
+        # New sprite system uses visual_hash and visual_state instead of appearance
+        assert "visual_hash" in guard_data
+        assert "visual_state" in guard_data
         
         # Check merchant
         merchant_data = visible["entity_2"]
@@ -279,7 +280,7 @@ class TestPlayerVisibility:
     """Test player visibility with paperdoll data."""
     
     def test_get_visible_players_includes_appearance(self):
-        """Test that visible players include appearance data."""
+        """Test that visible players include visual state data."""
         players = [
             {
                 "id": "player1",
@@ -288,8 +289,11 @@ class TestPlayerVisibility:
                 "y": 30,
                 "current_hp": 50,
                 "max_hp": 100,
-                "appearance": {"skin_tone": 1, "hair_style": "short", "hair_color": "#4A3728"},
-                "equipped_items": {"weapon": "BRONZE_SHORTSWORD"},
+                "visual_hash": "abc123def456",
+                "visual_state": {
+                    "appearance": {"body_type": "male", "skin_tone": "light"},
+                    "equipment": {"main_hand": "bronze_shortsword"},
+                },
             },
             {
                 "id": "viewer",
@@ -298,8 +302,6 @@ class TestPlayerVisibility:
                 "y": 25,
                 "current_hp": 100,
                 "max_hp": 100,
-                "appearance": None,
-                "equipped_items": None,
             }
         ]
         
@@ -309,8 +311,10 @@ class TestPlayerVisibility:
         assert "player1" in visible
         player_data = visible["player1"]
         assert player_data["type"] == "player"
-        assert player_data["appearance"] == {"skin_tone": 1, "hair_style": "short", "hair_color": "#4A3728"}
-        assert player_data["equipped_items"] == {"weapon": "BRONZE_SHORTSWORD"}
+        # New sprite system uses visual_hash and visual_state
+        assert player_data["visual_hash"] == "abc123def456"
+        assert player_data["visual_state"]["appearance"]["body_type"] == "male"
+        assert player_data["visual_state"]["equipment"]["main_hand"] == "bronze_shortsword"
     
     def test_get_visible_players_excludes_self(self):
         """Test that viewing player is excluded from visibility."""
@@ -322,8 +326,6 @@ class TestPlayerVisibility:
                 "y": 25,
                 "current_hp": 100,
                 "max_hp": 100,
-                "appearance": None,
-                "equipped_items": None,
             }
         ]
         
@@ -341,8 +343,6 @@ class TestPlayerVisibility:
                 "y": 200,
                 "current_hp": 100,
                 "max_hp": 100,
-                "appearance": None,
-                "equipped_items": None,
             }
         ]
         
@@ -351,7 +351,7 @@ class TestPlayerVisibility:
         assert len(visible) == 0
     
     def test_get_visible_players_null_appearance(self):
-        """Test players with null appearance are still visible."""
+        """Test players without visual data are still visible."""
         players = [
             {
                 "id": "player1",
@@ -360,8 +360,7 @@ class TestPlayerVisibility:
                 "y": 30,
                 "current_hp": 50,
                 "max_hp": 100,
-                "appearance": None,
-                "equipped_items": None,
+                # No visual_hash or visual_state provided
             }
         ]
         
@@ -369,8 +368,10 @@ class TestPlayerVisibility:
         
         assert len(visible) == 1
         player_data = visible["player1"]
-        assert player_data["appearance"] is None
-        assert player_data["equipped_items"] is None
+        # Player should still be visible, just without visual data
+        assert player_data["type"] == "player"
+        assert "visual_hash" not in player_data
+        assert "visual_state" not in player_data
 
 
 class TestBuildEquippedItemsMap:

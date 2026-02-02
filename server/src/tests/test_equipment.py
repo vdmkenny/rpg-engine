@@ -346,8 +346,9 @@ class TestEquipFromInventory:
     ):
         """Equipping two-handed weapon should unequip shield."""
         player = player_with_equipment
-        two_handed = await ItemService.get_item_by_name("bronze_2h_sword")
-        shield = await ItemService.get_item_by_name("bronze_shield")
+        # Use copper items which only require level 1
+        two_handed = await ItemService.get_item_by_name("copper_2h_sword")
+        shield = await ItemService.get_item_by_name("wooden_shield")
 
         # Give required skills
         await give_player_skill_level(session, player.id, "attack", 1)
@@ -388,8 +389,9 @@ class TestEquipFromInventory:
     ):
         """Equipping shield when using two-handed weapon should unequip weapon."""
         player = player_with_equipment
-        two_handed = await ItemService.get_item_by_name("bronze_2h_sword")
-        shield = await ItemService.get_item_by_name("bronze_shield")
+        # Use copper items which only require level 1
+        two_handed = await ItemService.get_item_by_name("copper_2h_sword")
+        shield = await ItemService.get_item_by_name("wooden_shield")
 
         # Give required skills
         await give_player_skill_level(session, player.id, "attack", 1)
@@ -635,10 +637,10 @@ class TestGetTotalStats:
         """Multiple items should aggregate stats."""
         player = player_with_equipment
         sword = await ItemService.get_item_by_name("bronze_sword")
-        helmet = await ItemService.get_item_by_name("bronze_helmet")
-        platebody = await ItemService.get_item_by_name("bronze_platebody")
+        helmet = await ItemService.get_item_by_name("copper_helmet")
+        platebody = await ItemService.get_item_by_name("copper_platebody")
 
-        # Give required skills
+        # Give required skills (level 1 for bronze_sword and copper items)
         await give_player_skill_level(session, player.id, "attack", 1)
         await give_player_skill_level(session, player.id, "defence", 1)
 
@@ -655,22 +657,22 @@ class TestGetTotalStats:
         stats = await EquipmentService.get_total_stats(player.id)
 
         # Bronze sword: attack=4, strength=3
-        # Bronze helmet: physical_defence=3, magic_defence=1, magic_attack=-1
-        # Bronze platebody: physical_defence=8, magic_defence=2, health=5, magic_attack=-3, speed=-1
+        # Copper helmet: physical_defence=2, magic_defence=0, magic_attack=-1
+        # Copper platebody: physical_defence=5, magic_defence=1, health=3, magic_attack=-2, speed=-1
         assert stats.attack_bonus == 4
         assert stats.strength_bonus == 3
-        assert stats.physical_defence_bonus == 11  # 3 + 8
-        assert stats.magic_defence_bonus == 3  # 1 + 2
-        assert stats.health_bonus == 5
+        assert stats.physical_defence_bonus == 7  # 2 + 5
+        assert stats.magic_defence_bonus == 1  # 0 + 1
+        assert stats.health_bonus == 3
 
     @pytest.mark.asyncio
     async def test_negative_stats_reduce_total(
         self, session: AsyncSession, player_with_equipment, gsm):
         """Negative stats should reduce totals."""
         player = player_with_equipment
-        platebody = await ItemService.get_item_by_name("bronze_platebody")
+        platebody = await ItemService.get_item_by_name("copper_platebody")
 
-        # Give required skill
+        # Give required skill (level 1 for copper items)
         await give_player_skill_level(session, player.id, "defence", 1)
 
         # Equip platebody (has negative magic attack)
@@ -679,8 +681,8 @@ class TestGetTotalStats:
 
         stats = await EquipmentService.get_total_stats(player.id)
 
-        # Bronze platebody has magic_attack_bonus=-3
-        assert stats.magic_attack_bonus == -3
+        # Copper platebody has magic_attack_bonus=-2, speed=-1
+        assert stats.magic_attack_bonus == -2
         assert stats.speed_bonus == -1
 
 
@@ -790,9 +792,9 @@ class TestClearEquipment:
         """Clear should remove all equipment."""
         player = player_with_equipment
         sword = await ItemService.get_item_by_name("bronze_sword")
-        helmet = await ItemService.get_item_by_name("bronze_helmet")
+        helmet = await ItemService.get_item_by_name("copper_helmet")
 
-        # Give required skills and equip
+        # Give required skills and equip (level 1 for bronze_sword and copper items)
         await give_player_skill_level(session, player.id, "attack", 1)
         await give_player_skill_level(session, player.id, "defence", 1)
 

@@ -23,6 +23,7 @@ from server.src.core.metrics import (
 from server.src.services.map_service import get_map_manager
 from server.src.services.game_state_manager import get_game_state_manager
 from server.src.services.visibility_service import get_visibility_service
+from server.src.services.visual_registry import get_visual_registry
 from server.src.services.ai_service import AIService
 from server.src.services.entity_spawn_service import EntitySpawnService
 from server.src.core.database import AsyncSessionLocal
@@ -32,6 +33,11 @@ from common.src.protocol import (
     MessageType,
     GameUpdateEventPayload,
     CombatTargetType,
+)
+from common.src.sprites import (
+    VisualState,
+    AppearanceData,
+    EquippedVisuals,
 )
 
 logger = get_logger(__name__)
@@ -227,6 +233,44 @@ def _build_equipped_items_map(equipment: Optional[Dict[str, Dict]], gsm) -> Opti
     return equipped_items if equipped_items else None
 
 
+def _build_visual_state(
+    appearance: Optional[Dict], 
+    equipped_items: Optional[Dict[str, str]],
+) -> VisualState:
+    """
+    Build a VisualState from appearance dict and equipped items map.
+    
+    Args:
+        appearance: Appearance dictionary from player state
+        equipped_items: Dict mapping slot names to item names/sprite IDs
+        
+    Returns:
+        VisualState instance for hash computation and serialization
+    """
+    # Build AppearanceData from dict
+    appearance_data = AppearanceData.from_dict(appearance)
+    
+    # Build EquippedVisuals from equipped items
+    # The equipped_items dict maps slot -> item_name
+    # We use item_name as the sprite ID for now (will be improved with proper sprite mapping)
+    if equipped_items:
+        equipped_visuals = EquippedVisuals(
+            head=equipped_items.get("head"),
+            body=equipped_items.get("body"),
+            legs=equipped_items.get("legs"),
+            feet=equipped_items.get("feet"),
+            hands=equipped_items.get("hands"),
+            main_hand=equipped_items.get("main_hand"),
+            off_hand=equipped_items.get("off_hand"),
+            back=equipped_items.get("back"),
+            belt=equipped_items.get("belt"),
+        )
+    else:
+        equipped_visuals = EquippedVisuals()
+    
+    return VisualState(appearance=appearance_data, equipment=equipped_visuals)
+
+
 def get_visible_entities(
     player_x: int, player_y: int, 
     all_entities: List[Dict[str, Any]], 
@@ -253,16 +297,23 @@ def get_visible_entities(
         entity_y = entity.get("y", 0)
         
         if is_in_visible_range(player_x, player_y, entity_x, entity_y):
-            visible[entity_username] = {
+            entity_data = {
                 "type": "player",
                 "username": entity_username,
                 "x": entity_x,
                 "y": entity_y,
                 "current_hp": entity.get("current_hp", 0),
                 "max_hp": entity.get("max_hp", 0),
-                "appearance": entity.get("appearance"),
-                "equipped_items": entity.get("equipped_items"),
+                "facing_direction": entity.get("facing_direction", "DOWN"),
             }
+            
+            # Include visual hash and state for sprite rendering
+            if "visual_hash" in entity:
+                entity_data["visual_hash"] = entity["visual_hash"]
+            if "visual_state" in entity:
+                entity_data["visual_state"] = entity["visual_state"]
+            
+            visible[entity_username] = entity_data
     
     return visible
 
@@ -309,9 +360,8 @@ def get_visible_npc_entities(
             is_attackable = True
             
             # Entity-type specific rendering data
-            appearance = None  # For humanoids
-            equipped_items = None  # For humanoids
             sprite_sheet_id = None  # For monsters
+            visual_state = None  # For humanoids
             
             if entity_enum:
                 entity_def = entity_enum.value
@@ -321,12 +371,14 @@ def get_visible_npc_entities(
                 
                 # Extract type-specific rendering data
                 if isinstance(entity_def, HumanoidDefinition):
-                    if entity_def.appearance:
-                        appearance = entity_def.appearance.to_dict()
+                    # Build visual state from humanoid appearance and equipment
+                    appearance = entity_def.appearance.to_dict() if entity_def.appearance else None
+                    equipped_items = None
                     if entity_def.equipped_items:
                         equipped_items = {
                             slot.value: item.name for slot, item in entity_def.equipped_items.items()
                         }
+                    visual_state = _build_visual_state(appearance, equipped_items)
                 elif isinstance(entity_def, MonsterDefinition):
                     sprite_sheet_id = entity_def.sprite_sheet_id
             else:
@@ -348,9 +400,9 @@ def get_visible_npc_entities(
             }
             
             # Add type-specific fields
-            if entity_type == EntityType.HUMANOID_NPC.value:
-                entity_data["appearance"] = appearance
-                entity_data["equipped_items"] = equipped_items
+            if entity_type == EntityType.HUMANOID_NPC.value and visual_state:
+                entity_data["visual_hash"] = visual_state.compute_hash()
+                entity_data["visual_state"] = visual_state.to_dict()
             elif entity_type == EntityType.MONSTER.value:
                 entity_data["sprite_sheet_id"] = sprite_sheet_id
             
@@ -917,6 +969,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 
                 gsm = get_game_state_manager()
                 visibility_service = get_visibility_service()
+                visual_registry = get_visual_registry()
                 
                 # Process player data and collect HP regeneration updates
                 all_player_data: List[Dict[str, Any]] = []
@@ -933,6 +986,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         current_hp = int(data.get("current_hp", 10))
                         max_hp = int(data.get("max_hp", 10))
                         appearance = data.get("appearance")  # Dict or None
+                        facing_direction = data.get("facing_direction", "DOWN")
                         
                         # Calculate HP regeneration based on player login time
                         login_tick = await state.get_player_login_tick(username) or current_tick
@@ -957,6 +1011,12 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             equipment = await EquipmentService.get_equipment_raw(player_id)
                             equipped_items = _build_equipped_items_map(equipment, gsm)
                         
+                        # Build visual state and register with visual registry
+                        visual_state = _build_visual_state(appearance, equipped_items)
+                        visual_hash = await visual_registry.register_visual_state(
+                            f"player_{username}", visual_state
+                        )
+                        
                         all_player_data.append({
                             "id": username,
                             "username": username,
@@ -964,8 +1024,9 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             "y": y,
                             "current_hp": current_hp,
                             "max_hp": max_hp,
-                            "appearance": appearance,
-                            "equipped_items": equipped_items,
+                            "facing_direction": facing_direction,
+                            "visual_hash": visual_hash,
+                            "visual_state": visual_state.to_dict(),
                         })
                         player_positions[username] = (x, y)
 

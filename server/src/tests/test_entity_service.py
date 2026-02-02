@@ -13,7 +13,7 @@ from server.src.services.game_state_manager import GameStateManager
 from server.src.core.entities import EntityBehavior
 from server.src.core.humanoids import HumanoidID, HumanoidDefinition
 from server.src.core.monsters import MonsterID, MonsterDefinition
-from server.src.core.appearance import AppearanceData
+from common.src.sprites import AppearanceData, BodyType, SkinTone, HairStyle, HairColor
 from server.src.core.skills import SkillType
 from server.src.core.items import EquipmentSlot, ItemType
 
@@ -191,10 +191,10 @@ class TestHumanoidDefToDict:
     def test_humanoid_with_appearance(self):
         """Test that appearance data is serialized."""
         appearance = AppearanceData(
-            skin_tone=2,
-            hair_style="long",
-            hair_color="#FF5500",
-            body_type="muscular",
+            body_type=BodyType.MALE,
+            skin_tone=SkinTone.OLIVE,
+            hair_style=HairStyle.LONG,
+            hair_color=HairColor.RED,
         )
         humanoid_def = HumanoidDefinition(
             display_name="Styled NPC",
@@ -205,12 +205,11 @@ class TestHumanoidDefToDict:
         
         result = EntityService.entity_def_to_dict("STYLED_NPC", humanoid_def)
         
-        assert result["appearance"] == {
-            "skin_tone": 2,
-            "hair_style": "long",
-            "hair_color": "#FF5500",
-            "body_type": "muscular",
-        }
+        # Verify appearance is serialized with enum values
+        assert result["appearance"]["body_type"] == "male"
+        assert result["appearance"]["skin_tone"] == "olive"
+        assert result["appearance"]["hair_style"] == "long"
+        assert result["appearance"]["hair_color"] == "red"
 
     def test_humanoid_with_equipment(self):
         """Test that equipped items are serialized."""
