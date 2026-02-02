@@ -46,6 +46,29 @@ class ItemRarity(Enum):
                 return member
         raise ValueError(f"'{value}' is not a valid ItemRarity")
 
+    @classmethod
+    def get_color(cls, rarity_value: str, default: str = "#ffffff") -> str:
+        """
+        Get the color for a rarity value with a safe fallback.
+        
+        This is a convenience method that handles missing/invalid rarity values
+        gracefully without raising exceptions.
+        
+        Args:
+            rarity_value: The rarity string (e.g., "common", "rare")
+            default: Default color to return if rarity is invalid
+            
+        Returns:
+            Hex color string for the rarity
+        """
+        if not rarity_value:
+            return default
+        try:
+            rarity_enum = cls.from_value(rarity_value)
+            return rarity_enum.color
+        except ValueError:
+            return default
+
 
 class ItemCategory(Enum):
     """Categories for organizing items."""

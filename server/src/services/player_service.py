@@ -25,6 +25,33 @@ class PlayerService:
     """Service for managing player operations."""
 
     @staticmethod
+    def _dict_to_player(player_data: Dict[str, Any]) -> Player:
+        """
+        Convert GSM dict data to Player model.
+        
+        This is a helper method to consolidate the repeated dict-to-model
+        conversion logic used across multiple methods.
+        
+        Args:
+            player_data: Player data dictionary from GSM
+            
+        Returns:
+            Player model instance
+        """
+        player = Player()
+        player.id = player_data["id"]
+        player.username = player_data["username"]
+        player.hashed_password = player_data.get("hashed_password", "")
+        player.x_coord = player_data.get("x_coord", 10)
+        player.y_coord = player_data.get("y_coord", 10)
+        player.map_id = player_data.get("map_id", "samplemap")
+        player.role = player_data.get("role", "player")
+        player.is_banned = player_data.get("is_banned", False)
+        player.timeout_until = player_data.get("timeout_until")
+        player.current_hp = player_data.get("current_hp", 100)
+        return player
+
+    @staticmethod
     async def create_player(
         player_data: PlayerCreate, 
         x: Optional[int] = None,
@@ -59,17 +86,7 @@ class PlayerService:
             )
             
             # Convert GSM data back to Player model
-            player = Player()
-            player.id = player_complete_data["id"]
-            player.username = player_complete_data["username"]
-            player.hashed_password = player_complete_data["hashed_password"]
-            player.x_coord = player_complete_data.get("x_coord", 10)
-            player.y_coord = player_complete_data.get("y_coord", 10)  
-            player.map_id = player_complete_data.get("map_id", "samplemap")
-            player.role = player_complete_data.get("role", "player")
-            player.is_banned = player_complete_data.get("is_banned", False)
-            player.timeout_until = player_complete_data.get("timeout_until")
-            player.current_hp = player_complete_data.get("current_hp", 100)
+            player = PlayerService._dict_to_player(player_complete_data)
             
             logger.info("Player created", extra={"username": player.username, "player_id": player.id})
             return player
@@ -141,6 +158,15 @@ class PlayerService:
             # Unregister player - this handles immediate sync to DB and cache cleanup
             await state_manager.unregister_online_player(player_id)
             
+            # Clean up player lock to prevent memory leaks (gracefully handle if not initialized)
+            try:
+                from ..core.concurrency import get_player_lock_manager
+                lock_manager = get_player_lock_manager()
+                await lock_manager.cleanup_player_lock(player_id)
+            except RuntimeError:
+                # Concurrency infrastructure not initialized (e.g., in tests)
+                pass
+            
             logger.info(
                 "Player logged out",
                 extra={
@@ -183,19 +209,7 @@ class PlayerService:
         if not player_data:
             return None
         
-        # Convert GSM data back to Player model
-        player = Player()
-        player.id = player_data["id"]
-        player.username = player_data["username"]
-        player.hashed_password = player_data["hashed_password"]
-        player.x_coord = player_data.get("x_coord", 10)
-        player.y_coord = player_data.get("y_coord", 10)  
-        player.map_id = player_data.get("map_id", "samplemap")
-        player.is_banned = player_data.get("is_banned", False)
-        player.timeout_until = player_data.get("timeout_until")
-        player.current_hp = player_data.get("current_hp", 100)
-        
-        return player
+        return PlayerService._dict_to_player(player_data)
 
     @staticmethod
     async def get_player_by_id(
@@ -217,20 +231,7 @@ class PlayerService:
         if not player_data:
             return None
         
-        # Convert GSM data back to Player model
-        player = Player()
-        player.id = player_data["id"]
-        player.username = player_data["username"]
-        player.hashed_password = player_data["hashed_password"]
-        player.x_coord = player_data.get("x_coord", 10)
-        player.y_coord = player_data.get("y_coord", 10)  
-        player.map_id = player_data.get("map_id", "samplemap")
-        player.role = player_data.get("role", "user")
-        player.is_banned = player_data.get("is_banned", False)
-        player.timeout_until = player_data.get("timeout_until")
-        player.current_hp = player_data.get("current_hp", 100)
-        
-        return player
+        return PlayerService._dict_to_player(player_data)
 
     @staticmethod
     def is_player_online(player_id: int) -> bool:

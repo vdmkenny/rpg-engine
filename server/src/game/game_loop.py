@@ -42,18 +42,135 @@ CHUNK_SIZE = 16
 # Visibility radius in chunks (1 = 3x3 grid of chunks around player)
 VISIBILITY_RADIUS = 1
 
-# Track player chunk positions for chunk updates
+
+class GameLoopState:
+    """
+    Thread-safe container for game loop state.
+    
+    Encapsulates module-level mutable state with async locks to prevent
+    race conditions between the game loop and WebSocket handlers.
+    """
+    
+    def __init__(self):
+        self._lock = asyncio.Lock()
+        self._player_chunk_positions: Dict[str, Tuple[int, int]] = {}
+        self._global_tick_counter: int = 0
+        self._player_login_ticks: Dict[str, int] = {}
+        self._players_dying: Set[int] = set()
+        self._active_tasks: Set[asyncio.Task] = set()
+    
+    @property
+    def tick_counter(self) -> int:
+        """Get current tick counter (read-only, no lock needed for atomic int read)."""
+        return self._global_tick_counter
+    
+    def increment_tick(self) -> int:
+        """Increment and return new tick counter. Called only from game loop."""
+        self._global_tick_counter += 1
+        return self._global_tick_counter
+    
+    async def get_player_chunk_position(self, username: str) -> Optional[Tuple[int, int]]:
+        """Get a player's last known chunk position."""
+        async with self._lock:
+            return self._player_chunk_positions.get(username)
+    
+    async def set_player_chunk_position(self, username: str, chunk: Tuple[int, int]) -> None:
+        """Set a player's chunk position."""
+        async with self._lock:
+            self._player_chunk_positions[username] = chunk
+    
+    async def get_player_login_tick(self, username: str) -> Optional[int]:
+        """Get the tick when a player logged in, or None if not found."""
+        async with self._lock:
+            return self._player_login_ticks.get(username)
+    
+    async def register_player_login(self, username: str) -> None:
+        """Register a player's login tick for staggered HP regen."""
+        async with self._lock:
+            self._player_login_ticks[username] = self._global_tick_counter
+    
+    async def is_player_dying(self, player_id: int) -> bool:
+        """Check if a player is currently in death sequence."""
+        async with self._lock:
+            return player_id in self._players_dying
+    
+    async def add_dying_player(self, player_id: int) -> bool:
+        """
+        Add a player to the dying set.
+        
+        Returns True if player was added, False if already dying.
+        """
+        async with self._lock:
+            if player_id in self._players_dying:
+                return False
+            self._players_dying.add(player_id)
+            return True
+    
+    async def remove_dying_player(self, player_id: int) -> None:
+        """Remove a player from the dying set."""
+        async with self._lock:
+            self._players_dying.discard(player_id)
+    
+    async def cleanup_player(self, username: str) -> None:
+        """Clean up all state for a disconnected player."""
+        async with self._lock:
+            self._player_chunk_positions.pop(username, None)
+            self._player_login_ticks.pop(username, None)
+    
+    def track_task(self, task: asyncio.Task) -> None:
+        """
+        Track an async task for proper cleanup and exception handling.
+        
+        Adds a done callback to log exceptions and remove from tracking set.
+        """
+        self._active_tasks.add(task)
+        
+        def _on_task_done(t: asyncio.Task) -> None:
+            self._active_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                logger.error(
+                    "Background task failed",
+                    extra={
+                        "task_name": t.get_name(),
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                        "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+                    },
+                )
+        
+        task.add_done_callback(_on_task_done)
+    
+    async def cancel_all_tasks(self) -> None:
+        """Cancel all tracked tasks (for shutdown)."""
+        for task in list(self._active_tasks):
+            if not task.done():
+                task.cancel()
+        
+        if self._active_tasks:
+            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+            self._active_tasks.clear()
+
+
+# Singleton instance of game loop state
+_game_loop_state: Optional[GameLoopState] = None
+
+
+def get_game_loop_state() -> GameLoopState:
+    """Get or create the singleton GameLoopState instance."""
+    global _game_loop_state
+    if _game_loop_state is None:
+        _game_loop_state = GameLoopState()
+    return _game_loop_state
+
+
+# Legacy module-level variables for backward compatibility
+# These are kept for code that directly imports them, but new code should use GameLoopState
 player_chunk_positions: Dict[str, Tuple[int, int]] = {}
-
-# Global tick counter (incremented every game tick)
 _global_tick_counter: int = 0
-
-# Track when each player connected (in tick count) for staggered HP regen
-# {username: tick_count_at_login}
 player_login_ticks: Dict[str, int] = {}
-
-# Track players currently in death sequence to avoid triggering multiple times
-# {player_id: True}
 players_dying: Set[int] = set()
 
 
@@ -491,8 +608,9 @@ async def send_chunk_update_if_needed(
         chunk_size: Size of chunks in tiles
     """
     try:
+        state = get_game_loop_state()
         current_chunk = get_chunk_coordinates(x, y, chunk_size)
-        last_chunk = player_chunk_positions.get(username)
+        last_chunk = await state.get_player_chunk_position(username)
 
         # Send chunks if player is new or moved to different chunk
         if last_chunk != current_chunk:
@@ -535,7 +653,7 @@ async def send_chunk_update_if_needed(
                 )
 
                 # Update tracked position
-                player_chunk_positions[username] = current_chunk
+                await state.set_player_chunk_position(username, current_chunk)
 
                 logger.debug(
                     "Sent automatic chunk update",
@@ -609,6 +727,10 @@ async def send_diff_update(
 
 async def cleanup_disconnected_player(username: str) -> None:
     """Clean up state tracking for a disconnected player."""
+    state = get_game_loop_state()
+    await state.cleanup_player(username)
+    
+    # Also update legacy module-level vars for backward compatibility
     player_chunk_positions.pop(username, None)
     player_login_ticks.pop(username, None)
     
@@ -715,12 +837,17 @@ async def _handle_player_death(
         )
     finally:
         # Always remove player from dying set when done
-        players_dying.discard(player_id)
+        state = get_game_loop_state()
+        await state.remove_dying_player(player_id)
+        players_dying.discard(player_id)  # Also update legacy set
 
 
-def register_player_login(username: str) -> None:
+async def register_player_login(username: str) -> None:
     """Register a player's login tick for staggered HP regen."""
-    player_login_ticks[username] = _global_tick_counter
+    state = get_game_loop_state()
+    await state.register_player_login(username)
+    # Also update legacy dict for backward compatibility
+    player_login_ticks[username] = state.tick_counter
 
 
 async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
@@ -735,6 +862,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
         valkey: The Valkey client.
     """
     global _global_tick_counter
+    state = get_game_loop_state()
     tick_interval = 1 / settings.GAME_TICK_RATE
     hp_regen_interval = settings.HP_REGEN_INTERVAL_TICKS
     db_sync_interval = settings.DB_SYNC_INTERVAL_TICKS
@@ -745,11 +873,12 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
             # Track game loop iteration
             game_loop_iterations_total.inc()
             
-            # Increment global tick counter
-            _global_tick_counter += 1
+            # Increment global tick counter (both new state and legacy)
+            current_tick = state.increment_tick()
+            _global_tick_counter = current_tick
 
             # Periodic batch sync of dirty data to database
-            if _global_tick_counter % db_sync_interval == 0:
+            if current_tick % db_sync_interval == 0:
                 try:
                     gsm = get_game_state_manager()
                     await gsm.batch_ops.sync_all()
@@ -758,7 +887,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         "Batch sync failed",
                         extra={
                             "error": str(sync_error),
-                            "tick": _global_tick_counter,
+                            "tick": current_tick,
                             "traceback": traceback.format_exc(),
                         },
                     )
@@ -772,7 +901,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     "Entity respawn processing failed",
                     extra={
                         "error": str(respawn_error),
-                        "tick": _global_tick_counter,
+                        "tick": current_tick,
                         "traceback": traceback.format_exc(),
                     },
                 )
@@ -806,8 +935,8 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         appearance = data.get("appearance")  # Dict or None
                         
                         # Calculate HP regeneration based on player login time
-                        login_tick = player_login_ticks.get(username, _global_tick_counter)
-                        ticks_since_login = _global_tick_counter - login_tick
+                        login_tick = await state.get_player_login_tick(username) or current_tick
+                        ticks_since_login = current_tick - login_tick
                         should_regen = (
                             ticks_since_login > 0 
                             and ticks_since_login % hp_regen_interval == 0
@@ -821,10 +950,11 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         
                         # Get equipped items for paperdoll rendering
                         from ..services.connection_service import ConnectionService
+                        from ..services.equipment_service import EquipmentService
                         player_id = ConnectionService.get_online_player_id_by_username(username)
                         equipped_items = None
                         if player_id:
-                            equipment = await gsm.get_equipment(player_id)
+                            equipment = await EquipmentService.get_equipment_raw(player_id)
                             equipped_items = _build_equipped_items_map(equipment, gsm)
                         
                         all_player_data.append({
@@ -839,9 +969,18 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         })
                         player_positions[username] = (x, y)
 
-                # Execute batch HP regeneration updates
+                # Execute batch HP regeneration updates via HpService
                 if hp_updates:
-                    await gsm.state_access.batch_update_player_hp(hp_updates)
+                    from ..services.hp_service import HpService
+                    # Convert username-based updates to player_id-based
+                    from ..services.connection_service import ConnectionService
+                    player_id_updates = []
+                    for username, new_hp in hp_updates:
+                        pid = ConnectionService.get_online_player_id_by_username(username)
+                        if pid:
+                            player_id_updates.append((pid, new_hp))
+                    if player_id_updates:
+                        await HpService.batch_regenerate_hp(player_id_updates)
 
                 # Process dying entities (death animation completion)
                 entity_instances = await gsm.get_map_entities(map_id)
@@ -890,23 +1029,28 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 # Check for player deaths and spawn death handlers
                 # This happens after entity combat to catch players killed by entities
                 from ..services.connection_service import ConnectionService
+                from ..services.hp_service import HpService
                 for username in player_usernames:
                     player_id = ConnectionService.get_online_player_id_by_username(username)
                     if not player_id:
                         continue
                     
-                    # Skip players already in death sequence
-                    if player_id in players_dying:
+                    # Skip players already in death sequence (use new thread-safe state)
+                    if await state.is_player_dying(player_id):
                         continue
                     
-                    # Check player HP
-                    player_hp = await gsm.get_player_hp(player_id)
-                    if player_hp and player_hp["current_hp"] <= 0:
+                    # Check player HP via HpService
+                    current_hp, max_hp = await HpService.get_hp(player_id)
+                    if current_hp <= 0:
                         # Player died - add to dying set and spawn death handler
-                        players_dying.add(player_id)
-                        asyncio.create_task(
-                            _handle_player_death(player_id, map_id, manager)
-                        )
+                        # Use atomic add to prevent race conditions
+                        if await state.add_dying_player(player_id):
+                            players_dying.add(player_id)  # Also update legacy set
+                            task = asyncio.create_task(
+                                _handle_player_death(player_id, map_id, manager),
+                                name=f"death_handler_{player_id}"
+                            )
+                            state.track_task(task)
 
                 # Process auto-attacks for all players in combat
                 await _process_auto_attacks(gsm, manager, _global_tick_counter)

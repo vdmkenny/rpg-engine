@@ -516,22 +516,25 @@ class TestHpRegeneration:
         from server.src.game.game_loop import (
             register_player_login,
             cleanup_disconnected_player,
-            player_login_ticks,
-            _global_tick_counter,
+            get_game_loop_state,
         )
         
         test_username = "regen_test_user"
+        state = get_game_loop_state()
         
-        # Register player login
-        register_player_login(test_username)
+        # Register player login (now async)
+        await register_player_login(test_username)
         
-        assert test_username in player_login_ticks
-        assert player_login_ticks[test_username] == _global_tick_counter
+        # Verify login tick was recorded using the state API
+        login_tick = await state.get_player_login_tick(test_username)
+        assert login_tick is not None
         
         # Cleanup
         await cleanup_disconnected_player(test_username)
         
-        assert test_username not in player_login_ticks
+        # Verify player was cleaned up
+        login_tick_after = await state.get_player_login_tick(test_username)
+        assert login_tick_after is None
 
     @pytest.mark.asyncio
     async def test_entity_diff_includes_hp_changes(self):

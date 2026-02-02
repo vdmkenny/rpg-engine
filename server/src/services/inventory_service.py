@@ -47,62 +47,6 @@ class InventoryService:
     """Service for managing player inventory."""
 
     @staticmethod
-    def item_meta_to_info(item_meta: dict) -> ItemInfo:
-        """
-        Convert GSM cached item metadata to ItemInfo schema.
-        
-        Args:
-            item_meta: Item metadata from GSM cache
-            
-        Returns:
-            ItemInfo schema for client
-        """
-        from ..schemas.item import ItemInfo, ItemStats
-        
-        # Get rarity color from enum
-        try:
-            rarity_enum = ItemRarity.from_value(item_meta["rarity"])
-            rarity_color = rarity_enum.color
-        except (ValueError, KeyError):
-            rarity_color = "#ffffff"  # Default to white
-
-        stats = ItemStats(
-            attack_bonus=item_meta.get("attack_bonus", 0),
-            strength_bonus=item_meta.get("strength_bonus", 0),
-            ranged_attack_bonus=item_meta.get("ranged_attack_bonus", 0),
-            ranged_strength_bonus=item_meta.get("ranged_strength_bonus", 0),
-            magic_attack_bonus=item_meta.get("magic_attack_bonus", 0),
-            magic_damage_bonus=item_meta.get("magic_damage_bonus", 0),
-            physical_defence_bonus=item_meta.get("physical_defence_bonus", 0),
-            magic_defence_bonus=item_meta.get("magic_defence_bonus", 0),
-            health_bonus=item_meta.get("health_bonus", 0),
-            speed_bonus=item_meta.get("speed_bonus", 0),
-            mining_bonus=item_meta.get("mining_bonus", 0),
-            woodcutting_bonus=item_meta.get("woodcutting_bonus", 0),
-            fishing_bonus=item_meta.get("fishing_bonus", 0),
-        )
-
-        return ItemInfo(
-            id=item_meta["id"],
-            name=item_meta["name"],
-            display_name=item_meta["display_name"],
-            description=item_meta.get("description", ""),
-            category=item_meta["category"],
-            rarity=item_meta["rarity"],
-            rarity_color=rarity_color,
-            equipment_slot=item_meta.get("equipment_slot"),
-            max_stack_size=item_meta.get("max_stack_size", 1),
-            is_two_handed=item_meta.get("is_two_handed", False),
-            max_durability=item_meta.get("max_durability"),
-            is_indestructible=item_meta.get("is_indestructible", False),
-            required_skill=item_meta.get("required_skill"),
-            required_level=item_meta.get("required_level", 1),
-            is_tradeable=item_meta.get("is_tradeable", True),
-            value=item_meta.get("value", 0),
-            stats=stats,
-        )
-
-    @staticmethod
     async def get_inventory(player_id: int) -> list:
         """
         Get all inventory items for a player from GSM.

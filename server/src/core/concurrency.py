@@ -321,6 +321,74 @@ class PlayerLockManager:
             "active_contexts": sum(len(contexts) for contexts in self._active_contexts.values()),
             "players_with_active_locks": len([pid for pid, contexts in self._active_contexts.items() if contexts])
         }
+    
+    async def cleanup_player_lock(self, player_id: int) -> bool:
+        """
+        Clean up lock resources for a disconnected player.
+        
+        Should be called when a player disconnects to prevent memory leaks.
+        Only removes the lock if it's not currently held.
+        
+        Args:
+            player_id: The player ID to clean up
+            
+        Returns:
+            True if lock was cleaned up, False if lock was held or didn't exist
+        """
+        async with self._lock_creation_lock:
+            # Check if lock exists
+            if player_id not in self._player_locks:
+                return False
+            
+            lock = self._player_locks[player_id]
+            
+            # Only remove if not currently held
+            if lock.locked():
+                logger.warning(
+                    "Cannot cleanup player lock - still held",
+                    extra={"player_id": player_id}
+                )
+                return False
+            
+            # Clean up lock and active contexts
+            del self._player_locks[player_id]
+            self._active_contexts.pop(player_id, None)
+            
+            logger.debug(
+                "Player lock cleaned up",
+                extra={"player_id": player_id}
+            )
+            return True
+    
+    async def cleanup_all_stale_locks(self, active_player_ids: Set[int]) -> int:
+        """
+        Clean up locks for players who are no longer online.
+        
+        Args:
+            active_player_ids: Set of currently online player IDs
+            
+        Returns:
+            Number of locks cleaned up
+        """
+        async with self._lock_creation_lock:
+            stale_ids = [
+                pid for pid in self._player_locks.keys() 
+                if pid not in active_player_ids and not self._player_locks[pid].locked()
+            ]
+            
+            cleaned = 0
+            for player_id in stale_ids:
+                del self._player_locks[player_id]
+                self._active_contexts.pop(player_id, None)
+                cleaned += 1
+            
+            if cleaned > 0:
+                logger.info(
+                    "Cleaned up stale player locks",
+                    extra={"cleaned_count": cleaned, "remaining_locks": len(self._player_locks)}
+                )
+            
+            return cleaned
 
 
 class ValkeyAtomicOperations:

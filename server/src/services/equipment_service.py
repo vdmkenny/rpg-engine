@@ -62,6 +62,23 @@ class EquipmentService:
     """Service for managing player equipment."""
 
     @staticmethod
+    async def get_equipment_raw(player_id: int) -> dict[str, dict]:
+        """
+        Get raw equipment data for a player (for game loop rendering).
+
+        This method returns the raw dict format without converting to
+        EquipmentItem objects, optimized for high-frequency game loop calls.
+
+        Args:
+            player_id: Player ID
+
+        Returns:
+            Dictionary mapping slot name to raw equipment data dict
+        """
+        state_manager = get_game_state_manager()
+        return await state_manager.get_equipment(player_id) or {}
+
+    @staticmethod
     async def get_equipment(player_id: int) -> dict[str, EquipmentItem]:
         """
         Get all equipped items for a player.

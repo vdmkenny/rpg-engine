@@ -426,3 +426,36 @@ class HpService:
             Tuple of (map_id, x, y) coordinates for respawn location
         """
         return settings.DEFAULT_MAP, settings.DEFAULT_SPAWN_X, settings.DEFAULT_SPAWN_Y
+
+    @staticmethod
+    async def batch_regenerate_hp(
+        hp_updates: list[tuple[int, int]]
+    ) -> int:
+        """
+        Batch HP regeneration for game loop tick processing.
+        
+        This method is optimized for high-frequency calls during the game loop
+        and uses direct GSM access for performance. It does not log individual
+        updates to avoid log spam.
+        
+        Args:
+            hp_updates: List of (player_id, new_hp) tuples
+            
+        Returns:
+            Number of players updated
+        """
+        if not hp_updates:
+            return 0
+        
+        gsm = get_game_state_manager()
+        updated = 0
+        
+        for player_id, new_hp in hp_updates:
+            try:
+                await gsm.set_player_hp(player_id, new_hp)
+                updated += 1
+            except Exception:
+                # Silently skip failed updates to avoid disrupting game loop
+                pass
+        
+        return updated

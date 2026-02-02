@@ -5,6 +5,7 @@ This module provides a modular GameStateManager with helper classes to keep
 file sizes manageable while maintaining clear separation of concerns.
 """
 
+import asyncio
 import json
 import traceback
 from contextlib import asynccontextmanager
@@ -1705,14 +1706,15 @@ class GameStateManager:
         if not ground_item_ids_raw:
             return []
         
-        ground_items = []
-        for ground_item_id_raw in ground_item_ids_raw:
-            ground_item_id = int(_decode_bytes(ground_item_id_raw))
-            item_data = await self.get_ground_item(ground_item_id)
-            if item_data:
-                ground_items.append(item_data)
+        # Parse all IDs first
+        ground_item_ids = [int(_decode_bytes(id_raw)) for id_raw in ground_item_ids_raw]
         
-        return ground_items
+        # Fetch all items in parallel using asyncio.gather
+        item_futures = [self.get_ground_item(item_id) for item_id in ground_item_ids]
+        items = await asyncio.gather(*item_futures)
+        
+        # Filter out None results
+        return [item for item in items if item is not None]
     
     async def load_ground_items_from_db(self) -> int:
         """Load ground items from database to Valkey on startup."""
@@ -1898,14 +1900,15 @@ class GameStateManager:
         if not instance_ids_raw:
             return []
         
-        entities = []
-        for instance_id_raw in instance_ids_raw:
-            instance_id = int(_decode_bytes(instance_id_raw))
-            entity_data = await self.get_entity_instance(instance_id)
-            if entity_data:
-                entities.append(entity_data)
+        # Parse all IDs first
+        instance_ids = [int(_decode_bytes(id_raw)) for id_raw in instance_ids_raw]
         
-        return entities
+        # Fetch all entities in parallel using asyncio.gather
+        entity_futures = [self.get_entity_instance(instance_id) for instance_id in instance_ids]
+        entities = await asyncio.gather(*entity_futures)
+        
+        # Filter out None results
+        return [entity for entity in entities if entity is not None]
     
     async def update_entity_position(self, instance_id: int, x: int, y: int) -> None:
         """

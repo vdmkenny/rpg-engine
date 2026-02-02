@@ -50,14 +50,6 @@ class GroundItemService:
         return settings.GROUND_ITEMS_LOOT_PROTECTION_TIMES.get(rarity, 45)
 
     @staticmethod
-    def _get_rarity_color(rarity: str) -> str:
-        """Get hex color for item rarity."""
-        try:
-            return ItemRarity.from_value(rarity).color
-        except ValueError:
-            return "#ffffff"  # Default to white
-
-    @staticmethod
     async def create_ground_item(
         item_id: int,
         map_id: str,
@@ -441,7 +433,7 @@ class GroundItemService:
                         display_name=item.display_name,
                         category=item.category,
                         rarity=item.rarity,
-                        rarity_color=GroundItemService._get_rarity_color(item.rarity),
+                        rarity_color=ItemRarity.get_color(item.rarity),
                         max_stack_size=item.max_stack_size,
                     ),
                     x=gi["x"],

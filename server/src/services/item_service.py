@@ -168,16 +168,8 @@ class ItemService:
         Returns:
             ItemInfo schema for client
         """
-        # Get rarity color from enum
-        try:
-            rarity_value = item_data.get("rarity")
-            if rarity_value:
-                rarity_enum = ItemRarity.from_value(rarity_value)
-                rarity_color = rarity_enum.color
-            else:
-                rarity_color = "#ffffff"  # Default to white
-        except ValueError:
-            rarity_color = "#ffffff"  # Default to white
+        # Get rarity color using the safe utility method
+        rarity_color = ItemRarity.get_color(item_data.get("rarity"), default="#ffffff")
 
         stats = ItemStats(
             attack_bonus=item_data.get("attack_bonus", 0),
