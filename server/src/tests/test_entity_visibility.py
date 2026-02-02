@@ -407,6 +407,7 @@ class TestBuildEquippedItemsMap:
         class MockGSM:
             def get_cached_item_meta(self, item_id):
                 items = {1: {"name": "BRONZE_SHORTSWORD"}, 2: {"name": "WOODEN_SHIELD"}}
+                return items.get(item_id)
             
         result = _build_equipped_items_map(equipment, MockGSM())
         assert result == {"weapon": "BRONZE_SHORTSWORD", "shield": "WOODEN_SHIELD"}

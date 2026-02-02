@@ -357,7 +357,7 @@ class ItemType(Enum):
     )
 
     COPPER_2H_SWORD = ItemDefinition(
-        display_name="Copper Two-Handed Sword",
+        display_name="Copper Zweihander",
         description="A large copper sword requiring two hands.",
         category=ItemCategory.WEAPON,
         equipment_slot=EquipmentSlot.WEAPON,
@@ -458,7 +458,7 @@ class ItemType(Enum):
     )
 
     BRONZE_2H_SWORD = ItemDefinition(
-        display_name="Bronze Two-Handed Sword",
+        display_name="Bronze Zweihander",
         description="A large bronze sword requiring two hands.",
         category=ItemCategory.WEAPON,
         equipment_slot=EquipmentSlot.WEAPON,
@@ -559,7 +559,7 @@ class ItemType(Enum):
     )
 
     IRON_2H_SWORD = ItemDefinition(
-        display_name="Iron Two-Handed Sword",
+        display_name="Iron Zweihander",
         description="A large iron sword requiring two hands.",
         category=ItemCategory.WEAPON,
         equipment_slot=EquipmentSlot.WEAPON,
@@ -665,7 +665,7 @@ class ItemType(Enum):
     )
 
     STEEL_2H_SWORD = ItemDefinition(
-        display_name="Steel Two-Handed Sword",
+        display_name="Steel Zweihander",
         description="A massive steel sword requiring two hands.",
         category=ItemCategory.WEAPON,
         rarity=ItemRarity.UNCOMMON,

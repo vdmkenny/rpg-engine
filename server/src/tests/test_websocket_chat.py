@@ -4,7 +4,7 @@ WebSocket integration tests for chat functionality.
 Covers:
 - Local chat (range-based)
 - Global chat (all players)
-- DM chat (not implemented)
+- DM chat (direct messages)
 - Empty/invalid messages
 
 These tests use the test database and WebSocket handlers.
@@ -86,18 +86,19 @@ class TestDMChat:
     """Tests for DM (direct message) chat functionality."""
 
     @pytest.mark.asyncio
-    async def test_dm_chat_not_implemented(self, test_client: WebSocketTestClient):
-        """DM chat should work correctly."""
-        # Send DM chat message
-        response = await test_client.send_command(
-            MessageType.CMD_CHAT_SEND,
-            {"channel": "dm", "message": "Private message", "target": "someone"},
-        )
+    async def test_dm_to_nonexistent_user_returns_error(self, test_client: WebSocketTestClient):
+        """DM to non-existent user should return dm_recipient_not_found error."""
+        from server.src.tests.websocket_test_utils import ErrorResponseError
+        
+        # Send DM to non-existent player - server returns RESP_ERROR
+        with pytest.raises(ErrorResponseError) as exc_info:
+            await test_client.send_command(
+                MessageType.CMD_CHAT_SEND,
+                {"channel": "dm", "message": "Private message", "recipient": "nonexistent_user"},
+            )
 
-        # Should get success response - DM chat is implemented!
-        assert response.type == MessageType.RESP_SUCCESS
-        assert response.payload["channel"] == "dm"
-        assert response.payload["message"] == "Private message"
+        # Verify dm_recipient_not_found error
+        assert "dm_recipient_not_found" in exc_info.value.error_message
 
 
 @pytest.mark.integration

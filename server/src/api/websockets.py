@@ -231,7 +231,7 @@ async def websocket_endpoint(
         await manager.connect(websocket, username, position["map_id"])
         
         # Register for game loop
-        register_player_login(username)
+        await register_player_login(username)
         
         # Update metrics
         _update_connection_metrics()
