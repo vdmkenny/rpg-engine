@@ -198,7 +198,7 @@ class EquipmentService:
         ref_mgr = get_reference_data_manager()
 
         # Get base HP from Hitpoints skill level
-        base_hp = await SkillService.get_skill_level(player_id, SkillType.HITPOINTS.name.lower())
+        base_hp = await SkillService.get_skill_level(player_id, SkillType.HITPOINTS)
 
         # Calculate equipment health bonuses for HP calculation
         equipment = await equipment_mgr.get_equipment(player_id)
@@ -345,7 +345,7 @@ class EquipmentService:
                 data={"can_equip": True}
             )
 
-        current_level = await SkillService.get_skill_level(player_id, skill_type.name.lower())
+        current_level = await SkillService.get_skill_level(player_id, skill_type)
 
         required_level = item_data.get("required_level", 1)
         if current_level < required_level:

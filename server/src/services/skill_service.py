@@ -5,36 +5,20 @@ Handles skill synchronization, granting skills to players,
 and experience/level calculations using SkillsManager.
 """
 
-from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
+from typing import Optional, List
 
 from server.src.core.logging_config import get_logger
 from server.src.core.skills import SkillType
+from server.src.schemas.skill import XPGain, SkillData
 
 logger = get_logger(__name__)
-
-
-@dataclass
-class LevelUpResult:
-    """Result of adding experience to a skill."""
-
-    skill_name: str
-    previous_level: int
-    new_level: int
-    current_xp: int
-    xp_to_next: int
-    leveled_up: bool
-
-    @property
-    def levels_gained(self) -> int:
-        return self.new_level - self.previous_level
 
 
 class SkillService:
     """Service for managing player skills."""
 
     @staticmethod
-    async def get_skill_level(player_id: int, skill_type: str) -> int:
+    async def get_skill_level(player_id: int, skill_type: SkillType) -> int:
         """
         Get player's current level for a specific skill.
         
@@ -42,7 +26,7 @@ class SkillService:
 
         Args:
             player_id: The player's database ID
-            skill_type: Skill name (e.g., "attack", "strength", "hitpoints")
+            skill_type: SkillType enum (e.g., SkillType.ATTACK, SkillType.HITPOINTS)
 
         Returns:
             Current skill level, or 1 if skill not found
@@ -50,7 +34,8 @@ class SkillService:
         from server.src.services.game_state import get_skills_manager
 
         skills_mgr = get_skills_manager()
-        skill_data = await skills_mgr.get_skill(player_id, skill_type)
+        skill_name = skill_type.name.lower()
+        skill_data = await skills_mgr.get_skill(player_id, skill_name)
 
         if skill_data:
             return skill_data.get("level", 1)
@@ -86,7 +71,7 @@ class SkillService:
         player_id: int,
         skill: SkillType,
         xp_amount: int,
-    ) -> Optional[LevelUpResult]:
+    ) -> Optional[XPGain]:
         """
         Add experience to a player's skill.
 
@@ -98,7 +83,7 @@ class SkillService:
             xp_amount: Amount of XP to add (must be positive)
 
         Returns:
-            LevelUpResult with details, or None if skill not found
+            XPGain with details, or None if skill not found
         """
         from server.src.services.game_state import get_skills_manager
         from server.src.core.skills import (
@@ -149,17 +134,19 @@ class SkillService:
                 }
             )
 
-        return LevelUpResult(
-            skill_name=skill.value.name,
-            previous_level=previous_level,
-            new_level=new_level,
+        return XPGain(
+            skill=skill_name,
+            xp_gained=xp_amount,
             current_xp=new_xp,
-            xp_to_next=xp_to_next_level(new_xp, xp_multiplier),
+            current_level=new_level,
+            previous_level=previous_level,
+            xp_to_next_level=xp_to_next_level(new_xp, xp_multiplier),
             leveled_up=leveled_up,
+            levels_gained=new_level - previous_level,
         )
 
     @staticmethod
-    async def get_player_skills(player_id: int) -> List[Dict]:
+    async def get_player_skills(player_id: int) -> List[SkillData]:
         """
         Fetch all skills for a player with computed metadata.
 
@@ -167,20 +154,46 @@ class SkillService:
             player_id: The player's database ID
 
         Returns:
-            List of skill info dicts with name, category, level, xp, etc.
+            List of SkillData with complete skill information
         """
         from server.src.services.game_state import get_skills_manager
+        from server.src.core.skills import (
+            get_skill_xp_multiplier,
+            xp_to_next_level,
+            xp_for_level,
+            xp_for_current_level,
+            progress_to_next_level,
+            MAX_LEVEL,
+        )
 
         skills_mgr = get_skills_manager()
         skills_data = await skills_mgr.get_all_skills(player_id)
 
         result = []
         for skill_name, skill_data in skills_data.items():
-            result.append({
-                "name": skill_name,
-                "level": skill_data.get("level", 1),
-                "experience": skill_data.get("experience", 0),
-            })
+            skill_type = SkillType.from_name(skill_name)
+            if not skill_type:
+                continue
+
+            level = skill_data.get("level", 1)
+            experience = skill_data.get("experience", 0)
+            xp_multiplier = get_skill_xp_multiplier(skill_type)
+
+            result.append(
+                SkillData(
+                    name=skill_type.value.name,
+                    category=skill_type.value.category.value,
+                    description=skill_type.value.description,
+                    current_level=level,
+                    experience=experience,
+                    xp_for_current_level=xp_for_current_level(experience, xp_multiplier),
+                    xp_for_next_level=xp_for_level(level + 1, xp_multiplier),
+                    xp_to_next_level=xp_to_next_level(experience, xp_multiplier),
+                    xp_multiplier=xp_multiplier,
+                    progress_percent=progress_to_next_level(experience, xp_multiplier),
+                    max_level=MAX_LEVEL,
+                )
+            )
 
         return result
 
