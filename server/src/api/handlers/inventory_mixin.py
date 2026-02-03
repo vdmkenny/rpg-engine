@@ -93,8 +93,8 @@ class InventoryHandlerMixin:
                     message.id,
                     {
                         "message": result.message,
-                        "items_moved": result.items_moved,
-                        "stacks_merged": result.stacks_merged
+                        "items_moved": result.data.get("items_moved", 0),
+                        "stacks_merged": result.data.get("stacks_merged", 0)
                     }
                 )
                 await self._send_inventory_state_update()

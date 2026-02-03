@@ -137,7 +137,8 @@ class BaseHandlerMixin:
     async def _send_inventory_state_update(self) -> None:
         """Send personal inventory state update event."""
         try:
-            inventory_data = await InventoryService.get_inventory_response(self.player_id)
+            from server.src.schemas.item import InventoryData
+            inventory_data = await InventoryService.get_inventory(self.player_id)
             
             state_update = WSMessage(
                 id=None,
@@ -167,8 +168,9 @@ class BaseHandlerMixin:
     async def _send_equipment_state_update(self) -> None:
         """Send consolidated equipment state update (inventory + equipment + stats)."""
         try:
-            inventory_data = await InventoryService.get_inventory_response(self.player_id)
-            equipment_data = await EquipmentService.get_equipment_response(self.player_id)
+            from server.src.schemas.item import InventoryData, EquipmentData, ItemStats
+            inventory_data = await InventoryService.get_inventory(self.player_id)
+            equipment_data = await EquipmentService.get_equipment(self.player_id)
             stats_data = await EquipmentService.get_total_stats(self.player_id)
             
             state_update = WSMessage(

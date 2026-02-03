@@ -32,7 +32,7 @@ class QueryHandlerMixin:
     async def _handle_query_inventory(self, message: WSMessage) -> None:
         """Handle QUERY_INVENTORY - retrieve current inventory state."""
         try:
-            inventory_data = await InventoryService.get_inventory_response(self.player_id)
+            inventory_data = await InventoryService.get_inventory(self.player_id)
             
             await self._send_data_response(
                 message.id,
@@ -62,7 +62,7 @@ class QueryHandlerMixin:
     async def _handle_query_equipment(self, message: WSMessage) -> None:
         """Handle QUERY_EQUIPMENT - retrieve current equipment state."""
         try:
-            equipment_data = await EquipmentService.get_equipment_response(self.player_id)
+            equipment_data = await EquipmentService.get_equipment(self.player_id)
             
             await self._send_data_response(
                 message.id,
