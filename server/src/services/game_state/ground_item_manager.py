@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from glide import GlideClient
 from sqlalchemy import select, delete
-from sqlalchemy.ext.asyncio import sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from server.src.core.config import settings

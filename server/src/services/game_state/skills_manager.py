@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from glide import GlideClient
 from sqlalchemy import select, delete
-from sqlalchemy.ext.asyncio import sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
@@ -63,7 +63,7 @@ class SkillsManager(BaseManager):
         if not self._session_factory:
             return {}
 
-        from server.src.models.skills import PlayerSkill, Skill
+        from server.src.models.skill import PlayerSkill, Skill
 
         async with self._db_session() as db:
             result = await db.execute(
@@ -112,7 +112,7 @@ class SkillsManager(BaseManager):
         if not self._session_factory:
             return
 
-        from server.src.models.skills import PlayerSkill, Skill
+        from server.src.models.skill import PlayerSkill, Skill
         from sqlalchemy.dialects.postgresql import insert
 
         async with self._db_session() as db:
@@ -145,7 +145,7 @@ class SkillsManager(BaseManager):
         if not self._session_factory:
             return
 
-        from server.src.models.skills import PlayerSkill, Skill
+        from server.src.models.skill import PlayerSkill, Skill
         from sqlalchemy.dialects.postgresql import insert
 
         async with self._db_session() as db:
@@ -188,7 +188,7 @@ class SkillsManager(BaseManager):
         if not self._session_factory:
             return
 
-        from server.src.models.skills import PlayerSkill
+        from server.src.models.skill import PlayerSkill
 
         async with self._db_session() as db:
             await db.execute(
@@ -215,7 +215,7 @@ class SkillsManager(BaseManager):
         if not self._valkey:
             return
 
-        from server.src.models.skills import PlayerSkill, Skill
+        from server.src.models.skill import PlayerSkill, Skill
         from sqlalchemy.dialects.postgresql import insert
 
         key = SKILLS_KEY.format(player_id=player_id)

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from glide import GlideClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
@@ -131,7 +131,7 @@ class PlayerStateManager(BaseManager):
 
         async with self._db_session() as db:
             result = await db.execute(
-                select(Player.x, Player.y, Player.map_id, Player.last_move_time).where(
+                select(Player.x_coord, Player.y_coord, Player.map_id, Player.last_move_time).where(
                     Player.id == player_id
                 )
             )
@@ -139,8 +139,8 @@ class PlayerStateManager(BaseManager):
 
             if row:
                 return {
-                    "x": row.x or 0,
-                    "y": row.y or 0,
+                    "x": row.x_coord or 0,
+                    "y": row.y_coord or 0,
                     "map_id": row.map_id or "",
                     "last_move_time": (
                         row.last_move_time.timestamp() if row.last_move_time else 0
@@ -182,10 +182,9 @@ class PlayerStateManager(BaseManager):
             result = await db.execute(select(Player).where(Player.id == player_id))
             player = result.scalar_one_or_none()
             if player:
-                player.x = x
-                player.y = y
+                player.x_coord = x
+                player.y_coord = y
                 player.map_id = map_id
-                player.last_move_time = datetime.now(timezone.utc)
                 await self._commit_if_not_test_session(db)
 
     # =========================================================================
@@ -463,8 +462,8 @@ class PlayerStateManager(BaseManager):
         player = result.scalar_one_or_none()
 
         if player:
-            player.x = x
-            player.y = y
+            player.x_coord = x
+            player.y_coord = y
             player.map_id = map_id
             if last_move_time:
                 player.last_move_time = datetime.fromtimestamp(
@@ -495,11 +494,10 @@ class PlayerStateManager(BaseManager):
             player = Player(
                 username=username,
                 hashed_password=hashed_password,
-                x=x,
-                y=y,
+                x_coord=x,
+                y_coord=y,
                 map_id=map_id,
                 current_hp=current_hp,
-                max_hp=max_hp,
             )
             db.add(player)
             await self._commit_if_not_test_session(db)
@@ -522,11 +520,10 @@ class PlayerStateManager(BaseManager):
                     "id": player.id,
                     "username": player.username,
                     "hashed_password": player.hashed_password,
-                    "x": player.x,
-                    "y": player.y,
+                    "x": player.x_coord,
+                    "y": player.y_coord,
                     "map_id": player.map_id,
                     "current_hp": player.current_hp,
-                    "max_hp": player.max_hp,
                     "role": player.role,
                     "is_banned": player.is_banned,
                 }
@@ -548,11 +545,10 @@ class PlayerStateManager(BaseManager):
                     "id": player.id,
                     "username": player.username,
                     "hashed_password": player.hashed_password,
-                    "x": player.x,
-                    "y": player.y,
+                    "x": player.x_coord,
+                    "y": player.y_coord,
                     "map_id": player.map_id,
                     "current_hp": player.current_hp,
-                    "max_hp": player.max_hp,
                     "role": player.role,
                     "is_banned": player.is_banned,
                 }

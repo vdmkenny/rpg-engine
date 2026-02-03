@@ -9,7 +9,7 @@ import traceback
 from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger

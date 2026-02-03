@@ -94,6 +94,14 @@ class Settings(BaseSettings):
     )
     MAPS_DIRECTORY: str = os.getenv("MAPS_DIRECTORY", "/app/server/maps")
 
+    # Game state cache TTL settings (in seconds)
+    GAME_STATE_CACHE: Dict[str, int] = {
+        "essential_data_ttl": 3600,  # Tier 1: position, HP, online status
+        "inventory_ttl": 1800,      # Tier 2: inventory
+        "equipment_ttl": 1800,      # Tier 2: equipment
+        "skills_ttl": 900,          # Tier 2: skills
+    }
+
     # Logging settings
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from glide import GlideClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from server.src.core.config import settings
@@ -134,7 +134,7 @@ class ReferenceDataManager(BaseManager):
         if not self._session_factory:
             return 0
 
-        from server.src.models.skills import Skill
+        from server.src.models.skill import Skill
 
         async with self._db_session() as db:
             result = await db.execute(select(Skill))

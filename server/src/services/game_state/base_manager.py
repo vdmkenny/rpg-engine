@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Callable, Awaitable
 
 from glide import GlideClient
-from sqlalchemy.ext.asyncio import AsyncSession, sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import sessionmaker
 
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger

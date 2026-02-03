@@ -6,6 +6,7 @@ entity respawn logic.
 """
 
 import traceback
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 from glide import RangeByScore, ScoreBoundary
@@ -24,7 +25,6 @@ from server.src.services.game_state import (
     PlayerStateManager,
     ENTITY_RESPAWN_QUEUE_KEY,
 )
-from server.src.services.game_state.base_manager import _utc_timestamp
 from server.src.services.map_service import get_map_manager
 from server.src.services.pathfinding_service import PathfindingService
 
@@ -189,7 +189,7 @@ class EntitySpawnService:
             return 0
         
         # Get entities ready to respawn (score <= current time)
-        current_time = _utc_timestamp()
+        current_time = datetime.now(timezone.utc).timestamp()
         score_query = RangeByScore(
             start=ScoreBoundary(0, is_inclusive=True),
             end=ScoreBoundary(current_time, is_inclusive=True),

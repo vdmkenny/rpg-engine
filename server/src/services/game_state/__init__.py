@@ -12,7 +12,7 @@ Provides focused managers for different aspects of game state:
 """
 
 from glide import GlideClient
-from sqlalchemy.ext.asyncio import sessionmaker
+from sqlalchemy.orm import sessionmaker
 from typing import Optional
 
 from .base_manager import BaseManager
@@ -51,6 +51,7 @@ from .entity_manager import (
     get_entity_manager,
     init_entity_manager,
     reset_entity_manager,
+    ENTITY_RESPAWN_QUEUE_KEY,
 )
 from .reference_data_manager import (
     ReferenceDataManager,

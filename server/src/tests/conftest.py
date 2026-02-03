@@ -1127,13 +1127,13 @@ async def test_client(
         
         # Use PlayerService.create_player which handles GSM, DB, and skill initialization
         player_data = PlayerCreate(username=username, password=password)
-        player = await PlayerService.create_player(
+        player_result = await PlayerService.create_player(
             player_data=player_data,
             x=10,
             y=10,
             map_id="samplemap"
         )
-        player_id = player.id
+        player_id = player_result["id"]
         
         # Create JWT token
         token = create_access_token(data={"sub": username})
