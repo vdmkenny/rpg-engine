@@ -9,7 +9,6 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from server.src.services.entity_service import EntityService
-from server.src.services.game_state_manager import GameStateManager
 from server.src.core.entities import EntityBehavior
 from server.src.core.humanoids import HumanoidID, HumanoidDefinition
 from server.src.core.monsters import MonsterID, MonsterDefinition
@@ -259,7 +258,7 @@ class TestSyncEntitiesToDb:
     """Tests for EntityService.sync_entities_to_db()"""
 
     @pytest.mark.asyncio
-    async def test_sync_entities_calls_gsm(self, gsm: GameStateManager):
+    async def test_sync_entities_calls_gsm(self, game_state_managers):
         """Test that sync_entities_to_db calls GSM's sync method."""
         with patch.object(gsm, 'sync_entities_to_database', new_callable=AsyncMock) as mock_sync:
             with patch('server.src.services.entity_service.get_game_state_manager', return_value=gsm):
@@ -268,7 +267,7 @@ class TestSyncEntitiesToDb:
                 mock_sync.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_sync_entities_to_db_integration(self, gsm: GameStateManager, session):
+    async def test_sync_entities_to_db_integration(self, game_state_managers, session):
         """Test full sync of entities to database."""
         with patch('server.src.services.entity_service.get_game_state_manager', return_value=gsm):
             await EntityService.sync_entities_to_db()

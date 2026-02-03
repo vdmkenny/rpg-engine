@@ -22,7 +22,7 @@ from server.src.core.config import settings
 from server.src.core.entities import EntityBehavior, EntityState, get_entity_by_name
 from server.src.core.logging_config import get_logger
 from server.src.core.monsters import MonsterDefinition
-from server.src.services.game_state_manager import GameStateManager
+from server.src.services.game_state import PlayerStateManager, get_entity_manager, get_player_state_manager
 from server.src.services.map_service import get_map_manager
 from server.src.services.pathfinding_service import PathfindingService
 from server.src.services.player_service import PlayerService
@@ -65,7 +65,7 @@ class AIService:
     
     @staticmethod
     async def process_entities(
-        gsm: GameStateManager,
+        entity_mgr: EntityManager,
         map_id: str,
         current_tick: int,
     ) -> List[EntityCombatEvent]:
@@ -75,7 +75,7 @@ class AIService:
         Called by the game loop every tick for each active map.
         
         Args:
-            gsm: GameStateManager instance
+            entity_mgr: EntityManager instance
             map_id: Map to process entities for
             current_tick: Current global tick counter
             
@@ -88,7 +88,7 @@ class AIService:
             return combat_events
         
         # Get all entities on this map
-        entities = await gsm.get_map_entities(map_id)
+        entities = await entity_mgr.get_map_entities(map_id)
         if not entities:
             return combat_events
         
@@ -100,7 +100,7 @@ class AIService:
         collision_grid = tile_map.get_collision_grid()
         
         # Get all entity positions for blocking (entities can't walk through each other)
-        entity_positions = await EntitySpawnService.get_entity_positions(gsm, map_id)
+        entity_positions = await EntitySpawnService.get_entity_positions(entity_mgr, map_id)
         blocked_positions: Set[Tuple[int, int]] = set(entity_positions.values())
         
         # Get all players on this map for aggro checks
@@ -109,7 +109,7 @@ class AIService:
         for entity in entities:
             try:
                 combat_event = await AIService._process_single_entity(
-                    gsm=gsm,
+                    entity_mgr=entity_mgr,
                     entity=entity,
                     collision_grid=collision_grid,
                     blocked_positions=blocked_positions,
@@ -133,7 +133,7 @@ class AIService:
     
     @staticmethod
     async def _process_single_entity(
-        gsm: GameStateManager,
+        entity_mgr: EntityManager,
         entity: Dict[str, Any],
         collision_grid: List[List[bool]],
         blocked_positions: Set[Tuple[int, int]],
@@ -200,7 +200,7 @@ class AIService:
                 
                 if aggro_target:
                     # Enter combat
-                    await gsm.set_entity_state(
+                    await entity_mgr.set_entity_state(
                         instance_id=instance_id,
                         state=EntityState.COMBAT,
                         target_player_id=aggro_target["player_id"],
@@ -218,7 +218,7 @@ class AIService:
         # Dispatch to state handler
         if state == EntityState.IDLE:
             await AIService._handle_idle_state(
-                gsm=gsm,
+                entity_mgr=entity_mgr,
                 entity=entity,
                 entity_def=entity_def,
                 timers=timers,
@@ -226,7 +226,7 @@ class AIService:
             )
         elif state == EntityState.WANDER:
             await AIService._handle_wander_state(
-                gsm=gsm,
+                entity_mgr=entity_mgr,
                 entity=entity,
                 entity_def=entity_def,
                 timers=timers,
@@ -236,7 +236,7 @@ class AIService:
             )
         elif state == EntityState.COMBAT:
             return await AIService._handle_combat_state(
-                gsm=gsm,
+                entity_mgr=entity_mgr,
                 entity=entity,
                 entity_def=entity_def,
                 timers=timers,
@@ -248,7 +248,7 @@ class AIService:
             )
         elif state == EntityState.RETURNING:
             await AIService._handle_returning_state(
-                gsm=gsm,
+                entity_mgr=entity_mgr,
                 entity=entity,
                 entity_def=entity_def,
                 timers=timers,
@@ -306,7 +306,7 @@ class AIService:
     
     @staticmethod
     async def _handle_idle_state(
-        gsm: GameStateManager,
+        entity_mgr: EntityManager,
         entity: Dict[str, Any],
         entity_def: MonsterDefinition,
         timers: Dict[str, Any],
@@ -327,7 +327,7 @@ class AIService:
         
         if timers["idle_timer"] <= 0:
             # Transition to wander
-            await gsm.set_entity_state(instance_id, EntityState.WANDER)
+            await entity_mgr.set_entity_state(instance_id, EntityState.WANDER)
             
             # Pick a random wander target within radius
             spawn_x = entity.get("spawn_x", entity.get("x", 0))
@@ -350,7 +350,7 @@ class AIService:
     
     @staticmethod
     async def _handle_wander_state(
-        gsm: GameStateManager,
+        entity_mgr: EntityManager,
         entity: Dict[str, Any],
         entity_def: MonsterDefinition,
         timers: Dict[str, Any],
@@ -370,7 +370,7 @@ class AIService:
         wander_target = timers.get("wander_target")
         if not wander_target:
             # No target, go back to idle
-            await AIService._transition_to_idle(gsm, instance_id, timers)
+            await AIService._transition_to_idle(entity_mgr, instance_id, timers)
             return
         
         entity_x = entity.get("x", 0)
@@ -379,7 +379,7 @@ class AIService:
         
         # Check if reached target
         if current_pos == wander_target:
-            await AIService._transition_to_idle(gsm, instance_id, timers)
+            await AIService._transition_to_idle(entity_mgr, instance_id, timers)
             return
         
         # Remove self from blocked positions for pathfinding
@@ -396,15 +396,15 @@ class AIService:
         
         if next_step:
             # Move entity
-            await gsm.update_entity_position(instance_id, next_step[0], next_step[1])
+            await entity_mgr.update_entity_position(instance_id, next_step[0], next_step[1])
             timers["last_move_tick"] = current_tick
         else:
             # No path, give up and return to idle
-            await AIService._transition_to_idle(gsm, instance_id, timers)
+            await AIService._transition_to_idle(entity_mgr, instance_id, timers)
     
     @staticmethod
     async def _handle_combat_state(
-        gsm: GameStateManager,
+        entity_mgr: EntityManager,
         entity: Dict[str, Any],
         entity_def: MonsterDefinition,
         timers: Dict[str, Any],
@@ -436,7 +436,7 @@ class AIService:
         target_player_id = entity.get("target_player_id")
         if not target_player_id:
             # No target, return to spawn
-            await AIService._transition_to_returning(gsm, instance_id, timers)
+            await AIService._transition_to_returning(entity_mgr, instance_id, timers)
             return None
         
         # Find target in players list
@@ -448,7 +448,7 @@ class AIService:
         
         if not target_player:
             # Target logged out or left map, return to spawn
-            await AIService._transition_to_returning(gsm, instance_id, timers)
+            await AIService._transition_to_returning(entity_mgr, instance_id, timers)
             return None
         
         target_x = target_player.get("x", 0)
@@ -469,7 +469,7 @@ class AIService:
                     "disengage_radius": disengage_radius,
                 }
             )
-            await AIService._transition_to_returning(gsm, instance_id, timers)
+            await AIService._transition_to_returning(entity_mgr, instance_id, timers)
             return None
         
         # Check line of sight
@@ -481,7 +481,7 @@ class AIService:
             # LOS lost
             if los_lost_at_tick is None:
                 # Just lost LOS, record when
-                await gsm.set_entity_state(
+                await entity_mgr.set_entity_state(
                     instance_id=instance_id,
                     state=EntityState.COMBAT,
                     target_player_id=target_player_id,
@@ -498,12 +498,12 @@ class AIService:
                         "Entity disengaging - LOS timeout",
                         extra={"instance_id": instance_id}
                     )
-                    await AIService._transition_to_returning(gsm, instance_id, timers)
+                    await AIService._transition_to_returning(entity_mgr, instance_id, timers)
                     return None
         else:
             # Has LOS - clear LOS tracking if it was set
             if los_lost_at_tick is not None:
-                await gsm.set_entity_state(
+                await entity_mgr.set_entity_state(
                     instance_id=instance_id,
                     state=EntityState.COMBAT,
                     target_player_id=target_player_id,
@@ -517,7 +517,7 @@ class AIService:
             # Check attack cooldown
             if current_tick - timers["last_attack_tick"] >= settings.ENTITY_AI_ATTACK_INTERVAL:
                 return await AIService._execute_entity_attack(
-                    gsm=gsm,
+                    entity_mgr=entity_mgr,
                     entity=entity,
                     entity_def=entity_def,
                     target_player_id=target_player_id,
@@ -541,14 +541,14 @@ class AIService:
                 )
                 
                 if next_step:
-                    await gsm.update_entity_position(instance_id, next_step[0], next_step[1])
+                    await entity_mgr.update_entity_position(instance_id, next_step[0], next_step[1])
                     timers["last_move_tick"] = current_tick
         
         return None
     
     @staticmethod
     async def _handle_returning_state(
-        gsm: GameStateManager,
+        entity_mgr: EntityManager,
         entity: Dict[str, Any],
         entity_def: MonsterDefinition,
         timers: Dict[str, Any],
@@ -573,8 +573,8 @@ class AIService:
         if entity_pos == spawn_pos:
             # Heal to full and return to idle
             max_hp = entity.get("max_hp", 10)
-            await gsm.update_entity_hp(instance_id, max_hp)
-            await AIService._transition_to_idle(gsm, instance_id, timers)
+            await entity_mgr.update_entity_hp(instance_id, max_hp)
+            await AIService._transition_to_idle(entity_mgr, instance_id, timers)
             return
         
         # Check move interval (use wander interval for returning)
@@ -594,7 +594,7 @@ class AIService:
         )
         
         if next_step:
-            await gsm.update_entity_position(instance_id, next_step[0], next_step[1])
+            await entity_mgr.update_entity_position(instance_id, next_step[0], next_step[1])
             timers["last_move_tick"] = current_tick
         else:
             # Can't reach spawn (blocked), teleport to spawn
@@ -602,14 +602,14 @@ class AIService:
                 "Entity teleporting to spawn - path blocked",
                 extra={"instance_id": instance_id}
             )
-            await gsm.update_entity_position(instance_id, spawn_x, spawn_y)
+            await entity_mgr.update_entity_position(instance_id, spawn_x, spawn_y)
             max_hp = entity.get("max_hp", 10)
-            await gsm.update_entity_hp(instance_id, max_hp)
-            await AIService._transition_to_idle(gsm, instance_id, timers)
+            await entity_mgr.update_entity_hp(instance_id, max_hp)
+            await AIService._transition_to_idle(entity_mgr, instance_id, timers)
     
     @staticmethod
     async def _execute_entity_attack(
-        gsm: GameStateManager,
+        entity_mgr: EntityManager,
         entity: Dict[str, Any],
         entity_def: MonsterDefinition,
         target_player_id: int,
@@ -653,7 +653,7 @@ class AIService:
             
             # If target died, clear combat and return
             if result.defender_died:
-                await AIService._transition_to_returning(gsm, instance_id, timers)
+                await AIService._transition_to_returning(entity_mgr, instance_id, timers)
             
             # Get player username for the combat event
             defender_name = await PlayerService.get_username_by_player_id(target_player_id)
@@ -678,12 +678,12 @@ class AIService:
     
     @staticmethod
     async def _transition_to_idle(
-        gsm: GameStateManager,
+        entity_mgr: EntityManager,
         instance_id: int,
         timers: Dict[str, Any],
     ) -> None:
         """Transition entity to IDLE state with new random timer."""
-        await gsm.set_entity_state(instance_id, EntityState.IDLE)
+        await entity_mgr.set_entity_state(instance_id, EntityState.IDLE)
         timers["idle_timer"] = random.randint(
             settings.ENTITY_AI_IDLE_MIN,
             settings.ENTITY_AI_IDLE_MAX
@@ -692,12 +692,12 @@ class AIService:
     
     @staticmethod
     async def _transition_to_returning(
-        gsm: GameStateManager,
+        entity_mgr: EntityManager,
         instance_id: int,
         timers: Dict[str, Any],
     ) -> None:
         """Transition entity to RETURNING state."""
-        await gsm.set_entity_state(instance_id, EntityState.RETURNING)
+        await entity_mgr.set_entity_state(instance_id, EntityState.RETURNING)
         timers["wander_target"] = None
     
     @staticmethod
@@ -720,7 +720,7 @@ class AIService:
     
     @staticmethod
     async def clear_entities_targeting_player(
-        gsm: GameStateManager,
+        entity_mgr: EntityManager,
         map_id: str,
         player_id: int,
     ) -> int:
@@ -730,14 +730,14 @@ class AIService:
         Entities targeting the dead player will transition to RETURNING state.
         
         Args:
-            gsm: GameStateManager instance
+            entity_mgr: EntityManager instance
             map_id: Map where the player died
             player_id: The player ID to clear from targets
             
         Returns:
             Number of entities that had their target cleared.
         """
-        entities = await gsm.get_map_entities(map_id)
+        entities = await entity_mgr.get_map_entities(map_id)
         cleared_count = 0
         
         for entity in entities:
@@ -746,7 +746,7 @@ class AIService:
                 instance_id = entity.get("id")
                 if instance_id:
                     # Transition entity to RETURNING state
-                    await gsm.set_entity_state(
+                    await entity_mgr.set_entity_state(
                         instance_id=instance_id,
                         state=EntityState.RETURNING,
                     )

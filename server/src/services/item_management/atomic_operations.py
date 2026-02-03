@@ -13,7 +13,7 @@ import uuid
 
 from server.src.core.items import EquipmentSlot
 from server.src.core.logging_config import get_logger
-from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.game_state import get_inventory_manager, get_equipment_manager, get_ground_item_manager, get_player_state_manager
 
 logger = get_logger(__name__)
 
@@ -91,7 +91,10 @@ class AtomicOperationExecutor:
         if transaction.completed or transaction.failed:
             raise ValueError(f"Transaction {transaction_id} is already finalized")
         
-        gsm = get_game_state_manager()
+        inv_mgr = get_inventory_manager()
+        equip_mgr = get_equipment_manager()
+        ground_item_mgr = get_ground_item_manager()
+        player_mgr = get_player_state_manager()
         executed_operations = []
         
         try:
@@ -144,12 +147,12 @@ class AtomicOperationExecutor:
                 del self._active_transactions[transaction_id]
     
     async def _execute_single_operation(
-        self, gsm, operation: AtomicOperation
+        self, inv_mgr, equip_mgr, ground_item_mgr, player_mgr, operation: AtomicOperation
     ) -> bool:
         """Execute a single atomic operation."""
         try:
             if operation.operation_type == "set_inventory_slot":
-                await gsm.set_inventory_slot(
+                await inv_mgr.set_inventory_slot(
                     operation.execute_params["player_id"],
                     operation.execute_params["slot"],
                     operation.execute_params["item_id"],
@@ -158,7 +161,7 @@ class AtomicOperationExecutor:
                 )
             
             elif operation.operation_type == "delete_inventory_slot":
-                await gsm.delete_inventory_slot(
+                await inv_mgr.delete_inventory_slot(
                     operation.execute_params["player_id"],
                     operation.execute_params["slot"],
                 )
@@ -167,7 +170,7 @@ class AtomicOperationExecutor:
                 slot = operation.execute_params["slot"]
                 if isinstance(slot, str):
                     slot = EquipmentSlot(slot)
-                await gsm.set_equipment_slot(
+                await equip_mgr.set_equipment_slot(
                     operation.execute_params["player_id"],
                     slot,
                     operation.execute_params["item_id"],
@@ -179,13 +182,13 @@ class AtomicOperationExecutor:
                 slot = operation.execute_params["slot"]
                 if isinstance(slot, str):
                     slot = EquipmentSlot(slot)
-                await gsm.delete_equipment_slot(
+                await equip_mgr.delete_equipment_slot(
                     operation.execute_params["player_id"],
                     slot,
                 )
             
             elif operation.operation_type == "add_ground_item":
-                await gsm.add_ground_item(
+                await ground_item_mgr.add_ground_item(
                     operation.execute_params["map_id"],
                     operation.execute_params["x"],
                     operation.execute_params["y"],
@@ -196,13 +199,13 @@ class AtomicOperationExecutor:
                 )
             
             elif operation.operation_type == "remove_ground_item":
-                await gsm.remove_ground_item(
+                await ground_item_mgr.remove_ground_item(
                     operation.execute_params["ground_item_id"],
                     operation.execute_params["map_id"],
                 )
             
             elif operation.operation_type == "update_player_hp":
-                await gsm.update_player_hp(
+                await player_mgr.set_player_hp(
                     operation.execute_params["player_id"],
                     operation.execute_params["new_hp"],
                 )
@@ -239,7 +242,7 @@ class AtomicOperationExecutor:
             return False
     
     async def _rollback_operations(
-        self, gsm, operations: List[AtomicOperation]
+        self, inv_mgr, equip_mgr, ground_item_mgr, player_mgr, operations: List[AtomicOperation]
     ) -> None:
         """Rollback a list of operations in reverse order."""
         for operation in reversed(operations):

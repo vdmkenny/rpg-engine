@@ -22,7 +22,7 @@ from .player_service import PlayerService
 from .inventory_service import InventoryService
 from .equipment_service import EquipmentService
 from .ground_item_service import GroundItemService
-from .game_state_manager import get_game_state_manager
+from .game_state import get_player_state_manager, get_inventory_manager, get_equipment_manager, get_reference_data_manager
 
 logger = get_logger(__name__)
 
@@ -78,8 +78,8 @@ class TestDataService:
             await ItemService.sync_items_to_db()
             
             # Get item count from GSM cache
-            gsm = get_game_state_manager()
-            cached_items = gsm.get_all_cached_items()
+            ref_mgr = get_reference_data_manager()
+            cached_items = ref_mgr.get_all_cached_items()
             item_count = len(cached_items) if cached_items else 0
             
             logger.info(
@@ -148,10 +148,10 @@ class TestDataService:
             
             # Update player position if specified
             if config.x != 0 or config.y != 0 or config.map_id != "samplemap":
-                # Set position through GSM (direct access as last resort for position)
-                gsm = get_game_state_manager()
-                gsm.register_online_player(player_id=player.id, username=username)
-                await gsm.set_player_full_state(
+                # Set position through player state manager
+                player_mgr = get_player_state_manager()
+                player_mgr.register_online_player(player_id=player.id, username=username)
+                await player_mgr.set_player_full_state(
                     player_id=player.id,
                     x=config.x,
                     y=config.y,
@@ -332,13 +332,12 @@ class TestDataService:
         """
         try:
             if cleanup_gsm:
-                gsm = get_game_state_manager()
+                inv_mgr = get_inventory_manager()
+                equip_mgr = get_equipment_manager()
                 for player_id in player_ids:
-                    # Clear player state from GSM
-                    await gsm.clear_inventory(player_id)
-                    await gsm.clear_equipment(player_id)
-                    # Note: GSM doesn't have a direct "remove player" method,
-                    # so we just clear their data
+                    # Clear player state from managers
+                    await inv_mgr.clear_inventory(player_id)
+                    await equip_mgr.clear_equipment(player_id)
             
             # Database cleanup would typically involve deleting the player records,
             # but for tests we might want to keep them for debugging

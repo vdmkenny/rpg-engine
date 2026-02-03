@@ -30,7 +30,7 @@ from server.src.core.metrics import (
     websocket_connection_duration_seconds,
 )
 
-from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.game_state import get_player_state_manager
 from server.src.services.map_service import map_manager
 from server.src.services.player_service import PlayerService
 from server.src.services.equipment_service import EquipmentService
@@ -221,8 +221,8 @@ async def websocket_endpoint(
         await handle_player_join_broadcast(websocket, username, player_id, manager)
         
         # Register connection with manager
-        gsm = get_game_state_manager()
-        position = await gsm.get_player_position(player_id)
+        player_mgr = get_player_state_manager()
+        position = await player_mgr.get_position(player_id)
         if not position:
             raise WebSocketDisconnect(
                 code=status.WS_1011_INTERNAL_ERROR,

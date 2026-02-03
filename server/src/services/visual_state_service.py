@@ -9,7 +9,7 @@ from ..core.logging_config import get_logger
 from .player_service import PlayerService
 from .equipment_service import EquipmentService
 from .visual_registry import get_visual_registry
-from .game_state_manager import get_game_state_manager
+from .game_state import get_reference_data_manager
 
 from common.src.sprites import AppearanceData, EquippedVisuals, VisualState
 
@@ -20,13 +20,13 @@ class VisualStateService:
     """Service for managing visual state operations."""
     
     @staticmethod
-    def _build_equipped_items_map(equipment, gsm) -> Optional[Dict[str, str]]:
+    def _build_equipped_items_map(equipment, ref_mgr) -> Optional[Dict[str, str]]:
         """
         Build equipment slot map for visual state construction.
         
         Args:
             equipment: List of equipment records
-            gsm: GameStateManager instance
+            ref_mgr: ReferenceDataManager instance
             
         Returns:
             Dict mapping slot names to item sprite IDs or None if no equipment
@@ -39,8 +39,8 @@ class VisualStateService:
             slot = equip.get("slot")
             item_id = equip.get("item_id")
             
-            # Get item definition from GSM permanent cache
-            item_def = gsm.get_item_def(item_id)
+            # Get item definition from reference data manager cache
+            item_def = ref_mgr.get_cached_item_meta(item_id)
             if not item_def:
                 continue
             
@@ -100,7 +100,7 @@ class VisualStateService:
             Dict with visual_hash and visual_state keys, or None if player not found
         """
         try:
-            gsm = get_game_state_manager()
+            ref_mgr = get_reference_data_manager()
             visual_registry = get_visual_registry()
             
             # Get appearance from PlayerService (uses GSM internally)
@@ -108,7 +108,7 @@ class VisualStateService:
             
             # Get equipped items
             equipment = await EquipmentService.get_equipment_raw(player_id)
-            equipped_items = VisualStateService._build_equipped_items_map(equipment, gsm)
+            equipped_items = VisualStateService._build_equipped_items_map(equipment, ref_mgr)
             
             # Build visual state
             visual_state = VisualStateService._build_visual_state(appearance, equipped_items)

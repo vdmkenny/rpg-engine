@@ -9,7 +9,7 @@ from typing import Any
 
 from server.src.core.logging_config import get_logger
 from server.src.core.metrics import metrics
-from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.game_state import get_player_state_manager
 from server.src.services.movement_service import MovementService
 
 from common.src.protocol import (
@@ -33,9 +33,9 @@ class MovementHandlerMixin:
     async def _handle_cmd_move(self, message: WSMessage) -> None:
         """Handle CMD_MOVE - player movement with collision detection."""
         try:
-            gsm = get_game_state_manager()
+            player_mgr = get_player_state_manager()
             
-            if not gsm.is_online(self.player_id):
+            if not player_mgr.is_online(self.player_id):
                 logger.warning(
                     "Player attempted movement while not online",
                     extra={"player_id": self.player_id, "username": self.username}

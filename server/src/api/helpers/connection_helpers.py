@@ -45,17 +45,21 @@ async def initialize_player_connection(
         
         # Validate and correct player position if needed
         validated_map, validated_x, validated_y = map_manager.validate_player_position(
-            player.map_id, player.x_coord, player.y_coord
+            player["map_id"], player["x_coord"], player["y_coord"]
         )
         
         # Calculate max HP and validate current HP
-        max_hp = await EquipmentService.get_max_hp(player.id)
-        current_hp = min(player.current_hp, max_hp)
+        max_hp = await EquipmentService.get_max_hp(player["id"])
+        current_hp = min(player["current_hp"], max_hp)
         
         # Initialize player in service layer and GSM
-        await PlayerService.login_player(player)
+        from server.src.models.player import Player
+        player_model = Player()
+        player_model.id = player["id"]
+        player_model.username = username
+        await PlayerService.login_player(player_model)
         await ConnectionService.initialize_player_connection(
-            player.id, username, validated_x, validated_y, validated_map, current_hp, max_hp
+            player["id"], username, validated_x, validated_y, validated_map, current_hp, max_hp
         )
         
         logger.debug(

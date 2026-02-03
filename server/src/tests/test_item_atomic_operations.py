@@ -16,7 +16,6 @@ from server.src.services.item_management.atomic_operations import (
     AtomicOperationExecutor,
     get_atomic_executor,
 )
-from server.src.services.game_state_manager import GameStateManager
 from server.src.core.items import EquipmentSlot
 
 
@@ -188,7 +187,7 @@ class TestAddOperation:
             )
 
     @pytest.mark.asyncio
-    async def test_add_operation_to_completed_transaction(self, gsm: GameStateManager):
+    async def test_add_operation_to_completed_transaction(self, game_state_managers):
         """Test that adding operation to completed transaction raises error."""
         executor = AtomicOperationExecutor()
         tx_id = await executor.begin_transaction()
@@ -284,7 +283,7 @@ class TestExecuteTransaction:
             await executor.execute_transaction(tx_id)
 
     @pytest.mark.asyncio
-    async def test_execute_empty_transaction(self, gsm: GameStateManager):
+    async def test_execute_empty_transaction(self, game_state_managers):
         """Test executing transaction with no operations succeeds."""
         executor = AtomicOperationExecutor()
         tx_id = await executor.begin_transaction()
@@ -295,7 +294,7 @@ class TestExecuteTransaction:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_execute_cleans_up_transaction(self, gsm: GameStateManager):
+    async def test_execute_cleans_up_transaction(self, game_state_managers):
         """Test that transaction is removed after execution."""
         executor = AtomicOperationExecutor()
         tx_id = await executor.begin_transaction()
@@ -306,7 +305,7 @@ class TestExecuteTransaction:
         assert tx_id not in executor._active_transactions
 
     @pytest.mark.asyncio
-    async def test_execute_success_with_operations(self, gsm: GameStateManager, create_test_player):
+    async def test_execute_success_with_operations(self, game_state_managers, create_test_player):
         """Test executing transaction with successful operations."""
         player = await create_test_player("atomic_test_player", "password123")
         executor = AtomicOperationExecutor()
@@ -335,7 +334,7 @@ class TestExecuteSingleOperation:
     """Tests for AtomicOperationExecutor._execute_single_operation()"""
 
     @pytest.mark.asyncio
-    async def test_execute_set_inventory_slot(self, gsm: GameStateManager, create_test_player):
+    async def test_execute_set_inventory_slot(self, game_state_managers, create_test_player):
         """Test executing set_inventory_slot operation."""
         player = await create_test_player("inv_slot_test", "password123")
         executor = AtomicOperationExecutor()
@@ -357,7 +356,7 @@ class TestExecuteSingleOperation:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_execute_delete_inventory_slot(self, gsm: GameStateManager, create_test_player):
+    async def test_execute_delete_inventory_slot(self, game_state_managers, create_test_player):
         """Test executing delete_inventory_slot operation."""
         player = await create_test_player("del_inv_test", "password123")
         executor = AtomicOperationExecutor()
@@ -376,7 +375,7 @@ class TestExecuteSingleOperation:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_execute_set_equipment_slot(self, gsm: GameStateManager, create_test_player):
+    async def test_execute_set_equipment_slot(self, game_state_managers, create_test_player):
         """Test executing set_equipment_slot operation."""
         player = await create_test_player("equip_test", "password123")
         executor = AtomicOperationExecutor()
@@ -398,7 +397,7 @@ class TestExecuteSingleOperation:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_execute_delete_equipment_slot(self, gsm: GameStateManager, create_test_player):
+    async def test_execute_delete_equipment_slot(self, game_state_managers, create_test_player):
         """Test executing delete_equipment_slot operation."""
         player = await create_test_player("del_equip_test", "password123")
         executor = AtomicOperationExecutor()
@@ -417,7 +416,7 @@ class TestExecuteSingleOperation:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_execute_update_player_hp(self, gsm: GameStateManager, create_test_player):
+    async def test_execute_update_player_hp(self, game_state_managers, create_test_player):
         """Test executing update_player_hp operation."""
         player = await create_test_player("hp_update_test", "password123")
         executor = AtomicOperationExecutor()
@@ -436,7 +435,7 @@ class TestExecuteSingleOperation:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_execute_unknown_operation_type(self, gsm: GameStateManager):
+    async def test_execute_unknown_operation_type(self, game_state_managers):
         """Test executing unknown operation type returns False."""
         executor = AtomicOperationExecutor()
         
@@ -451,7 +450,7 @@ class TestExecuteSingleOperation:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_execute_add_ground_item(self, gsm: GameStateManager):
+    async def test_execute_add_ground_item(self, game_state_managers):
         """Test executing add_ground_item operation."""
         executor = AtomicOperationExecutor()
         
@@ -478,7 +477,7 @@ class TestRollbackOperations:
     """Tests for AtomicOperationExecutor._rollback_operations()"""
 
     @pytest.mark.asyncio
-    async def test_rollback_skips_non_rollbackable(self, gsm: GameStateManager):
+    async def test_rollback_skips_non_rollbackable(self, game_state_managers):
         """Test that operations marked can_rollback=False are skipped."""
         executor = AtomicOperationExecutor()
         
@@ -496,7 +495,7 @@ class TestRollbackOperations:
         await executor._rollback_operations(gsm, operations)
 
     @pytest.mark.asyncio
-    async def test_rollback_skips_no_rollback_params(self, gsm: GameStateManager):
+    async def test_rollback_skips_no_rollback_params(self, game_state_managers):
         """Test that operations without rollback_params are skipped."""
         executor = AtomicOperationExecutor()
         
@@ -515,7 +514,7 @@ class TestRollbackOperations:
         await executor._rollback_operations(gsm, operations)
 
     @pytest.mark.asyncio
-    async def test_rollback_in_reverse_order(self, gsm: GameStateManager, create_test_player):
+    async def test_rollback_in_reverse_order(self, game_state_managers, create_test_player):
         """Test that rollback executes operations in reverse order."""
         player = await create_test_player("rollback_order_test", "password123")
         executor = AtomicOperationExecutor()
@@ -589,7 +588,7 @@ class TestTransactionWithRollback:
     """Integration tests for full transaction with rollback scenarios."""
 
     @pytest.mark.asyncio
-    async def test_partial_failure_triggers_rollback(self, gsm: GameStateManager, create_test_player):
+    async def test_partial_failure_triggers_rollback(self, game_state_managers, create_test_player):
         """Test that partial failure triggers rollback of completed operations."""
         player = await create_test_player("partial_fail_test", "password123")
         executor = AtomicOperationExecutor()

@@ -16,7 +16,6 @@ from server.src.services.map_service import (
     get_map_manager,
     _map_manager_instance,
 )
-from server.src.services.game_state_manager import GameStateManager
 
 
 class TestMapManagerSingleton:
@@ -345,7 +344,7 @@ class TestMapManagerValidateChunkRequestSecurity:
     """Tests for MapManager.validate_chunk_request_security()"""
 
     @pytest.mark.asyncio
-    async def test_valid_chunk_request(self, gsm: GameStateManager):
+    async def test_valid_chunk_request(self, game_state_managers):
         """Test that valid chunk requests are accepted."""
         manager = MapManager()
         
@@ -363,7 +362,7 @@ class TestMapManagerValidateChunkRequestSecurity:
             assert result is True
 
     @pytest.mark.asyncio
-    async def test_invalid_position_access_denied(self, gsm: GameStateManager):
+    async def test_invalid_position_access_denied(self, game_state_managers):
         """Test that invalid position access is denied."""
         manager = MapManager()
         
@@ -381,7 +380,7 @@ class TestMapManagerValidateChunkRequestSecurity:
             assert result is False
 
     @pytest.mark.asyncio
-    async def test_excessive_radius_denied(self, gsm: GameStateManager):
+    async def test_excessive_radius_denied(self, game_state_managers):
         """Test that excessive radius requests are denied."""
         manager = MapManager()
         
@@ -403,7 +402,7 @@ class TestMapManagerLoadMaps:
     """Tests for MapManager.load_maps()"""
 
     @pytest.mark.asyncio
-    async def test_load_maps_handles_no_maps(self, gsm: GameStateManager):
+    async def test_load_maps_handles_no_maps(self, game_state_managers):
         """Test that load_maps handles empty maps directory gracefully."""
         manager = MapManager()
         

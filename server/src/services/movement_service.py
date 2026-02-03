@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple, Any
 
 from ..core.config import settings
 from ..core.logging_config import get_logger
-from .game_state_manager import get_game_state_manager
+from .game_state import get_player_state_manager
 from .map_service import get_map_manager
 
 logger = get_logger(__name__)
@@ -45,11 +45,11 @@ class MovementService:
         Returns:
             Dict with validation result and timing info
         """
-        state_manager = get_game_state_manager()
+        player_mgr = get_player_state_manager()
         
         try:
             # Get player's last movement time from GSM
-            last_movement_data = await state_manager.get_player_position(player_id)
+            last_movement_data = await player_mgr.get_player_position(player_id)
             if not last_movement_data:
                 return {
                     "can_move": False,
@@ -199,7 +199,7 @@ class MovementService:
             Dict with movement result and new position
         """
         try:
-            state_manager = get_game_state_manager()
+            player_mgr = get_player_state_manager()
             
             # Validate direction first
             if not MovementService.is_valid_direction(direction):
@@ -215,7 +215,7 @@ class MovementService:
             
             if not cooldown_check["can_move"]:
                 # Get current position to include in error response
-                current_position = await state_manager.get_player_position(player_id)
+                current_position = await player_mgr.get_player_position(player_id)
                 return {
                     "success": False,
                     "reason": "rate_limited",
@@ -225,7 +225,7 @@ class MovementService:
                 }
 
             # Get current position
-            current_position = await state_manager.get_player_position(player_id)
+            current_position = await player_mgr.get_player_position(player_id)
             
             if not current_position:
                 return {
@@ -281,7 +281,7 @@ class MovementService:
             }
 
             # Break combat on movement
-            await state_manager.clear_player_combat_state(player_id)
+            await player_mgr.clear_player_combat_state(player_id)
             
             logger.info(
                 "Player movement executed successfully",
@@ -384,11 +384,11 @@ class MovementService:
         Returns:
             True if position was updated successfully
         """
-        state_manager = get_game_state_manager()
+        player_mgr = get_player_state_manager()
         
         try:
             # Get current HP to preserve during position update
-            current_state = await state_manager.get_player_full_state(player_id)
+            current_state = await player_mgr.get_player_full_state(player_id)
             if not current_state:
                 # Player doesn't have existing state (new player) - use default HP values
                 logger.debug(
@@ -403,7 +403,7 @@ class MovementService:
                 max_hp = current_state.get("max_hp", 100)
 
             # Update complete state with new position
-            await state_manager.set_player_full_state(
+            await player_mgr.set_player_full_state(
                 player_id, x, y, map_id, int(current_hp), int(max_hp), update_movement_time
             )
             

@@ -19,7 +19,6 @@ from typing import Dict, Any, List, Set, Tuple
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from server.src.services.ai_service import AIService
-from server.src.services.game_state_manager import GameStateManager
 from server.src.services.entity_spawn_service import EntitySpawnService
 from server.src.core.entities import EntityState, EntityBehavior, EntityType
 
@@ -29,7 +28,7 @@ from server.src.core.entities import EntityState, EntityBehavior, EntityType
 # =============================================================================
 
 @pytest_asyncio.fixture
-async def ai_test_map(gsm: GameStateManager):
+async def ai_test_map(game_state_managers):
     """
     Create a test map with a simple collision grid for AI testing.
     
@@ -83,7 +82,7 @@ async def ai_test_map(gsm: GameStateManager):
 
 
 @pytest_asyncio.fixture
-async def spawned_goblin(gsm: GameStateManager, ai_test_map):
+async def spawned_goblin(game_state_managers, ai_test_map):
     """Spawn a goblin entity for testing."""
     map_id = ai_test_map["map_id"]
     
@@ -133,7 +132,7 @@ class TestIdleStateIntegration:
 
     @pytest.mark.asyncio
     async def test_entity_starts_in_idle_state(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test that a newly spawned entity starts in idle state."""
         instance_id = spawned_goblin["instance_id"]
@@ -145,7 +144,7 @@ class TestIdleStateIntegration:
 
     @pytest.mark.asyncio
     async def test_idle_entity_transitions_to_wander(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test that idle entity transitions to wander after timer expires."""
         instance_id = spawned_goblin["instance_id"]
@@ -194,7 +193,7 @@ class TestWanderStateIntegration:
 
     @pytest.mark.asyncio
     async def test_wandering_entity_moves(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test that wandering entity moves toward target."""
         instance_id = spawned_goblin["instance_id"]
@@ -237,7 +236,7 @@ class TestWanderStateIntegration:
 
     @pytest.mark.asyncio
     async def test_wandering_entity_returns_to_idle_at_target(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test that entity returns to idle when reaching wander target."""
         instance_id = spawned_goblin["instance_id"]
@@ -284,7 +283,7 @@ class TestAggroIntegration:
 
     @pytest.mark.asyncio
     async def test_aggressive_entity_aggros_nearby_player(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test that aggressive entity enters combat when player is nearby."""
         instance_id = spawned_goblin["instance_id"]
@@ -326,7 +325,7 @@ class TestAggroIntegration:
 
     @pytest.mark.asyncio
     async def test_entity_does_not_aggro_distant_player(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test that entity ignores players outside aggro radius."""
         instance_id = spawned_goblin["instance_id"]
@@ -375,7 +374,7 @@ class TestCombatIntegration:
 
     @pytest.mark.asyncio
     async def test_combat_entity_chases_target(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test that entity in combat chases its target."""
         instance_id = spawned_goblin["instance_id"]
@@ -426,7 +425,7 @@ class TestCombatIntegration:
 
     @pytest.mark.asyncio
     async def test_combat_entity_returns_when_target_leaves(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test that entity returns to spawn when target leaves map."""
         instance_id = spawned_goblin["instance_id"]
@@ -469,7 +468,7 @@ class TestCombatIntegration:
 
     @pytest.mark.asyncio
     async def test_combat_entity_disengages_beyond_radius(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test entity disengages when target moves beyond disengage radius from spawn."""
         instance_id = spawned_goblin["instance_id"]
@@ -525,7 +524,7 @@ class TestReturningIntegration:
 
     @pytest.mark.asyncio
     async def test_returning_entity_moves_to_spawn(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test that returning entity moves toward spawn."""
         instance_id = spawned_goblin["instance_id"]
@@ -565,7 +564,7 @@ class TestReturningIntegration:
 
     @pytest.mark.asyncio
     async def test_returning_entity_heals_at_spawn(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test that entity heals to full when returning to spawn."""
         instance_id = spawned_goblin["instance_id"]
@@ -614,7 +613,7 @@ class TestFullStateMachineCycle:
 
     @pytest.mark.asyncio
     async def test_full_combat_cycle(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """
         Test complete combat cycle:
@@ -672,7 +671,7 @@ class TestFullStateMachineCycle:
 
     @pytest.mark.asyncio
     async def test_wander_cycle(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """
         Test wander cycle:
@@ -729,7 +728,7 @@ class TestAIEdgeCases:
 
     @pytest.mark.asyncio
     async def test_process_entities_handles_missing_entity_def(
-        self, gsm: GameStateManager, ai_test_map
+        self, game_state_managers, ai_test_map
     ):
         """Test that unknown entity types are handled gracefully."""
         map_id = ai_test_map["map_id"]
@@ -761,7 +760,7 @@ class TestAIEdgeCases:
 
     @pytest.mark.asyncio
     async def test_dead_entities_skipped(
-        self, gsm: GameStateManager, spawned_goblin, ai_test_map
+        self, game_state_managers, spawned_goblin, ai_test_map
     ):
         """Test that dead entities are not processed."""
         instance_id = spawned_goblin["instance_id"]

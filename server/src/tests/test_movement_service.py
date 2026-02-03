@@ -11,7 +11,6 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from server.src.services.movement_service import MovementService
-from server.src.services.game_state_manager import GameStateManager
 from common.src.protocol import CombatTargetType
 
 
@@ -153,7 +152,7 @@ class TestValidateMovementCooldown:
     """Tests for MovementService.validate_movement_cooldown()"""
 
     @pytest.mark.asyncio
-    async def test_can_move_when_not_in_cooldown(self, gsm: GameStateManager, create_test_player):
+    async def test_can_move_when_not_in_cooldown(self, game_state_managers, create_test_player):
         """Test that player can move when cooldown has expired."""
         player = await create_test_player("cooldown_test", "password123")
         
@@ -172,7 +171,7 @@ class TestValidateMovementCooldown:
         assert result["cooldown_remaining"] == 0
 
     @pytest.mark.asyncio
-    async def test_cannot_move_during_cooldown(self, gsm: GameStateManager, create_test_player):
+    async def test_cannot_move_during_cooldown(self, game_state_managers, create_test_player):
         """Test that player cannot move during cooldown period."""
         player = await create_test_player("cooldown_test2", "password123")
         
@@ -192,7 +191,7 @@ class TestValidateMovementCooldown:
         assert result["cooldown_remaining"] < MovementService.MOVEMENT_COOLDOWN
 
     @pytest.mark.asyncio
-    async def test_player_not_online(self, gsm: GameStateManager):
+    async def test_player_not_online(self, game_state_managers):
         """Test cooldown check for player not online."""
         result = await MovementService.validate_movement_cooldown(99999)  # Non-existent player
         
@@ -204,7 +203,7 @@ class TestValidateMovementCollision:
     """Tests for MovementService.validate_movement_collision()"""
 
     @pytest.mark.asyncio
-    async def test_valid_move_no_collision(self, gsm: GameStateManager, map_manager_loaded):
+    async def test_valid_move_no_collision(self, game_state_managers, map_manager_loaded):
         """Test that valid moves are allowed."""
         result = await MovementService.validate_movement_collision(
             "samplemap", 5, 5, 5, 6
@@ -215,7 +214,7 @@ class TestValidateMovementCollision:
         assert result["collision_detected"] is False
 
     @pytest.mark.asyncio
-    async def test_collision_with_obstacle(self, gsm: GameStateManager, map_manager_loaded):
+    async def test_collision_with_obstacle(self, game_state_managers, map_manager_loaded):
         """Test that collision with obstacles blocks movement."""
         # Mock the map manager to return invalid move
         with patch("server.src.services.movement_service.get_map_manager") as mock_get_mm:
@@ -236,7 +235,7 @@ class TestValidatePosition:
     """Tests for MovementService.validate_position()"""
 
     @pytest.mark.asyncio
-    async def test_negative_x_invalid(self, gsm: GameStateManager):
+    async def test_negative_x_invalid(self, game_state_managers):
         """Test that negative X coordinates are invalid."""
         result = await MovementService.validate_position("samplemap", -1, 5)
         
@@ -244,7 +243,7 @@ class TestValidatePosition:
         assert result["reason"] == "Coordinates cannot be negative"
 
     @pytest.mark.asyncio
-    async def test_negative_y_invalid(self, gsm: GameStateManager):
+    async def test_negative_y_invalid(self, game_state_managers):
         """Test that negative Y coordinates are invalid."""
         result = await MovementService.validate_position("samplemap", 5, -1)
         
@@ -252,7 +251,7 @@ class TestValidatePosition:
         assert result["reason"] == "Coordinates cannot be negative"
 
     @pytest.mark.asyncio
-    async def test_valid_position(self, gsm: GameStateManager, map_manager_loaded):
+    async def test_valid_position(self, game_state_managers, map_manager_loaded):
         """Test that valid positions are accepted."""
         result = await MovementService.validate_position("samplemap", 5, 5)
         
@@ -260,7 +259,7 @@ class TestValidatePosition:
         assert result["reason"] is None
 
     @pytest.mark.asyncio
-    async def test_non_walkable_position(self, gsm: GameStateManager):
+    async def test_non_walkable_position(self, game_state_managers):
         """Test that non-walkable positions are rejected."""
         with patch("server.src.services.movement_service.get_map_manager") as mock_get_mm:
             mock_mm = MagicMock()
@@ -277,7 +276,7 @@ class TestSetPlayerPosition:
     """Tests for MovementService.set_player_position()"""
 
     @pytest.mark.asyncio
-    async def test_set_position_success(self, gsm: GameStateManager, create_test_player):
+    async def test_set_position_success(self, game_state_managers, create_test_player):
         """Test successful position update."""
         player = await create_test_player("pos_test", "password123")
         
@@ -294,7 +293,7 @@ class TestSetPlayerPosition:
         assert position["map_id"] == "samplemap"
 
     @pytest.mark.asyncio
-    async def test_set_position_preserves_hp(self, gsm: GameStateManager, create_test_player):
+    async def test_set_position_preserves_hp(self, game_state_managers, create_test_player):
         """Test that setting position preserves HP values."""
         player = await create_test_player("hp_test", "password123", current_hp=50)
         
@@ -314,7 +313,7 @@ class TestSetPlayerPosition:
         assert state["max_hp"] == 100
 
     @pytest.mark.asyncio
-    async def test_set_position_new_player_defaults(self, gsm: GameStateManager):
+    async def test_set_position_new_player_defaults(self, game_state_managers):
         """Test that new player gets default HP values."""
         # Create a player ID that doesn't have state yet
         player_id = 99999
@@ -338,7 +337,7 @@ class TestInitializePlayerPosition:
     """Tests for MovementService.initialize_player_position()"""
 
     @pytest.mark.asyncio
-    async def test_initialize_position(self, gsm: GameStateManager, create_test_player):
+    async def test_initialize_position(self, game_state_managers, create_test_player):
         """Test player position initialization."""
         player = await create_test_player("init_test", "password123")
         
@@ -357,7 +356,7 @@ class TestExecuteMovement:
     """Tests for MovementService.execute_movement()"""
 
     @pytest.mark.asyncio
-    async def test_successful_movement(self, gsm: GameStateManager, create_test_player, map_manager_loaded):
+    async def test_successful_movement(self, game_state_managers, create_test_player, map_manager_loaded):
         """Test successful movement execution."""
         player = await create_test_player("move_test", "password123")
         
@@ -380,7 +379,7 @@ class TestExecuteMovement:
         assert result["collision"] is False
 
     @pytest.mark.asyncio
-    async def test_movement_invalid_direction(self, gsm: GameStateManager, create_test_player):
+    async def test_movement_invalid_direction(self, game_state_managers, create_test_player):
         """Test movement with invalid direction."""
         player = await create_test_player("invalid_dir_test", "password123")
         
@@ -390,7 +389,7 @@ class TestExecuteMovement:
         assert result["reason"] == "invalid_direction"
 
     @pytest.mark.asyncio
-    async def test_movement_rate_limited(self, gsm: GameStateManager, create_test_player):
+    async def test_movement_rate_limited(self, game_state_managers, create_test_player):
         """Test movement when rate limited."""
         player = await create_test_player("rate_limit_test", "password123")
         
@@ -409,7 +408,7 @@ class TestExecuteMovement:
         assert result["cooldown_remaining"] > 0
 
     @pytest.mark.asyncio
-    async def test_movement_player_not_online(self, gsm: GameStateManager):
+    async def test_movement_player_not_online(self, game_state_managers):
         """Test movement for player not online."""
         result = await MovementService.execute_movement(99999, "up")
         
@@ -418,7 +417,7 @@ class TestExecuteMovement:
         assert result["reason"] in ["player_not_online", "rate_limited"]
 
     @pytest.mark.asyncio
-    async def test_movement_blocked_by_collision(self, gsm: GameStateManager, create_test_player):
+    async def test_movement_blocked_by_collision(self, game_state_managers, create_test_player):
         """Test movement blocked by collision."""
         player = await create_test_player("collision_test", "password123")
         
@@ -443,7 +442,7 @@ class TestExecuteMovement:
             assert result["collision"] is True
 
     @pytest.mark.asyncio
-    async def test_movement_clears_combat_state(self, gsm: GameStateManager, create_test_player, map_manager_loaded):
+    async def test_movement_clears_combat_state(self, game_state_managers, create_test_player, map_manager_loaded):
         """Test that movement clears combat state."""
         player = await create_test_player("combat_clear_test", "password123")
         
@@ -482,7 +481,7 @@ class TestTeleportPlayer:
     """Tests for MovementService.teleport_player()"""
 
     @pytest.mark.asyncio
-    async def test_successful_teleport(self, gsm: GameStateManager, create_test_player, map_manager_loaded):
+    async def test_successful_teleport(self, game_state_managers, create_test_player, map_manager_loaded):
         """Test successful player teleport."""
         player = await create_test_player("teleport_test", "password123")
         
@@ -497,7 +496,7 @@ class TestTeleportPlayer:
         assert result["new_position"]["map_id"] == "samplemap"
 
     @pytest.mark.asyncio
-    async def test_teleport_to_invalid_position(self, gsm: GameStateManager, create_test_player):
+    async def test_teleport_to_invalid_position(self, game_state_managers, create_test_player):
         """Test teleport to invalid position."""
         player = await create_test_player("teleport_invalid_test", "password123")
         
@@ -510,7 +509,7 @@ class TestTeleportPlayer:
         assert result["reason"] == "Coordinates cannot be negative"
 
     @pytest.mark.asyncio
-    async def test_teleport_skip_validation(self, gsm: GameStateManager, create_test_player):
+    async def test_teleport_skip_validation(self, game_state_managers, create_test_player):
         """Test teleport with validation disabled."""
         player = await create_test_player("teleport_no_validate", "password123")
         
@@ -525,7 +524,7 @@ class TestTeleportPlayer:
         assert result["new_position"]["y"] == 888
 
     @pytest.mark.asyncio
-    async def test_teleport_to_non_walkable_position(self, gsm: GameStateManager, create_test_player):
+    async def test_teleport_to_non_walkable_position(self, game_state_managers, create_test_player):
         """Test teleport to non-walkable position is rejected."""
         player = await create_test_player("teleport_blocked", "password123")
         
@@ -546,7 +545,7 @@ class TestGetMovementState:
     """Tests for MovementService.get_movement_state()"""
 
     @pytest.mark.asyncio
-    async def test_get_state_can_move(self, gsm: GameStateManager, create_test_player):
+    async def test_get_state_can_move(self, game_state_managers, create_test_player):
         """Test getting movement state when player can move."""
         player = await create_test_player("state_test", "password123")
         
@@ -565,7 +564,7 @@ class TestGetMovementState:
         assert state["movement_cooldown"] == MovementService.MOVEMENT_COOLDOWN
 
     @pytest.mark.asyncio
-    async def test_get_state_in_cooldown(self, gsm: GameStateManager, create_test_player):
+    async def test_get_state_in_cooldown(self, game_state_managers, create_test_player):
         """Test getting movement state during cooldown."""
         player = await create_test_player("cooldown_state_test", "password123")
         

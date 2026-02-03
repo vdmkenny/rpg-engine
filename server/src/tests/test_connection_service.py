@@ -11,14 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Dict, Any
 
 from server.src.services.connection_service import ConnectionService
-from server.src.services.game_state_manager import GameStateManager
 
 
 class TestInitializePlayerConnection:
     """Tests for ConnectionService.initialize_player_connection()"""
 
     @pytest.mark.asyncio
-    async def test_successful_initialization(self, gsm: GameStateManager, create_test_player):
+    async def test_successful_initialization(self, game_state_managers, create_test_player):
         """Test successful player connection initialization."""
         player = await create_test_player("connection_init_test", "password123")
         
@@ -43,7 +42,7 @@ class TestInitializePlayerConnection:
         assert "nearby_players" in result
 
     @pytest.mark.asyncio
-    async def test_initialization_sets_hp_in_gsm(self, gsm: GameStateManager, create_test_player):
+    async def test_initialization_sets_hp_in_gsm(self, game_state_managers, create_test_player):
         """Test that HP is properly set in GSM during initialization."""
         player = await create_test_player("hp_init_test", "password123")
         
@@ -64,7 +63,7 @@ class TestInitializePlayerConnection:
         assert hp_data["max_hp"] == 100
 
     @pytest.mark.asyncio
-    async def test_initialization_sets_position_in_gsm(self, gsm: GameStateManager, create_test_player):
+    async def test_initialization_sets_position_in_gsm(self, game_state_managers, create_test_player):
         """Test that position is properly set in GSM during initialization."""
         player = await create_test_player("pos_init_test", "password123")
         
@@ -90,7 +89,7 @@ class TestBroadcastPlayerJoin:
     """Tests for ConnectionService.broadcast_player_join()"""
 
     @pytest.mark.asyncio
-    async def test_broadcast_returns_notified_players(self, gsm: GameStateManager, create_test_player):
+    async def test_broadcast_returns_notified_players(self, game_state_managers, create_test_player):
         """Test that broadcast returns list of notified player IDs."""
         player1 = await create_test_player("broadcast_test1", "password123")
         player2 = await create_test_player("broadcast_test2", "password123")
@@ -109,7 +108,7 @@ class TestBroadcastPlayerJoin:
         # The actual presence depends on get_nearby_players implementation
 
     @pytest.mark.asyncio
-    async def test_broadcast_handles_no_nearby_players(self, gsm: GameStateManager, create_test_player):
+    async def test_broadcast_handles_no_nearby_players(self, game_state_managers, create_test_player):
         """Test that broadcast handles case with no nearby players."""
         player = await create_test_player("lonely_player", "password123")
         
@@ -122,7 +121,7 @@ class TestBroadcastPlayerJoin:
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
-    async def test_broadcast_handles_exception(self, gsm: GameStateManager):
+    async def test_broadcast_handles_exception(self, game_state_managers):
         """Test that broadcast handles exceptions gracefully."""
         with patch("server.src.services.connection_service.PlayerService") as mock_service:
             mock_service.get_nearby_players = AsyncMock(side_effect=Exception("Test error"))
@@ -140,7 +139,7 @@ class TestHandlePlayerDisconnect:
     """Tests for ConnectionService.handle_player_disconnect()"""
 
     @pytest.mark.asyncio
-    async def test_disconnect_player_not_found(self, gsm: GameStateManager):
+    async def test_disconnect_player_not_found(self, game_state_managers):
         """Test disconnect handling when player not found."""
         result = await ConnectionService.handle_player_disconnect(
             username="nonexistent_user"
@@ -151,7 +150,7 @@ class TestHandlePlayerDisconnect:
         assert result["player_id"] is None
 
     @pytest.mark.asyncio
-    async def test_disconnect_successful(self, gsm: GameStateManager, create_test_player):
+    async def test_disconnect_successful(self, game_state_managers, create_test_player):
         """Test successful player disconnection."""
         player = await create_test_player("disconnect_test", "password123")
         
@@ -180,7 +179,7 @@ class TestCleanupConnectionResources:
     """Tests for ConnectionService._cleanup_connection_resources()"""
 
     @pytest.mark.asyncio
-    async def test_cleanup_completes_without_error(self, gsm: GameStateManager, create_test_player):
+    async def test_cleanup_completes_without_error(self, game_state_managers, create_test_player):
         """Test that cleanup completes without raising errors."""
         player = await create_test_player("cleanup_test", "password123")
         
@@ -188,7 +187,7 @@ class TestCleanupConnectionResources:
         await ConnectionService._cleanup_connection_resources(player.id)
 
     @pytest.mark.asyncio
-    async def test_cleanup_handles_nonexistent_player(self, gsm: GameStateManager):
+    async def test_cleanup_handles_nonexistent_player(self, game_state_managers):
         """Test that cleanup handles non-existent player gracefully."""
         # Should not raise
         await ConnectionService._cleanup_connection_resources(99999)
@@ -198,7 +197,7 @@ class TestValidateConnectionState:
     """Tests for ConnectionService.validate_connection_state()"""
 
     @pytest.mark.asyncio
-    async def test_valid_connection_state(self, gsm: GameStateManager, create_test_player):
+    async def test_valid_connection_state(self, game_state_managers, create_test_player):
         """Test validation of valid connection state."""
         player = await create_test_player("valid_state_test", "password123")
         
@@ -224,7 +223,7 @@ class TestValidateConnectionState:
         assert result["has_position_data"] is True
 
     @pytest.mark.asyncio
-    async def test_invalid_connection_state_not_online(self, gsm: GameStateManager, create_test_player):
+    async def test_invalid_connection_state_not_online(self, game_state_managers, create_test_player):
         """Test validation when player is not online."""
         player = await create_test_player("offline_state_test", "password123")
         
@@ -240,7 +239,7 @@ class TestValidateConnectionState:
         assert result["is_online"] is False
 
     @pytest.mark.asyncio
-    async def test_invalid_username_mismatch(self, gsm: GameStateManager, create_test_player):
+    async def test_invalid_username_mismatch(self, game_state_managers, create_test_player):
         """Test validation when username doesn't match."""
         player = await create_test_player("mismatch_test", "password123")
         
@@ -257,7 +256,7 @@ class TestGetExistingPlayersOnMap:
     """Tests for ConnectionService.get_existing_players_on_map()"""
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_no_connections(self, gsm: GameStateManager):
+    async def test_returns_empty_when_no_connections(self, game_state_managers):
         """Test that empty list returned when no connections on map."""
         result = await ConnectionService.get_existing_players_on_map(
             map_id="samplemap",
@@ -267,7 +266,7 @@ class TestGetExistingPlayersOnMap:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_handles_exception_gracefully(self, gsm: GameStateManager):
+    async def test_handles_exception_gracefully(self, game_state_managers):
         """Test that exceptions are handled gracefully."""
         with patch("server.src.api.connection_manager.ConnectionManager") as mock_cm:
             mock_cm.return_value.connections_by_map.get.side_effect = Exception("Test error")
@@ -321,7 +320,7 @@ class TestCreateWelcomeMessage:
 class TestGetOnlinePlayerIds:
     """Tests for ConnectionService.get_online_player_ids()"""
 
-    def test_returns_empty_set_when_no_players(self, gsm: GameStateManager):
+    def test_returns_empty_set_when_no_players(self, game_state_managers):
         """Test that empty set returned when no players online."""
         # Clear any online players
         gsm._online_players.clear()
@@ -330,7 +329,7 @@ class TestGetOnlinePlayerIds:
         
         assert result == set()
 
-    def test_returns_online_player_ids(self, gsm: GameStateManager):
+    def test_returns_online_player_ids(self, game_state_managers):
         """Test that online player IDs are returned."""
         gsm.register_online_player(1, "player1")
         gsm.register_online_player(2, "player2")
@@ -340,7 +339,7 @@ class TestGetOnlinePlayerIds:
         assert 1 in result
         assert 2 in result
 
-    def test_returns_copy_of_set(self, gsm: GameStateManager):
+    def test_returns_copy_of_set(self, game_state_managers):
         """Test that a copy of the set is returned, not the original."""
         gsm.register_online_player(1, "player1")
         
@@ -354,7 +353,7 @@ class TestGetOnlinePlayerIds:
 class TestGetOnlinePlayerIdByUsername:
     """Tests for ConnectionService.get_online_player_id_by_username()"""
 
-    def test_returns_player_id_when_online(self, gsm: GameStateManager):
+    def test_returns_player_id_when_online(self, game_state_managers):
         """Test that player ID is returned for online player."""
         gsm.register_online_player(42, "test_player")
         
@@ -362,7 +361,7 @@ class TestGetOnlinePlayerIdByUsername:
         
         assert result == 42
 
-    def test_returns_none_when_not_online(self, gsm: GameStateManager):
+    def test_returns_none_when_not_online(self, game_state_managers):
         """Test that None is returned when player not online."""
         result = ConnectionService.get_online_player_id_by_username("nonexistent_player")
         
@@ -372,7 +371,7 @@ class TestGetOnlinePlayerIdByUsername:
 class TestGetAllOnlinePlayers:
     """Tests for ConnectionService.get_all_online_players()"""
 
-    def test_returns_empty_list_when_no_players(self, gsm: GameStateManager):
+    def test_returns_empty_list_when_no_players(self, game_state_managers):
         """Test that empty list returned when no players online."""
         gsm._online_players.clear()
         gsm._id_to_username.clear()
@@ -381,7 +380,7 @@ class TestGetAllOnlinePlayers:
         
         assert result == []
 
-    def test_returns_all_online_players(self, gsm: GameStateManager):
+    def test_returns_all_online_players(self, game_state_managers):
         """Test that all online players are returned."""
         gsm.register_online_player(1, "player1")
         gsm.register_online_player(2, "player2")
@@ -402,7 +401,7 @@ class TestGetAllOnlinePlayers:
 class TestIsPlayerOnline:
     """Tests for ConnectionService.is_player_online()"""
 
-    def test_returns_true_for_online_player(self, gsm: GameStateManager):
+    def test_returns_true_for_online_player(self, game_state_managers):
         """Test that True is returned for online player."""
         gsm.register_online_player(123, "online_player")
         
@@ -410,14 +409,14 @@ class TestIsPlayerOnline:
         
         assert result is True
 
-    def test_returns_false_for_offline_player(self, gsm: GameStateManager):
+    def test_returns_false_for_offline_player(self, game_state_managers):
         """Test that False is returned for offline player."""
         result = ConnectionService.is_player_online(99999)
         
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_returns_false_after_unregister(self, gsm: GameStateManager):
+    async def test_returns_false_after_unregister(self, game_state_managers):
         """Test that False is returned after player unregisters."""
         gsm.register_online_player(456, "temp_player")
         await gsm.unregister_online_player(456)

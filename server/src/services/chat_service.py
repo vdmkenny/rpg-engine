@@ -12,7 +12,6 @@ from common.src.protocol import ChatChannel
 
 from ..core.logging_config import get_logger
 from ..core.config import settings
-from .game_state_manager import get_game_state_manager
 from .player_service import PlayerService
 
 logger = get_logger(__name__)
@@ -282,7 +281,7 @@ class ChatService:
                 return None
 
             # Check if player is online
-            if not PlayerService.is_player_online(recipient.id):
+            if not PlayerService.is_player_online(recipient["id"]):
                 logger.debug(
                     "DM recipient not online",
                     extra={"recipient_username": recipient_username}
@@ -290,8 +289,8 @@ class ChatService:
                 return None
 
             return {
-                "player_id": recipient.id,
-                "username": recipient.username
+                "player_id": recipient["id"],
+                "username": recipient["username"]
             }
 
         except Exception as e:
@@ -411,9 +410,7 @@ class ChatService:
                 
             elif channel == ChatChannel.LOCAL.value:
                 # Get player's current map for local chat
-                from .game_state_manager import get_game_state_manager
-                gsm = get_game_state_manager()
-                position_data = await gsm.get_player_position(player_id)
+                position_data = await PlayerService.get_player_position(player_id)
                 
                 if position_data and position_data.get("map_id"):
                     # Get nearby players for local chat

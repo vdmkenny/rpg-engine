@@ -1,7 +1,7 @@
 """
 Combat service for handling player and entity combat.
 
-Implements RuneScape-style combat mechanics:
+Implements classic RPG combat mechanics:
 - Hit/miss calculations based on Attack vs Defence
 - Damage calculations based on Strength and equipment bonuses
 - XP rewards for combat skills
@@ -20,7 +20,7 @@ from enum import Enum
 
 from server.src.core.logging_config import get_logger
 from server.src.core.skills import SkillType
-from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.game_state import get_player_state_manager, get_skills_manager, get_equipment_manager, get_entity_manager, get_reference_data_manager
 from server.src.services.skill_service import SkillService
 from server.src.core.entities import get_entity_by_name
 from server.src.core.humanoids import HumanoidDefinition
@@ -74,7 +74,7 @@ class CombatResult:
 
 class CombatService:
     """
-    Combat service implementing RuneScape-style combat mechanics.
+    Combat service implementing classic RPG combat mechanics.
     
     All business logic is here. GSM is used ONLY for data operations.
     """
@@ -94,10 +94,13 @@ class CombatService:
         Returns:
             CombatStats or None if player not found
         """
-        gsm = get_game_state_manager()
+        player_mgr = get_player_state_manager()
+        skills_mgr = get_skills_manager()
+        equip_mgr = get_equipment_manager()
+        ref_mgr = get_reference_data_manager()
         
         # Get skills
-        skills = await gsm.get_all_skills(player_id)
+        skills = await skills_mgr.get_all_skills(player_id)
         if not skills:
             return None
         
@@ -111,26 +114,26 @@ class CombatService:
         defence_level = defence_skill.get("level", 1)
         
         # Get HP
-        hp_data = await gsm.get_player_hp(player_id)
+        hp_data = await player_mgr.get_player_hp(player_id)
         if not hp_data:
             return None
         
         # Get equipment bonuses
-        equipment = await gsm.get_equipment(player_id)
+        equipment = await equip_mgr.get_equipment(player_id)
         attack_bonus = 0
         strength_bonus = 0
         defence_bonus = 0
         
         for slot, item_data in equipment.items():
             item_id = item_data.get("item_id")
-            item_meta = gsm.get_cached_item_meta(item_id)
+            item_meta = ref_mgr.get_cached_item_meta(item_id)
             if item_meta:
                 attack_bonus += item_meta.get("attack_bonus", 0)
                 strength_bonus += item_meta.get("strength_bonus", 0)
                 defence_bonus += item_meta.get("physical_defence_bonus", 0)
         
         # Get username for display
-        username = gsm._id_to_username.get(player_id, f"Player{player_id}")
+        username = player_mgr.get_username_for_player(player_id) or f"Player{player_id}"
         
         return CombatStats(
             attack_level=attack_level,
@@ -155,10 +158,10 @@ class CombatService:
         Returns:
             CombatStats or None if entity not found
         """
-        gsm = get_game_state_manager()
+        entity_mgr = get_entity_manager()
         
         # Get entity instance
-        entity_data = await gsm.get_entity_instance(entity_id)
+        entity_data = await entity_mgr.get_entity_instance(entity_id)
         if not entity_data:
             return None
         
@@ -210,7 +213,7 @@ class CombatService:
     @staticmethod
     def calculate_hit_chance(attacker: CombatStats, defender: CombatStats) -> float:
         """
-        Calculate hit chance using RuneScape-style formula.
+        Calculate hit chance using classic RPG formula.
         
         Hit chance = attack_roll / (attack_roll + defence_roll)
         
@@ -420,19 +423,20 @@ class CombatService:
         new_defender_hp = max(0, defender_stats.current_hp - damage)
         defender_died = new_defender_hp == 0
         
-        # Update HP via GSM
-        gsm = get_game_state_manager()
+        # Update HP via managers
+        player_mgr = get_player_state_manager()
+        entity_mgr = get_entity_manager()
         if defender_type == CombatTargetType.PLAYER:
-            await gsm.set_player_hp(defender_id, new_defender_hp)
+            await player_mgr.set_player_hp(defender_id, new_defender_hp)
         else:
-            await gsm.update_entity_hp(defender_id, new_defender_hp)
+            await entity_mgr.update_entity_hp(defender_id, new_defender_hp)
             
             # If entity died, trigger death animation
             if defender_died:
                 from server.src.game.game_loop import get_game_loop_state
                 game_state = get_game_loop_state()
                 death_tick = game_state.tick_counter + 10  # 10 ticks for death animation
-                await gsm.despawn_entity(defender_id, death_tick=death_tick, respawn_delay_seconds=30)
+                await entity_mgr.despawn_entity(defender_id, death_tick=death_tick, respawn_delay_seconds=30)
         
         # Calculate XP (only for player attackers)
         xp_gained = {}
@@ -477,11 +481,11 @@ class CombatService:
         # Auto-retaliation: If defender is a player and alive, check if they should auto-attack back
         if defender_type == CombatTargetType.PLAYER and not defender_died and new_defender_hp > 0:
             # Get defender's settings
-            defender_settings = await gsm.get_player_settings(defender_id)
+            defender_settings = await player_mgr.get_player_settings(defender_id)
             auto_retaliate = defender_settings.get("auto_retaliate", True)
             
             # Check if defender is already in combat
-            defender_combat_state = await gsm.get_player_combat_state(defender_id)
+            defender_combat_state = await player_mgr.get_player_combat_state(defender_id)
             
             # If auto-retaliate is on and not already in combat, set combat state to attack back
             if auto_retaliate and not defender_combat_state:
@@ -491,10 +495,10 @@ class CombatService:
                 game_state = get_game_loop_state()
                 
                 # Get defender's weapon attack speed
-                defender_equipment = await gsm.get_equipment(defender_id)
+                defender_equipment = await equip_mgr.get_equipment(defender_id)
                 defender_weapon = defender_equipment.get("weapon")
                 if defender_weapon and defender_weapon.get("item_id"):
-                    weapon_meta = gsm.get_cached_item_meta(defender_weapon["item_id"])
+                    weapon_meta = ref_mgr.get_cached_item_meta(defender_weapon["item_id"])
                     base_attack_speed = game_config.get("game", {}).get("combat", {}).get("base_attack_speed", 3.0)
                     defender_attack_speed = weapon_meta.get("attack_speed", base_attack_speed)
                 else:
@@ -502,7 +506,7 @@ class CombatService:
                     defender_attack_speed = game_config.get("game", {}).get("combat", {}).get("base_attack_speed", 3.0)
                 
                 # Set combat state to retaliate
-                await gsm.set_player_combat_state(
+                await player_mgr.set_player_combat_state(
                     player_id=defender_id,
                     target_type=attacker_type,
                     target_id=attacker_id,

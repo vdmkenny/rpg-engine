@@ -16,7 +16,7 @@ from typing import Optional, Tuple
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
 from server.src.core.skills import HITPOINTS_START_LEVEL
-from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.game_state import get_player_state_manager
 from server.src.services.equipment_service import EquipmentService
 from server.src.services.ground_item_service import GroundItemService
 from server.src.services.map_service import get_map_manager
@@ -73,8 +73,8 @@ class HpService:
         Returns:
             Tuple of (current_hp, max_hp)
         """
-        gsm = get_game_state_manager()
-        hp_data = await gsm.get_player_hp(player_id)
+        player_mgr = get_player_state_manager()
+        hp_data = await player_mgr.get_player_hp(player_id)
         if hp_data:
             return hp_data["current_hp"], hp_data["max_hp"]
         return HITPOINTS_START_LEVEL, HITPOINTS_START_LEVEL
@@ -84,15 +84,15 @@ class HpService:
         player_id: int, current_hp: int, max_hp: Optional[int] = None
     ) -> None:
         """
-        Update HP via GSM.
+        Update HP via player state manager.
 
         Args:
             player_id: Player's database ID
             current_hp: New current HP value
             max_hp: Optional new max HP value
         """
-        gsm = get_game_state_manager()
-        await gsm.set_player_hp(player_id, current_hp, max_hp)
+        player_mgr = get_player_state_manager()
+        await player_mgr.set_player_hp(player_id, current_hp, max_hp)
 
     @staticmethod
     async def deal_damage(
@@ -254,14 +254,14 @@ class HpService:
         Returns:
             Tuple of (map_id, x, y, items_dropped) - death location and item count
         """
-        gsm = get_game_state_manager()
+        player_mgr = get_player_state_manager()
         
-        # Get player position from GSM
-        player_state = await gsm.get_player_full_state(player_id)
+        # Get player position from player state manager
+        player_state = await player_mgr.get_player_full_state(player_id)
 
         if not player_state:
             logger.error(
-                "No player data in GSM for death handling",
+                "No player data in player state manager for death handling",
                 extra={"player_id": player_id},
             )
             return settings.DEFAULT_MAP, 0, 0, 0
@@ -321,9 +321,9 @@ class HpService:
         spawn_map_id, spawn_x, spawn_y = HpService._get_spawn_position()
         current_hp, max_hp = await HpService.get_hp(player_id)
 
-        gsm = get_game_state_manager()
-        # Update player position and HP via GSM
-        await gsm.set_player_full_state(
+        player_mgr = get_player_state_manager()
+        # Update player position and HP via player state manager
+        await player_mgr.set_player_full_state(
             player_id=player_id,
             x=spawn_x,
             y=spawn_y,
@@ -447,12 +447,12 @@ class HpService:
         if not hp_updates:
             return 0
         
-        gsm = get_game_state_manager()
+        player_mgr = get_player_state_manager()
         updated = 0
         
         for player_id, new_hp in hp_updates:
             try:
-                await gsm.set_player_hp(player_id, new_hp)
+                await player_mgr.set_player_hp(player_id, new_hp)
                 updated += 1
             except Exception:
                 # Silently skip failed updates to avoid disrupting game loop

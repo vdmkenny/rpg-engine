@@ -11,7 +11,12 @@ from pydantic import ValidationError
 
 from server.src.core.config import settings, game_config
 from server.src.core.logging_config import get_logger
-from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.game_state import (
+    get_player_state_manager,
+    get_entity_manager,
+    get_equipment_manager,
+    get_reference_data_manager,
+)
 from server.src.services.combat_service import CombatService
 from server.src.api.helpers.rate_limiter import OperationRateLimiter
 
@@ -56,10 +61,13 @@ class CombatHandlerMixin:
                 return
             
             payload = AttackPayload(**message.payload)
-            gsm = get_game_state_manager()
+            player_mgr = get_player_state_manager()
+            entity_mgr = get_entity_manager()
+            equipment_mgr = get_equipment_manager()
+            reference_mgr = get_reference_data_manager()
             
             # Validate attacker state
-            attacker_pos = await gsm.get_player_position(self.player_id)
+            attacker_pos = await player_mgr.get_player_position(self.player_id)
             if not attacker_pos:
                 await self._send_error_response(
                     message.id,
@@ -69,7 +77,7 @@ class CombatHandlerMixin:
                 )
                 return
             
-            attacker_hp = await gsm.get_player_hp(self.player_id)
+            attacker_hp = await player_mgr.get_player_hp(self.player_id)
             if not attacker_hp or attacker_hp["current_hp"] <= 0:
                 await self._send_error_response(
                     message.id,
@@ -82,7 +90,7 @@ class CombatHandlerMixin:
             # Validate target
             if payload.target_type == CombatTargetType.ENTITY:
                 entity_id = int(payload.target_id)
-                entity_data = await gsm.get_entity_instance(entity_id)
+                entity_data = await entity_mgr.get_entity_instance(entity_id)
                 
                 if not entity_data:
                     await self._send_error_response(
@@ -194,22 +202,20 @@ class CombatHandlerMixin:
                 
                 game_state = get_game_loop_state()
                 
-                equipment = await gsm.get_equipment(self.player_id)
+                equipment = await equipment_mgr.get_equipment(self.player_id)
                 weapon_item = equipment.get("weapon")
                 base_attack_speed = game_config.get("game", {}).get("combat", {}).get("base_attack_speed", 3.0)
                 
                 if weapon_item and weapon_item.get("item_id"):
-                    weapon_meta = gsm.get_cached_item_meta(weapon_item["item_id"])
+                    weapon_meta = reference_mgr.get_cached_item_meta(weapon_item["item_id"])
                     attack_speed = weapon_meta.get("attack_speed", base_attack_speed) if weapon_meta else base_attack_speed
                 else:
                     attack_speed = base_attack_speed
                 
-                await gsm.set_player_combat_state(
-                    player_id=self.player_id,
-                    target_type=payload.target_type,
-                    target_id=int(payload.target_id),
-                    last_attack_tick=game_state.tick_counter,
-                    attack_speed=attack_speed
+                await player_mgr.set_player_combat_state(
+                    self.player_id,
+                    payload.target_type.value,
+                    int(payload.target_id)
                 )
                 
                 logger.debug(
@@ -266,8 +272,8 @@ class CombatHandlerMixin:
         try:
             payload = ToggleAutoRetaliatePayload(**message.payload)
             
-            gsm = get_game_state_manager()
-            await gsm.set_player_setting(self.player_id, PlayerSettingKey.AUTO_RETALIATE, payload.enabled)
+            player_mgr = get_player_state_manager()
+            await player_mgr.set_player_setting(self.player_id, PlayerSettingKey.AUTO_RETALIATE, payload.enabled)
             
             await self._send_success_response(
                 message.id,

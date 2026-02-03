@@ -8,7 +8,7 @@ import traceback
 from typing import Any
 
 from server.src.core.logging_config import get_logger
-from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.game_state import get_player_state_manager
 from server.src.services.ground_item_service import GroundItemService
 
 from common.src.protocol import (
@@ -34,8 +34,8 @@ class GroundItemHandlerMixin:
         try:
             payload = ItemDropPayload(**message.payload)
             
-            gsm = get_game_state_manager()
-            position = await gsm.get_player_position(self.player_id)
+            player_mgr = get_player_state_manager()
+            position = await player_mgr.get_position(self.player_id)
             
             if not position:
                 await self._send_error_response(
@@ -57,7 +57,7 @@ class GroundItemHandlerMixin:
             
             if result.success:
                 # Drop action breaks combat
-                await gsm.clear_player_combat_state(self.player_id)
+                await player_mgr.clear_combat_state(self.player_id)
                 
                 await self._send_success_response(
                     message.id,
@@ -98,8 +98,8 @@ class GroundItemHandlerMixin:
         try:
             payload = ItemPickupPayload(**message.payload)
             
-            gsm = get_game_state_manager()
-            position = await gsm.get_player_position(self.player_id)
+            player_mgr = get_player_state_manager()
+            position = await player_mgr.get_position(self.player_id)
             
             if not position:
                 await self._send_error_response(
@@ -120,7 +120,7 @@ class GroundItemHandlerMixin:
             
             if result.success:
                 # Pickup action breaks combat
-                await gsm.clear_player_combat_state(self.player_id)
+                await player_mgr.clear_combat_state(self.player_id)
                 
                 await self._send_success_response(
                     message.id,

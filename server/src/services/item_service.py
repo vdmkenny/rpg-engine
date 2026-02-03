@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any, List
 from ..core.items import ItemType, ItemRarity
 from ..core.logging_config import get_logger
 from ..schemas.item import ItemInfo, ItemStats
-from .game_state_manager import get_game_state_manager
+from .game_state import get_reference_data_manager
 
 logger = get_logger(__name__)
 
@@ -73,19 +73,18 @@ class ItemService:
     @staticmethod
     async def sync_items_to_db() -> None:
         """
-        Sync items from ItemType enum to database using GSM.
+        Sync items from ItemType enum to database.
+        
+        Note: This loads item cache from DB which assumes items are already
+        synced via alembic migrations or other means.
         """
-        gsm = get_game_state_manager()
-        await gsm.sync_items_to_database()
+        ref_mgr = get_reference_data_manager()
+        await ref_mgr.load_item_cache_from_db()
 
     @staticmethod
     async def get_item_by_name(name: str) -> Optional[ItemWrapper]:
         """
-        Get an item by its internal name using GSM cached methods.
-        
-        Note: This iterates through cached items since GSM doesn't have
-        a direct get_item_by_name method. This should be optimized
-        if performance becomes an issue.
+        Get an item by its internal name using reference data manager.
 
         Args:
             name: Internal item name (e.g., "bronze_sword")
@@ -93,10 +92,10 @@ class ItemService:
         Returns:
             ItemWrapper object if found, None otherwise
         """
-        gsm = get_game_state_manager()
+        ref_mgr = get_reference_data_manager()
         
         # Get all cached items and search by name
-        cached_items = gsm.get_all_cached_items()
+        cached_items = ref_mgr.get_all_cached_items()
         for item_id, item_data in cached_items.items():
             # Compare lowercase names for case-insensitive matching
             if item_data.get("name", "").lower() == name.lower():
@@ -112,7 +111,7 @@ class ItemService:
     @staticmethod
     async def get_item_by_id(item_id: int) -> Optional[ItemWrapper]:
         """
-        Get an item by its database ID using GSM cached methods.
+        Get an item by its database ID using reference data manager.
 
         Args:
             item_id: Item database ID
@@ -120,16 +119,16 @@ class ItemService:
         Returns:
             ItemWrapper object if found, None otherwise
         """
-        gsm = get_game_state_manager()
+        ref_mgr = get_reference_data_manager()
         
         # Check item reference data first (fastest lookup)
-        cached_item = gsm.get_cached_item_meta(item_id)
+        cached_item = ref_mgr.get_cached_item_meta(item_id)
         if cached_item:
             # Return wrapped reference data
             return ItemWrapper(cached_item)
         
-        # Retrieve item data from persistent storage
-        item_data = await gsm.get_item_meta(item_id)
+        # Retrieve item data from Valkey if available
+        item_data = await ref_mgr.get_item_from_valkey(item_id)
         if item_data:
             return ItemWrapper(item_data)
         

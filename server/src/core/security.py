@@ -1,7 +1,7 @@
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -68,7 +68,7 @@ def verify_token(token: str) -> Optional[TokenData]:
         return None
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> Player:
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
     """
     Decodes the JWT token to get the current user using the service layer.
     """

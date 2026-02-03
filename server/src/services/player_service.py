@@ -13,10 +13,10 @@ from ..core.security import get_password_hash
 from ..models.player import Player
 from ..schemas.player import PlayerCreate, PlayerRole
 from ..core.logging_config import get_logger
-from .game_state_manager import get_game_state_manager
-
-if TYPE_CHECKING:
-    from .game_state_manager import GameStateManager
+from .game_state import get_player_state_manager, get_reference_data_manager
+from .inventory_service import InventoryService
+from .equipment_service import EquipmentService
+from .skill_service import SkillService
 
 logger = get_logger(__name__)
 
@@ -57,42 +57,67 @@ class PlayerService:
         x: Optional[int] = None,
         y: Optional[int] = None,
         map_id: Optional[str] = None
-    ) -> Player:
+    ) -> Dict[str, Any]:
         """
-        Create a new player with proper initialization using GSM.
+        Create a new player with proper initialization.
         
-        Creates player record and initializes all skills with default values.
+        Creates player record via PlayerStateManager and initializes all skills.
 
         Args:
             player_data: Player creation data
 
         Returns:
-            Created Player instance
+            Dict with player data including id
 
         Raises:
             HTTPException: If username already exists
         """
-        gsm = get_game_state_manager()
+        from sqlalchemy.exc import IntegrityError
+        
+        player_mgr = get_player_state_manager()
         
         try:
-            # Create player using GSM's complete creation method
             hashed_password = get_password_hash(player_data.password)
-            player_complete_data = await gsm.create_player_complete(
+            
+            # Check if username already exists
+            if await player_mgr.username_exists(player_data.username):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="A player with this username already exists.",
+                )
+            
+            # Create player record via manager
+            player_id = await player_mgr.create_player_record(
                 username=player_data.username,
                 hashed_password=hashed_password,
                 x=x or getattr(player_data, 'x', 10),
                 y=y or getattr(player_data, 'y', 10),
                 map_id=map_id or getattr(player_data, 'map_id', "samplemap"),
+                current_hp=100,
+                max_hp=100,
             )
             
-            # Convert GSM data back to Player model
-            player = PlayerService._dict_to_player(player_complete_data)
+            # Initialize skills for the player
+            await SkillService.grant_all_skills_to_player(player_id)
             
-            logger.info("Player created", extra={"username": player.username, "player_id": player.id})
-            return player
+            logger.info("Player created", extra={"username": player_data.username, "player_id": player_id})
+            return {
+                "id": player_id,
+                "username": player_data.username,
+                "x": x or getattr(player_data, 'x', 10),
+                "y": y or getattr(player_data, 'y', 10),
+                "map_id": map_id or getattr(player_data, 'map_id', "samplemap"),
+                "current_hp": 100,
+                "max_hp": 100,
+            }
                 
+        except IntegrityError:
+            logger.warning("Player creation failed - duplicate username", extra={"username": player_data.username})
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A player with this username already exists.",
+            )
         except Exception as e:
-            # GSM will raise IntegrityError for duplicate username, convert to HTTP error
             logger.error(
                 "Player creation failed", 
                 extra={
@@ -114,20 +139,15 @@ class PlayerService:
         """
         Handle player login process.
         
-        Registers player as online and loads complete game state.
+        Registers player as online.
 
         Args:
             player: Player instance
         """
-        from .game_state_manager import get_game_state_manager
-        
-        state_manager = get_game_state_manager()
+        player_mgr = get_player_state_manager()
         
         # Register as online
-        state_manager.register_online_player(player.id, player.username)
-        
-        # Load complete player state
-        await state_manager.load_player_state(player.id)
+        player_mgr.register_online_player(player.id, player.username)
         
         logger.info(
             "Player logged in",
@@ -145,26 +165,24 @@ class PlayerService:
         """
         Handle player logout process.
         
-        Saves all player progress and cleans up active session.
+        Cleans up active session.
 
         Args:
             player_id: Player ID
             username: Player username
         """        
         try:
-            # Get the GameStateManager
-            state_manager = get_game_state_manager()
+            player_mgr = get_player_state_manager()
             
-            # Unregister player - this handles immediate sync to DB and cache cleanup
-            await state_manager.unregister_online_player(player_id)
+            # Unregister player
+            await player_mgr.unregister_online_player(player_id)
             
-            # Clean up player lock to prevent memory leaks (gracefully handle if not initialized)
+            # Clean up player lock to prevent memory leaks
             try:
                 from ..core.concurrency import get_player_lock_manager
                 lock_manager = get_player_lock_manager()
                 await lock_manager.cleanup_player_lock(player_id)
             except RuntimeError:
-                # Concurrency infrastructure not initialized (e.g., in tests)
                 pass
             
             logger.info(
@@ -190,48 +208,34 @@ class PlayerService:
     @staticmethod
     async def get_player_by_username(
         username: str
-    ) -> Optional[Player]:
+    ) -> Optional[Dict[str, Any]]:
         """
-        Get player by username using GSM.
+        Get player by username.
 
         Args:
             username: Player username
 
         Returns:
-            Player if found, None otherwise
+            Player dict if found, None otherwise
         """
-        from .game_state_manager import get_game_state_manager
-        
-        gsm = get_game_state_manager()
-        
-        # Use GSM to get player by username
-        player_data = await gsm.get_player_by_username(username)
-        if not player_data:
-            return None
-        
-        return PlayerService._dict_to_player(player_data)
+        player_mgr = get_player_state_manager()
+        return await player_mgr.get_player_record_by_username(username)
 
     @staticmethod
     async def get_player_by_id(
         player_id: int
-    ) -> Optional[Player]:
+    ) -> Optional[Dict[str, Any]]:
         """
-        Get player by ID using GSM.
+        Get player by ID.
 
         Args:
             player_id: Player ID
 
         Returns:
-            Player if found, None otherwise
+            Player dict if found, None otherwise
         """
-        gsm = get_game_state_manager()
-        
-        # Use GSM to get complete player data
-        player_data = await gsm.get_player_complete(player_id)
-        if not player_data:
-            return None
-        
-        return PlayerService._dict_to_player(player_data)
+        player_mgr = get_player_state_manager()
+        return await player_mgr.get_player_record_by_id(player_id)
 
     @staticmethod
     def is_player_online(player_id: int) -> bool:
@@ -244,10 +248,8 @@ class PlayerService:
         Returns:
             True if player is online, False otherwise
         """
-        from .game_state_manager import get_game_state_manager
-        
-        state_manager = get_game_state_manager()
-        return state_manager.is_online(player_id)
+        player_mgr = get_player_state_manager()
+        return player_mgr.is_online(player_id)
 
     @staticmethod
     async def get_player_position(player_id: int) -> Optional[Dict[str, Any]]:
@@ -260,9 +262,7 @@ class PlayerService:
         Returns:
             Dict with position data (x, y, map_id, etc.) or None if not online
         """
-        from .game_state_manager import get_game_state_manager
-        
-        state_manager = get_game_state_manager()
+        player_mgr = get_player_state_manager()
         
         # Check if player is online
         if not PlayerService.is_player_online(player_id):
@@ -272,8 +272,8 @@ class PlayerService:
             )
             return None
         
-        # Get player position from GSM
-        return await state_manager.get_player_position(player_id)
+        # Get player position from PlayerStateManager
+        return await player_mgr.get_player_position(player_id)
 
     @staticmethod
     async def get_nearby_players(
@@ -289,9 +289,7 @@ class PlayerService:
         Returns:
             List of nearby player data dicts
         """
-        from .game_state_manager import get_game_state_manager
-        
-        state_manager = get_game_state_manager()
+        player_mgr = get_player_state_manager()
         
         # Get current player's position
         center_position = await PlayerService.get_player_position(player_id)
@@ -306,25 +304,25 @@ class PlayerService:
             
             for other_player_id in online_players:
                 if other_player_id == player_id:
-                    continue  # Skip self
+                    continue
                     
-                other_position = await state_manager.get_player_position(other_player_id)
+                other_position = await player_mgr.get_player_position(other_player_id)
                 if not other_position or other_position["map_id"] != center_position["map_id"]:
-                    continue  # Skip if different map or no position
+                    continue
                 
-                # Calculate distance
                 dx = abs(other_position["x"] - center_position["x"])
                 dy = abs(other_position["y"] - center_position["y"])
                 
-                # Use Manhattan distance for simplicity (good enough for chat range)
                 if dx <= range_tiles and dy <= range_tiles:
-                    nearby_players.append({
-                        "player_id": other_player_id,
-                        "username": await PlayerService.get_username_by_player_id(other_player_id),
-                        "x": other_position["x"],
-                        "y": other_position["y"],
-                        "map_id": other_position["map_id"]
-                    })
+                    username = player_mgr.get_username_for_player(other_player_id)
+                    if username:
+                        nearby_players.append({
+                            "player_id": other_player_id,
+                            "username": username,
+                            "x": other_position["x"],
+                            "y": other_position["y"],
+                            "map_id": other_position["map_id"]
+                        })
             
             return nearby_players
             
@@ -404,7 +402,7 @@ class PlayerService:
         player_id: int
     ) -> Optional[PlayerRole]:
         """
-        Get player's role using GSM.
+        Get player's role.
 
         Args:
             player_id: Player ID
@@ -412,19 +410,20 @@ class PlayerService:
         Returns:
             PlayerRole if player found, None otherwise
         """
+        player_mgr = get_player_state_manager()
+        
         try:
-            gsm = get_game_state_manager()
-            permissions = await gsm.get_player_permissions(player_id)
-            if permissions and permissions.get("role"):
-                # Convert string role to PlayerRole enum
-                role_str = permissions["role"]
-                if role_str == "admin":
-                    return PlayerRole.ADMIN
-                elif role_str == "moderator":
-                    return PlayerRole.MODERATOR
-                else:
-                    return PlayerRole.PLAYER
-            return None
+            player_record = await player_mgr.get_player_record_by_id(player_id)
+            if not player_record:
+                return None
+            
+            role_str = player_record.get("role", "player")
+            if role_str == "admin":
+                return PlayerRole.ADMIN
+            elif role_str == "moderator":
+                return PlayerRole.MODERATOR
+            else:
+                return PlayerRole.PLAYER
             
         except Exception as e:
             logger.error(
@@ -478,7 +477,7 @@ class PlayerService:
     @staticmethod
     async def get_player_data_by_id(
         player_id: int
-    ) -> Optional[Player]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Get complete player data including role using GSM (alias for get_player_by_id with explicit naming).
 
@@ -486,7 +485,7 @@ class PlayerService:
             player_id: Player ID
 
         Returns:
-            Complete Player instance if found, None otherwise
+            Complete player dict if found, None otherwise
         """
         return await PlayerService.get_player_by_id(player_id)
 
@@ -505,16 +504,18 @@ class PlayerService:
         Returns:
             Player username if found, None otherwise
         """
-        state_manager = get_game_state_manager()
+        player_mgr = get_player_state_manager()
         
         # Check online players first for performance
-        username = state_manager._id_to_username.get(player_id)
+        username = player_mgr.get_username_for_player(player_id)
         if username:
             return username
         
-        # Use GSM's auto-loading capability for offline players
-        player_state = await state_manager.get_player_full_state(player_id)
-        return player_state.get("username") if player_state else None
+        # Load from player record for offline players
+        player_record = await player_mgr.get_player_record_by_id(player_id)
+        if player_record:
+            return player_record.get("username")
+        return None
 
     @staticmethod
     async def delete_player(player_id: int) -> bool:
@@ -530,17 +531,24 @@ class PlayerService:
         Returns:
             True if player was deleted, False if player didn't exist
         """
-        gsm = get_game_state_manager()
+        player_mgr = get_player_state_manager()
         
         try:
-            result = await gsm.delete_player_complete(player_id)
-            
-            if result:
-                logger.info("Player deleted via service", extra={"player_id": player_id})
-            else:
+            # Check if player exists
+            player_record = await player_mgr.get_player_record_by_id(player_id)
+            if not player_record:
                 logger.debug("Player not found for deletion", extra={"player_id": player_id})
+                return False
             
-            return result
+            # If online, unregister first
+            if player_mgr.is_online(player_id):
+                await player_mgr.unregister_online_player(player_id)
+            
+            # Delete from database via manager
+            await player_mgr.delete_player_record(player_id)
+            
+            logger.info("Player deleted via service", extra={"player_id": player_id})
+            return True
             
         except Exception as e:
             logger.error(
@@ -568,21 +576,19 @@ class PlayerService:
         """
         from .connection_service import ConnectionService
         
-        state_manager = get_game_state_manager()
+        player_mgr = get_player_state_manager()
         online_player_ids = ConnectionService.get_online_player_ids()
         
         players_on_map: List[Dict[str, Any]] = []
         
         for player_id in online_player_ids:
-            position = await state_manager.get_player_position(player_id)
+            position = await player_mgr.get_player_position(player_id)
             if not position:
                 continue
             
-            # Check if player is on the requested map
             if position.get("map_id") != map_id:
                 continue
             
-            # Get username
             username = await PlayerService.get_username_by_player_id(player_id)
             
             players_on_map.append({
@@ -600,7 +606,7 @@ class PlayerService:
         Get player's appearance data from game state.
         
         Note: For online players only (welcome/join messages). 
-        Returns appearance from Valkey hot cache.
+        Returns appearance from player record.
         
         Args:
             player_id: Player ID
@@ -608,13 +614,11 @@ class PlayerService:
         Returns:
             Appearance dict or None if not found
         """
-        from .game_state_manager import get_game_state_manager
+        player_mgr = get_player_state_manager()
         
-        state_manager = get_game_state_manager()
-        
-        # Get full player state (includes appearance)
-        player_data = await state_manager.get_player_full_state(player_id)
-        if not player_data:
-            return None
-        
-        return player_data.get("appearance")
+        # Load appearance from player record
+        player_record = await player_mgr.get_player_record_by_id(player_id)
+        if player_record:
+            appearance = player_record.get("appearance")
+            return appearance if appearance else None
+        return None

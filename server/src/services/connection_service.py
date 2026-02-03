@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Any
 import traceback
 
 from ..core.logging_config import get_logger
-from .game_state_manager import get_game_state_manager
+from .game_state import get_player_state_manager
 from .player_service import PlayerService
 from .movement_service import MovementService
 
@@ -41,9 +41,9 @@ class ConnectionService:
             Dict with initialization data
         """
         try:
-            state_manager = get_game_state_manager()
+            player_mgr = get_player_state_manager()
 
-            # Use provided position and HP data to initialize GSM state
+            # Use provided position and HP data to initialize player state
             position_data = {
                 "x": x,
                 "y": y,
@@ -62,9 +62,9 @@ class ConnectionService:
                     extra={"player_id": player_id, "position": {"x": x, "y": y, "map_id": map_id}}
                 )
 
-            # Set HP data in GSM
+            # Set HP data in player state manager
             hp_data = {"current_hp": current_hp, "max_hp": max_hp}
-            await state_manager.set_player_hp(player_id, current_hp, max_hp)
+            await player_mgr.set_player_hp(player_id, current_hp, max_hp)
 
             # Get nearby players for initial state
             nearby_players = await PlayerService.get_nearby_players(
@@ -187,7 +187,7 @@ class ConnectionService:
                     "error": "Player not found"
                 }
             
-            player_id = player.id
+            player_id = player["id"]
 
             # Get nearby players before cleanup for notifications
             nearby_players = await PlayerService.get_nearby_players(
@@ -224,7 +224,7 @@ class ConnectionService:
             try:
                 player = await PlayerService.get_player_by_username(username)
                 if player:
-                    player_id = player.id
+                    player_id = player["id"]
             except:
                 pass
 
@@ -301,10 +301,10 @@ class ConnectionService:
             Dict with validation result
         """
         try:
-            state_manager = get_game_state_manager()
+            player_mgr = get_player_state_manager()
             
             # Check if player is registered as online
-            is_online = state_manager.is_online(player_id)
+            is_online = player_mgr.is_online(player_id)
             
             # Verify username matches
             from .player_service import PlayerService
@@ -391,15 +391,15 @@ class ConnectionService:
                         # First get player ID for this username - use PlayerService to avoid direct DB access
                         player = await PlayerService.get_player_by_username(other_username)
                         
-                        if player and PlayerService.is_player_online(player.id):
-                            position_data = await PlayerService.get_player_position(player.id)
+                        if player and PlayerService.is_player_online(player["id"]):
+                            position_data = await PlayerService.get_player_position(player["id"])
                             if position_data:
                                 # Get visual state via service layer
-                                visual_data = await VisualStateService.get_player_visual_state(player.id)
+                                visual_data = await VisualStateService.get_player_visual_state(player["id"])
                                 
                                 player_data = {
                                     "type": "player",
-                                    "player_id": player.id,
+                                    "player_id": player["id"],
                                     "username": other_username,
                                     "x": position_data["x"],
                                     "y": position_data["y"], 
@@ -491,8 +491,8 @@ class ConnectionService:
         Returns:
             Set of online player IDs
         """
-        state_manager = get_game_state_manager()
-        return state_manager._online_players.copy()
+        player_mgr = get_player_state_manager()
+        return set(player_mgr.get_all_online_player_ids())
     
     @staticmethod
     def get_online_player_id_by_username(username: str) -> Optional[int]:
@@ -505,8 +505,8 @@ class ConnectionService:
         Returns:
             Player ID if online, None otherwise
         """
-        state_manager = get_game_state_manager()
-        return state_manager._username_to_id.get(username)
+        player_mgr = get_player_state_manager()
+        return player_mgr.get_player_id_for_username(username)
     
     @staticmethod 
     def get_all_online_players() -> List[Dict[str, Any]]:
@@ -516,11 +516,11 @@ class ConnectionService:
         Returns:
             List of online player data with player_id and username
         """
-        state_manager = get_game_state_manager()
+        player_mgr = get_player_state_manager()
         online_players = []
         
-        for player_id in state_manager._online_players:
-            username = state_manager._id_to_username.get(player_id)
+        for player_id in player_mgr.get_all_online_player_ids():
+            username = player_mgr.get_username_for_player(player_id)
             if username:
                 online_players.append({
                     "player_id": player_id,
@@ -540,5 +540,5 @@ class ConnectionService:
         Returns:
             True if player is online, False otherwise
         """
-        state_manager = get_game_state_manager()
-        return player_id in state_manager._online_players
+        player_mgr = get_player_state_manager()
+        return player_mgr.is_online(player_id)

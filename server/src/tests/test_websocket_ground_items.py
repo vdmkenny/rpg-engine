@@ -196,13 +196,13 @@ class TestPickupItemWithRealItems:
         assert result.success is True, f"Pickup failed: {result.message}"
         
         # Verify item is in inventory via service layer
-        from server.src.services.game_state_manager import get_game_state_manager
+        from server.src.services.game_state import get_reference_data_manager
         
-        state_manager = get_game_state_manager()
+        ref_manager = get_reference_data_manager()
         inventory = await InventoryService.get_inventory(player.id)
         bronze_sword_items = []
         for inv in inventory:
-            item_meta = state_manager.get_cached_item_meta(inv.item_id)
+            item_meta = ref_manager.get_cached_item_meta(inv.item_id)
             if item_meta and item_meta.get("name") == "bronze_sword":
                 bronze_sword_items.append(inv)
         assert len(bronze_sword_items) == 1
@@ -315,14 +315,14 @@ class TestPickupStackableItem:
         assert result.success is True, f"Pickup failed: {result.message}"
         
         # Verify inventory has 15 arrows total (5 + 10) via service layer
-        from server.src.services.game_state_manager import get_game_state_manager
+        from server.src.services.game_state import get_reference_data_manager
         
-        state_manager = get_game_state_manager()
+        ref_manager = get_reference_data_manager()
         inventory = await InventoryService.get_inventory(player.id)
         total_arrows = 0
         arrow_slots = []
         for inv in inventory:
-            item_meta = state_manager.get_cached_item_meta(inv.item_id)
+            item_meta = ref_manager.get_cached_item_meta(inv.item_id)
             if item_meta and item_meta.get("name") == "bronze_arrows":
                 total_arrows += inv.quantity
                 arrow_slots.append(inv)

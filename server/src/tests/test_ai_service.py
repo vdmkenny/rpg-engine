@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Dict, Any, List, Set, Tuple
 
 from server.src.services.ai_service import AIService
-from server.src.services.game_state_manager import GameStateManager
 from server.src.core.entities import EntityBehavior, EntityState
 from server.src.core.monsters import MonsterDefinition
 

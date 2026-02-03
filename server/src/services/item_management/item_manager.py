@@ -28,7 +28,7 @@ from server.src.schemas.item import (
     CanEquipResult,
     ItemStats,
 )
-from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.game_state import get_inventory_manager, get_equipment_manager, get_player_state_manager
 
 logger = get_logger(__name__)
 
@@ -397,7 +397,8 @@ class ItemManager(IItemManager):
             transaction = self._active_transactions[transaction_id]
             
             # Execute rollback operations in reverse order
-            gsm = get_game_state_manager()
+            inv_mgr = get_inventory_manager()
+            equip_mgr = get_equipment_manager()
             for rollback_op in reversed(transaction.rollback_operations):
                 try:
                     # This would execute rollback operations through GSM
@@ -439,14 +440,15 @@ class ItemManager(IItemManager):
         to_equipment_slot: EquipmentSlot,
     ) -> bool:
         """Transfer item from inventory to equipment atomically."""
-        gsm = get_game_state_manager()
+        inv_mgr = get_inventory_manager()
+        equip_mgr = get_equipment_manager()
         
         try:
             # Remove from inventory
-            await gsm.delete_inventory_slot(player_id, from_inventory_slot)
+            await inv_mgr.delete_inventory_slot(player_id, from_inventory_slot)
             
             # Add to equipment
-            await gsm.set_equipment_slot(
+            await equip_mgr.set_equipment_slot(
                 player_id, to_equipment_slot, item_id, quantity, durability or 1.0
             )
             
@@ -484,14 +486,15 @@ class ItemManager(IItemManager):
         to_inventory_slot: int,
     ) -> bool:
         """Transfer item from equipment to inventory atomically."""
-        gsm = get_game_state_manager()
+        inv_mgr = get_inventory_manager()
+        equip_mgr = get_equipment_manager()
         
         try:
             # Remove from equipment
-            await gsm.delete_equipment_slot(player_id, from_equipment_slot)
+            await equip_mgr.delete_equipment_slot(player_id, from_equipment_slot)
             
             # Add to inventory
-            await gsm.set_inventory_slot(
+            await inv_mgr.set_inventory_slot(
                 player_id, to_inventory_slot, item_id, quantity, durability
             )
             

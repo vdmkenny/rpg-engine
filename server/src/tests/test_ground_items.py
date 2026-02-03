@@ -20,7 +20,6 @@ from sqlalchemy.future import select
 from server.src.models.skill import Skill, PlayerSkill
 from server.src.services.item_service import ItemService
 from server.src.services.ground_item_service import GroundItemService
-from server.src.services.game_state_manager import GameStateManager
 from server.src.core.items import EquipmentSlot
 
 
@@ -31,7 +30,7 @@ from server.src.core.items import EquipmentSlot
 
 @pytest_asyncio.fixture
 async def player_for_ground_items(
-    session: AsyncSession, gsm: GameStateManager, create_test_player, items_synced
+    session: AsyncSession, game_state_managers, create_test_player, items_synced
 ):
     """Create a test player ready for ground item tests."""
     unique_name = f"ground_test_{uuid.uuid4().hex[:8]}"
@@ -55,7 +54,7 @@ async def player_for_ground_items(
 
 @pytest_asyncio.fixture
 async def second_player(
-    session: AsyncSession, gsm: GameStateManager, create_test_player, items_synced
+    session: AsyncSession, game_state_managers, create_test_player, items_synced
 ):
     """Create a second test player for pickup tests."""
     unique_name = f"second_{uuid.uuid4().hex[:8]}"
@@ -78,7 +77,7 @@ async def second_player(
 
 
 async def give_player_skill_level(
-    session: AsyncSession, gsm: GameStateManager, player_id: int, skill_name: str, level: int
+    session: AsyncSession, game_state_managers, player_id: int, skill_name: str, level: int
 ):
     """Helper to give a player a specific skill level."""
     from server.src.core.skills import SkillType
@@ -126,7 +125,7 @@ class TestCreateGroundItem:
 
     @pytest.mark.asyncio
     async def test_create_ground_item_basic(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Basic ground item creation should work."""
         player = player_for_ground_items
@@ -153,7 +152,7 @@ class TestCreateGroundItem:
 
     @pytest.mark.asyncio
     async def test_create_ground_item_rarity_timers(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Ground items should have rarity-based despawn timers."""
         player = player_for_ground_items
@@ -182,7 +181,7 @@ class TestCreateGroundItem:
 
     @pytest.mark.asyncio
     async def test_create_ground_item_invalid_item(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Creating with invalid item ID should return None."""
         player = player_for_ground_items
@@ -208,7 +207,7 @@ class TestDropFromInventory:
 
     @pytest.mark.asyncio
     async def test_drop_entire_stack(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Dropping entire stack should work."""
         player = player_for_ground_items
@@ -234,7 +233,7 @@ class TestDropFromInventory:
 
     @pytest.mark.asyncio
     async def test_drop_partial_stack(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Dropping partial stack should leave remainder."""
         player = player_for_ground_items
@@ -260,7 +259,7 @@ class TestDropFromInventory:
 
     @pytest.mark.asyncio
     async def test_drop_from_empty_slot(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Dropping from empty slot should fail."""
         player = player_for_ground_items
@@ -278,7 +277,7 @@ class TestDropFromInventory:
 
     @pytest.mark.asyncio
     async def test_drop_more_than_available(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Dropping more than available should fail."""
         player = player_for_ground_items
@@ -308,7 +307,7 @@ class TestPickupItem:
 
     @pytest.mark.asyncio
     async def test_pickup_own_item(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Owner should be able to pick up their item during protection."""
         player = player_for_ground_items
@@ -344,7 +343,7 @@ class TestPickupItem:
 
     @pytest.mark.asyncio
     async def test_pickup_wrong_tile(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Cannot pick up item from different tile."""
         player = player_for_ground_items
@@ -371,7 +370,7 @@ class TestPickupItem:
 
     @pytest.mark.asyncio
     async def test_pickup_protected_item(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items, second_player
+        self, session: AsyncSession, game_state_managers, player_for_ground_items, second_player
     ):
         """Other players cannot pick up protected items."""
         player = player_for_ground_items
@@ -399,7 +398,7 @@ class TestPickupItem:
 
     @pytest.mark.asyncio
     async def test_pickup_public_item(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items, second_player
+        self, session: AsyncSession, game_state_managers, player_for_ground_items, second_player
     ):
         """Anyone can pick up public (unprotected) items."""
         player = player_for_ground_items
@@ -431,7 +430,7 @@ class TestPickupItem:
 
     @pytest.mark.asyncio
     async def test_pickup_nonexistent_item(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Picking up nonexistent item should fail."""
         player = player_for_ground_items
@@ -449,7 +448,7 @@ class TestPickupItem:
 
     @pytest.mark.asyncio
     async def test_pickup_despawned_item(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Picking up despawned item should fail."""
         player = player_for_ground_items
@@ -481,7 +480,7 @@ class TestPickupItem:
 
     @pytest.mark.asyncio
     async def test_pickup_wrong_map_fails(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Cannot pick up item from different map."""
         player = player_for_ground_items
@@ -521,7 +520,7 @@ class TestVisibility:
 
     @pytest.mark.asyncio
     async def test_own_items_always_visible(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Own items should always be visible (even during protection)."""
         player = player_for_ground_items
@@ -547,7 +546,7 @@ class TestVisibility:
 
     @pytest.mark.asyncio
     async def test_other_protected_items_hidden(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items, second_player
+        self, session: AsyncSession, game_state_managers, player_for_ground_items, second_player
     ):
         """Other players' protected items should be hidden."""
         player = player_for_ground_items
@@ -573,7 +572,7 @@ class TestVisibility:
 
     @pytest.mark.asyncio
     async def test_public_items_visible(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items, second_player
+        self, session: AsyncSession, game_state_managers, player_for_ground_items, second_player
     ):
         """Public items should be visible to everyone."""
         player = player_for_ground_items
@@ -606,7 +605,7 @@ class TestVisibility:
 
     @pytest.mark.asyncio
     async def test_visibility_respects_range(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Items outside range should not be visible."""
         player = player_for_ground_items
@@ -641,7 +640,7 @@ class TestCleanupExpiredItems:
 
     @pytest.mark.asyncio
     async def test_cleanup_removes_expired(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Cleanup should remove expired items."""
         player = player_for_ground_items
@@ -670,7 +669,7 @@ class TestCleanupExpiredItems:
 
     @pytest.mark.asyncio
     async def test_cleanup_keeps_valid_items(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Cleanup should not remove valid items."""
         player = player_for_ground_items
@@ -703,7 +702,7 @@ class TestDropPlayerItemsOnDeath:
 
     @pytest.mark.asyncio
     async def test_death_drops_inventory(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Death should drop all inventory items."""
         player = player_for_ground_items
@@ -730,7 +729,7 @@ class TestDropPlayerItemsOnDeath:
 
     @pytest.mark.asyncio
     async def test_death_drops_equipment(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Death should drop all equipped items."""
         player = player_for_ground_items
@@ -765,7 +764,7 @@ class TestDropPlayerItemsOnDeath:
 
     @pytest.mark.asyncio
     async def test_death_drops_multiple_items(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Death should drop inventory and equipment."""
         player = player_for_ground_items
@@ -800,7 +799,7 @@ class TestDropPlayerItemsOnDeath:
 
     @pytest.mark.asyncio
     async def test_death_with_empty_inventory(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Death with no items should drop nothing."""
         player = player_for_ground_items
@@ -825,7 +824,7 @@ class TestGetItemsAtPosition:
 
     @pytest.mark.asyncio
     async def test_get_items_at_position(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Should return all items at position."""
         player = player_for_ground_items
@@ -845,7 +844,7 @@ class TestGetItemsAtPosition:
 
     @pytest.mark.asyncio
     async def test_get_items_empty_position(
-        self, session: AsyncSession, gsm: GameStateManager, player_for_ground_items
+        self, session: AsyncSession, game_state_managers, player_for_ground_items
     ):
         """Empty position should return empty list."""
         items = await GroundItemService.get_items_at_position("testmap", 50, 50)

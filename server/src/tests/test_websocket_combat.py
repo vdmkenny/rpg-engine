@@ -30,27 +30,40 @@ GOBLIN_MAX_HP = 10
 class TestCombatIntegration:
     """Integration tests for player combat via WebSocket."""
     
+    async def _spawn_test_entity(self, entity_manager, ref_manager, entity_name, map_id, x, y, max_hp):
+        """Helper to spawn an entity by name, looking up the entity ID first."""
+        from server.src.core.monsters import MonsterID
+        
+        # Get entity ID from enum
+        entity_enum = getattr(MonsterID, entity_name, None)
+        if not entity_enum:
+            raise ValueError(f"Unknown entity: {entity_name}")
+        
+        entity_id = entity_enum.value.value if hasattr(entity_enum.value, 'value') else entity_enum.value
+        
+        return await entity_manager.spawn_entity_instance(
+            entity_id=entity_id,
+            map_id=map_id,
+            x=x,
+            y=y,
+            current_hp=max_hp,
+            max_hp=max_hp,
+            state="idle",
+        )
+    
     async def test_attack_entity_success(self, test_client: WebSocketTestClient):
         """Test player successfully attacks entity and deals damage."""
-        from server.src.services.game_state_manager import get_game_state_manager
+        from server.src.services.game_state import get_entity_manager, get_reference_data_manager
         
-        gsm = get_game_state_manager()
+        entity_manager = get_entity_manager()
+        ref_manager = get_reference_data_manager()
         
         # test_client player is at position (10, 10) on "samplemap"
         spawn_x, spawn_y = 11, 10  # Adjacent to player
         
         # Spawn an entity near the player
-        instance_id = await gsm.spawn_entity_instance(
-            entity_name="GOBLIN",
-            entity_type=EntityType.MONSTER,
-            map_id="samplemap",
-            x=spawn_x,
-            y=spawn_y,
-            spawn_x=spawn_x,
-            spawn_y=spawn_y,
-            max_hp=GOBLIN_MAX_HP,
-            wander_radius=0,  # Don't wander away
-            spawn_point_id=1
+        instance_id = await self._spawn_test_entity(
+            entity_manager, ref_manager, "GOBLIN", "samplemap", spawn_x, spawn_y, GOBLIN_MAX_HP
         )
         
         assert instance_id is not None, "Failed to spawn entity"
@@ -79,32 +92,23 @@ class TestCombatIntegration:
     
     async def test_attack_entity_kills_it(self, test_client: WebSocketTestClient):
         """Test player kills entity and entity enters dying state."""
-        from server.src.services.game_state_manager import get_game_state_manager
+        from server.src.services.game_state import get_entity_manager, get_reference_data_manager
         
-        gsm = get_game_state_manager()
+        entity_manager = get_entity_manager()
+        ref_manager = get_reference_data_manager()
         
         spawn_x, spawn_y = 11, 10  # Adjacent to player at (10, 10)
         
         # Spawn a very weak entity (1 HP) so it dies on first successful hit
-        # This makes the test reliable regardless of player's combat stats
-        instance_id = await gsm.spawn_entity_instance(
-            entity_name="GOBLIN",
-            entity_type=EntityType.MONSTER,
-            map_id="samplemap",
-            x=spawn_x,
-            y=spawn_y,
-            spawn_x=spawn_x,
-            spawn_y=spawn_y,
-            max_hp=1,  # 1 HP - dies on first hit
-            wander_radius=0,
-            spawn_point_id=1
+        instance_id = await self._spawn_test_entity(
+            entity_manager, ref_manager, "GOBLIN", "samplemap", spawn_x, spawn_y, 1
         )
         
         await asyncio.sleep(ENTITY_SPAWN_WAIT)
         
-        # Attack until entity dies (with low stats, may need multiple attempts to hit)
+        # Attack until entity dies
         entity_died = False
-        for attempt in range(100):  # Max 100 attacks (plenty for random hit chance)
+        for attempt in range(100):
             try:
                 response = await test_client.send_command(
                     MessageType.CMD_ATTACK,
@@ -117,16 +121,13 @@ class TestCombatIntegration:
                 if response.type == MessageType.RESP_SUCCESS:
                     payload = response.payload
                     
-                    # Check if entity died
                     if payload.get("defender_died"):
                         entity_died = True
                         assert payload["defender_hp"] == 0
                         
-                        # Wait for dying state to appear
                         await asyncio.sleep(ENTITY_SPAWN_WAIT)
                         
-                        # Verify entity enters dying state
-                        entity_data = await gsm.get_entity_instance(instance_id)
+                        entity_data = await entity_manager.get_entity_instance(instance_id)
                         assert entity_data is not None
                         assert entity_data["state"] == "dying"
                         assert entity_data["current_hp"] == 0
@@ -134,7 +135,6 @@ class TestCombatIntegration:
                         break
                     
             except ErrorResponseError as e:
-                # Check if entity is already dead
                 if "dead" in str(e).lower():
                     entity_died = True
                     break
@@ -146,29 +146,19 @@ class TestCombatIntegration:
     
     async def test_attack_out_of_range_fails(self, test_client: WebSocketTestClient):
         """Test attack fails when target is out of range."""
-        from server.src.services.game_state_manager import get_game_state_manager
+        from server.src.services.game_state import get_entity_manager, get_reference_data_manager
         
-        gsm = get_game_state_manager()
+        entity_manager = get_entity_manager()
+        ref_manager = get_reference_data_manager()
         
         spawn_x, spawn_y = 30, 30  # Far away from player at (10, 10)
         
-        # Spawn entity far away
-        instance_id = await gsm.spawn_entity_instance(
-            entity_name="GOBLIN",
-            entity_type=EntityType.MONSTER,
-            map_id="samplemap",
-            x=spawn_x,
-            y=spawn_y,
-            spawn_x=spawn_x,
-            spawn_y=spawn_y,
-            max_hp=GOBLIN_MAX_HP,
-            wander_radius=0,
-            spawn_point_id=1
+        instance_id = await self._spawn_test_entity(
+            entity_manager, ref_manager, "GOBLIN", "samplemap", spawn_x, spawn_y, GOBLIN_MAX_HP
         )
         
         await asyncio.sleep(ENTITY_SPAWN_WAIT)
         
-        # Try to attack - should fail with range error
         with pytest.raises(ErrorResponseError) as exc_info:
             await test_client.send_command(
                 MessageType.CMD_ATTACK,
@@ -182,35 +172,29 @@ class TestCombatIntegration:
     
     async def test_attack_dead_entity_fails(self, test_client: WebSocketTestClient):
         """Test attack on dead entity fails."""
-        from server.src.services.game_state_manager import get_game_state_manager
+        from server.src.services.game_state import get_entity_manager, get_reference_data_manager
         
-        gsm = get_game_state_manager()
+        entity_manager = get_entity_manager()
+        ref_manager = get_reference_data_manager()
         
-        spawn_x, spawn_y = 11, 10  # Adjacent to player
+        spawn_x, spawn_y = 11, 10
         
-        # Spawn entity adjacent to player
-        instance_id = await gsm.spawn_entity_instance(
-            entity_name="GOBLIN",
-            entity_type=EntityType.MONSTER,
-            map_id="samplemap",
-            x=spawn_x,
-            y=spawn_y,
-            spawn_x=spawn_x,
-            spawn_y=spawn_y,
-            max_hp=GOBLIN_MAX_HP,
-            wander_radius=0,
-            spawn_point_id=1
+        instance_id = await self._spawn_test_entity(
+            entity_manager, ref_manager, "GOBLIN", "samplemap", spawn_x, spawn_y, GOBLIN_MAX_HP
         )
         
         await asyncio.sleep(ENTITY_SPAWN_WAIT)
         
-        # Kill the entity by setting HP to 0
-        await gsm.update_entity_hp(instance_id, 0)
-        await gsm.despawn_entity(instance_id, death_tick=0, respawn_delay_seconds=60)
+        # Kill the entity via entity_manager
+        key = f"entity_instance:{instance_id}"
+        data = await entity_manager._get_from_valkey(key)
+        if data:
+            data["current_hp"] = 0
+            data["state"] = "dying"
+            await entity_manager._cache_in_valkey(key, data, 1800)
         
         await asyncio.sleep(ENTITY_SPAWN_WAIT)
         
-        # Try to attack dead entity - should fail
         with pytest.raises(ErrorResponseError) as exc_info:
             await test_client.send_command(
                 MessageType.CMD_ATTACK,
@@ -225,29 +209,19 @@ class TestCombatIntegration:
     
     async def test_attack_awards_xp(self, test_client: WebSocketTestClient):
         """Test successful attack awards XP."""
-        from server.src.services.game_state_manager import get_game_state_manager
+        from server.src.services.game_state import get_entity_manager, get_reference_data_manager
         
-        gsm = get_game_state_manager()
+        entity_manager = get_entity_manager()
+        ref_manager = get_reference_data_manager()
         
-        spawn_x, spawn_y = 11, 10  # Adjacent to player
+        spawn_x, spawn_y = 11, 10
         
-        # Spawn entity adjacent to player
-        instance_id = await gsm.spawn_entity_instance(
-            entity_name="GOBLIN",
-            entity_type=EntityType.MONSTER,
-            map_id="samplemap",
-            x=spawn_x,
-            y=spawn_y,
-            spawn_x=spawn_x,
-            spawn_y=spawn_y,
-            max_hp=GOBLIN_MAX_HP,
-            wander_radius=0,
-            spawn_point_id=1
+        instance_id = await self._spawn_test_entity(
+            entity_manager, ref_manager, "GOBLIN", "samplemap", spawn_x, spawn_y, GOBLIN_MAX_HP
         )
         
         await asyncio.sleep(ENTITY_SPAWN_WAIT)
         
-        # Attack entity until we get a hit that deals damage
         hit_with_damage = False
         for attempt in range(50):
             try:
@@ -262,17 +236,14 @@ class TestCombatIntegration:
                 if response.type == MessageType.RESP_SUCCESS:
                     payload = response.payload
                     
-                    # Check if we hit and dealt damage
                     if payload.get("hit") and payload.get("damage", 0) > 0:
                         hit_with_damage = True
                         xp_gained = payload.get("xp_gained", {})
                         
-                        # Verify XP was awarded
                         assert "attack" in xp_gained
                         assert "strength" in xp_gained
                         assert "hitpoints" in xp_gained
                         
-                        # Verify XP values are correct (4 XP per damage for attack/strength, 4/3 for HP)
                         damage = payload["damage"]
                         assert xp_gained["attack"] == damage * 4
                         assert xp_gained["strength"] == damage * 4
@@ -291,7 +262,6 @@ class TestCombatIntegration:
     
     async def test_attack_nonexistent_entity_fails(self, test_client: WebSocketTestClient):
         """Test attack on non-existent entity fails."""
-        # Try to attack non-existent entity
         with pytest.raises(ErrorResponseError) as exc_info:
             await test_client.send_command(
                 MessageType.CMD_ATTACK,
@@ -305,7 +275,6 @@ class TestCombatIntegration:
     
     async def test_attack_player_not_implemented(self, test_client: WebSocketTestClient):
         """Test player vs player combat is not yet implemented."""
-        # Try to attack another player
         with pytest.raises(ErrorResponseError) as exc_info:
             await test_client.send_command(
                 MessageType.CMD_ATTACK,

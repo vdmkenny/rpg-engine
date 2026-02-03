@@ -2,7 +2,7 @@
 Service layer for skill operations.
 
 Handles skill synchronization, granting skills to players,
-and experience/level calculations using GameStateManager.
+and experience/level calculations using SkillsManager.
 """
 
 from dataclasses import dataclass
@@ -10,7 +10,6 @@ from typing import Optional, Dict, Any, List
 
 from server.src.core.logging_config import get_logger
 from server.src.core.skills import SkillType
-from server.src.services.game_state_manager import get_game_state_manager
 
 logger = get_logger(__name__)
 
@@ -32,53 +31,55 @@ class LevelUpResult:
 
 
 class SkillService:
-    """Service for managing player skills via GameStateManager."""
+    """Service for managing player skills."""
 
     @staticmethod
-    async def sync_skills_to_db() -> list:
+    async def get_skill_level(player_id: int, skill_type: str) -> int:
         """
-        Ensure all SkillType entries exist in the skills table.
-
-        This should be called on server startup to ensure the database
-        has all skills defined in the SkillType enum.
-
-        Returns:
-            List of all Skill records in the database
-        """
-        gsm = get_game_state_manager()
-        return await gsm.sync_skills_to_db()
-
-    @staticmethod
-    async def get_skill_id_map() -> Dict[str, int]:
-        """
-        Get a mapping of skill names to their database IDs.
-
-        Returns:
-            Dict mapping lowercase skill name to skill ID
-        """
-        gsm = get_game_state_manager()
-        return await gsm.get_skill_id_map()
-
-    @staticmethod
-    async def grant_all_skills_to_player(player_id: int) -> list:
-        """
-        Create PlayerSkill rows for all skills.
-
-        Most skills start at level 1 with 0 XP.
-        Hitpoints starts at level 10 with the XP required for level 10.
-
-        This is called when a new player is created to give them
-        all available skills. Uses INSERT ON CONFLICT for efficiency
-        and idempotency.
+        Get player's current level for a specific skill.
+        
+        Used by other services (e.g., EquipmentService) for requirement checking.
 
         Args:
             player_id: The player's database ID
+            skill_type: Skill name (e.g., "attack", "strength", "hitpoints")
 
         Returns:
-            List of all PlayerSkill records for the player
+            Current skill level, or 1 if skill not found
         """
-        gsm = get_game_state_manager()
-        return await gsm.grant_all_skills_to_player(player_id)
+        from server.src.services.game_state import get_skills_manager
+
+        skills_mgr = get_skills_manager()
+        skill_data = await skills_mgr.get_skill(player_id, skill_type)
+
+        if skill_data:
+            return skill_data.get("level", 1)
+        return 1
+
+    @staticmethod
+    async def grant_all_skills_to_player(player_id: int) -> None:
+        """
+        Create PlayerSkill rows for all skills at level 1.
+
+        Hitpoints starts at level 10 with appropriate XP.
+        Called when a new player is created.
+
+        Args:
+            player_id: The player's database ID
+        """
+        from server.src.services.game_state import get_skills_manager
+        from server.src.core.skills import xp_to_next_level, get_skill_xp_multiplier
+
+        skills_mgr = get_skills_manager()
+
+        # Grant all skills via manager
+        await skills_mgr.grant_all_skills(player_id)
+
+        # Set Hitpoints to level 10 with appropriate XP
+        hitpoints_xp = xp_to_next_level(10, get_skill_xp_multiplier(SkillType.HITPOINTS))
+        await skills_mgr.set_skill(player_id, "hitpoints", 10, hitpoints_xp)
+
+        logger.info("Granted all skills to player", extra={"player_id": player_id})
 
     @staticmethod
     async def add_experience(
@@ -87,10 +88,9 @@ class SkillService:
         xp_amount: int,
     ) -> Optional[LevelUpResult]:
         """
-        Add experience to a player's skill with transparent online/offline handling.
+        Add experience to a player's skill.
 
-        Uses GSM auto-loading to handle both online (Valkey) and offline (database) players
-        identically. All XP calculation business logic is consolidated here.
+        All XP calculation business logic is consolidated here.
 
         Args:
             player_id: The player's database ID
@@ -100,14 +100,19 @@ class SkillService:
         Returns:
             LevelUpResult with details, or None if skill not found
         """
+        from server.src.services.game_state import get_skills_manager
+        from server.src.core.skills import (
+            get_skill_xp_multiplier, level_for_xp, xp_to_next_level, MAX_LEVEL
+        )
+
         if xp_amount <= 0:
             return None
 
-        gsm = get_game_state_manager()
+        skills_mgr = get_skills_manager()
         skill_name = skill.name.lower()
 
-        # Get current skill data using auto-loading GSM
-        current_skill = await gsm.get_skill(player_id, skill)
+        # Get current skill data
+        current_skill = await skills_mgr.get_skill(player_id, skill_name)
         if not current_skill:
             logger.warning(
                 "Player skill not found",
@@ -116,25 +121,21 @@ class SkillService:
             return None
 
         # Business logic: Calculate new XP and level
-        from server.src.core.skills import (
-            get_skill_xp_multiplier, level_for_xp, xp_to_next_level, MAX_LEVEL
-        )
-        
         xp_multiplier = get_skill_xp_multiplier(skill)
         previous_level = current_skill["level"]
         previous_xp = current_skill["experience"]
-        
+
         # Calculate new XP and level
         new_xp = previous_xp + xp_amount
         new_level = level_for_xp(new_xp, xp_multiplier)
-        
+
         # Cap at max level
         if new_level > MAX_LEVEL:
             new_level = MAX_LEVEL
-        
-        # Update skill data via GSM (handles online/offline transparently)
-        await gsm.set_skill(player_id, skill, new_level, new_xp)
-        
+
+        # Update skill data via manager
+        await skills_mgr.set_skill(player_id, skill_name, new_level, new_xp)
+
         leveled_up = new_level > previous_level
         if leveled_up:
             logger.info(
@@ -161,7 +162,6 @@ class SkillService:
     async def get_player_skills(player_id: int) -> List[Dict]:
         """
         Fetch all skills for a player with computed metadata.
-        Handles both online and offline players.
 
         Args:
             player_id: The player's database ID
@@ -169,18 +169,25 @@ class SkillService:
         Returns:
             List of skill info dicts with name, category, level, xp, etc.
         """
-        gsm = get_game_state_manager()
-        
-        # Always use unified method for consistent skill metadata computation
-        # TODO: Add Valkey support for skill metadata computations
-        return await gsm.get_player_skills(player_id)
+        from server.src.services.game_state import get_skills_manager
+
+        skills_mgr = get_skills_manager()
+        skills_data = await skills_mgr.get_all_skills(player_id)
+
+        result = []
+        for skill_name, skill_data in skills_data.items():
+            result.append({
+                "name": skill_name,
+                "level": skill_data.get("level", 1),
+                "experience": skill_data.get("experience", 0),
+            })
+
+        return result
 
     @staticmethod
     async def get_total_level(player_id: int) -> int:
         """
-        Calculate the sum of all skill levels for a player using auto-loading.
-        
-        Uses GSM transparent access - no difference between online/offline players.
+        Calculate the sum of all skill levels for a player.
 
         Args:
             player_id: The player's database ID
@@ -188,25 +195,28 @@ class SkillService:
         Returns:
             Total level across all skills
         """
-        gsm = get_game_state_manager()
-        
-        # Use auto-loading GSM method - works for both online and offline players
-        skills = await gsm.get_all_skills(player_id)
-        return sum(skill_data["level"] for skill_data in skills.values())
+        from server.src.services.game_state import get_skills_manager
+
+        skills_mgr = get_skills_manager()
+        skills = await skills_mgr.get_all_skills(player_id)
+        return sum(skill_data.get("level", 1) for skill_data in skills.values())
 
     @staticmethod
     async def get_hitpoints_level(player_id: int) -> int:
         """
-        Get the player's Hitpoints skill level using auto-loading.
-        
-        Uses GSM transparent access - no difference between online/offline players.
-        This is the base max HP before equipment bonuses.
+        Get the player's Hitpoints skill level.
 
         Args:
             player_id: The player's database ID
 
         Returns:
-            Hitpoints level (minimum HITPOINTS_START_LEVEL if not found)
+            Hitpoints level, or 10 if not found
         """
-        gsm = get_game_state_manager()
-        return await gsm.get_hitpoints_level(player_id)
+        from server.src.services.game_state import get_skills_manager
+
+        skills_mgr = get_skills_manager()
+        skill_data = await skills_mgr.get_skill(player_id, "hitpoints")
+
+        if skill_data:
+            return skill_data.get("level", 10)
+        return 10

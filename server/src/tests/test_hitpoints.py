@@ -33,7 +33,7 @@ from server.src.services.skill_service import SkillService
 from server.src.services.ground_item_service import GroundItemService
 from server.src.models.item import Item
 from server.src.tests.conftest import FakeValkey
-from server.src.services.game_state_manager import GameStateManager
+from server.src.services.game_state import get_player_state_manager, get_skills_manager
 from common.src.protocol import MessageType
 
 
@@ -72,27 +72,28 @@ async def player_with_hp(
 @pytest_asyncio.fixture
 async def player_with_gsm(
     session: AsyncSession, 
-    gsm: GameStateManager,
+    game_state_managers,
     player_with_hp,
 ):
-    """Create a test player with state loaded into GSM."""
+    """Create a test player with state loaded into managers."""
     player = player_with_hp
     
-    # Register player as online in GSM
-    gsm.register_online_player(player.id, player.username)
+    player_state_manager = get_player_state_manager()
     
-    # Set up player state in GSM
-    await gsm.set_player_full_state(
+    # Register player as online
+    player_state_manager.register_online_player(player.id, player.username)
+    
+    # Set up player state
+    await player_state_manager.set_player_full_state(
         player_id=player.id,
-        x=10,
-        y=10,
-        map_id="samplemap",
-        current_hp=HITPOINTS_START_LEVEL,
-        max_hp=HITPOINTS_START_LEVEL,
+        state={
+            "x": 10,
+            "y": 10,
+            "map_id": "samplemap",
+            "current_hp": HITPOINTS_START_LEVEL,
+            "max_hp": HITPOINTS_START_LEVEL,
+        }
     )
-    
-    # Skills were already granted by player_with_hp fixture
-    # No need to duplicate the grant_all_skills_to_player_offline call
     
     return player
 
@@ -112,7 +113,7 @@ class TestHpServiceDamage:
 
     @pytest.mark.asyncio
     async def test_deal_damage_basic(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Dealing damage should reduce HP."""
         player = player_with_gsm
@@ -126,7 +127,7 @@ class TestHpServiceDamage:
 
     @pytest.mark.asyncio
     async def test_deal_damage_kills_player(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Damage exceeding HP should kill player."""
         player = player_with_gsm
@@ -140,7 +141,7 @@ class TestHpServiceDamage:
 
     @pytest.mark.asyncio
     async def test_deal_damage_exact_kill(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Damage exactly equal to HP should kill player."""
         player = player_with_gsm
@@ -153,7 +154,7 @@ class TestHpServiceDamage:
 
     @pytest.mark.asyncio
     async def test_deal_damage_negative_rejected(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Negative damage should be rejected."""
         player = player_with_gsm
@@ -165,7 +166,7 @@ class TestHpServiceDamage:
 
     @pytest.mark.asyncio
     async def test_deal_zero_damage(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Zero damage should succeed but not change HP."""
         player = player_with_gsm
@@ -182,7 +183,7 @@ class TestHpServiceHeal:
 
     @pytest.mark.asyncio
     async def test_heal_basic(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Healing should increase HP."""
         player = player_with_gsm
@@ -199,7 +200,7 @@ class TestHpServiceHeal:
 
     @pytest.mark.asyncio
     async def test_heal_capped_at_max(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Healing should not exceed max HP."""
         player = player_with_gsm
@@ -216,7 +217,7 @@ class TestHpServiceHeal:
 
     @pytest.mark.asyncio
     async def test_heal_at_full_hp(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Healing at full HP should heal 0."""
         player = player_with_gsm
@@ -229,7 +230,7 @@ class TestHpServiceHeal:
 
     @pytest.mark.asyncio
     async def test_heal_negative_rejected(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Negative healing should be rejected."""
         player = player_with_gsm
@@ -244,7 +245,7 @@ class TestHpServiceSetHp:
 
     @pytest.mark.asyncio
     async def test_set_hp(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Should set HP to specific value."""
         player = player_with_gsm
@@ -256,7 +257,7 @@ class TestHpServiceSetHp:
 
     @pytest.mark.asyncio
     async def test_set_hp_capped_at_max(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Setting HP above max should cap at max."""
         player = player_with_gsm
@@ -267,7 +268,7 @@ class TestHpServiceSetHp:
 
     @pytest.mark.asyncio
     async def test_set_hp_minimum_zero(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Setting HP below 0 should cap at 0."""
         player = player_with_gsm
@@ -287,7 +288,7 @@ class TestMaxHpCalculation:
 
     @pytest.mark.asyncio
     async def test_max_hp_base_only(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Max HP without equipment should be Hitpoints level."""
         player = player_with_gsm
@@ -298,7 +299,7 @@ class TestMaxHpCalculation:
 
     @pytest.mark.asyncio
     async def test_max_hp_with_health_bonus(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm, items_synced
+        self, session: AsyncSession, game_state_managers, player_with_gsm, items_synced
     ):
         """Max HP with health bonus equipment should increase."""
         player = player_with_gsm
@@ -364,7 +365,7 @@ class TestDeathHandling:
 
     @pytest.mark.asyncio
     async def test_handle_death_drops_items(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm, items_synced
+        self, session: AsyncSession, game_state_managers, player_with_gsm, items_synced
     ):
         """Death should drop all inventory items."""
         player = player_with_gsm
@@ -385,7 +386,7 @@ class TestDeathHandling:
 
     @pytest.mark.asyncio
     async def test_death_clears_inventory(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm, items_synced
+        self, session: AsyncSession, game_state_managers, player_with_gsm, items_synced
     ):
         """Death should clear player inventory."""
         player = player_with_gsm
@@ -413,7 +414,7 @@ class TestRespawn:
 
     @pytest.mark.asyncio
     async def test_respawn_restores_full_hp(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Respawn should restore player to full HP."""
         player = player_with_gsm
@@ -429,7 +430,7 @@ class TestRespawn:
 
     @pytest.mark.asyncio
     async def test_respawn_updates_gsm(
-        self, session: AsyncSession, gsm: GameStateManager, player_with_gsm
+        self, session: AsyncSession, game_state_managers, player_with_gsm
     ):
         """Respawn should update position and HP in GSM."""
         player = player_with_gsm

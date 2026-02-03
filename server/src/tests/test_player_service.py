@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Dict, Any
 
 from server.src.services.player_service import PlayerService
-from server.src.services.game_state_manager import GameStateManager
 from server.src.schemas.player import PlayerCreate, PlayerRole
 from server.src.models.player import Player
 from fastapi import HTTPException
@@ -21,7 +20,7 @@ class TestPlayerCreation:
     """Tests for PlayerService.create_player()"""
 
     @pytest.mark.asyncio
-    async def test_create_player_success(self, gsm: GameStateManager, session):
+    async def test_create_player_success(self, game_state_managers, session):
         """Test successful player creation."""
         player_data = PlayerCreate(username="new_test_player", password="password123")
         
@@ -34,7 +33,7 @@ class TestPlayerCreation:
         assert player.id is not None
 
     @pytest.mark.asyncio
-    async def test_create_player_default_position(self, gsm: GameStateManager, session):
+    async def test_create_player_default_position(self, game_state_managers, session):
         """Test player creation with default position."""
         player_data = PlayerCreate(username="default_pos_player", password="password123")
         
@@ -46,7 +45,7 @@ class TestPlayerCreation:
         assert player.map_id is not None
 
     @pytest.mark.asyncio
-    async def test_create_player_duplicate_username(self, gsm: GameStateManager, session):
+    async def test_create_player_duplicate_username(self, game_state_managers, session):
         """Test that duplicate username raises HTTPException."""
         player_data = PlayerCreate(username="duplicate_test", password="password123")
         
@@ -65,7 +64,7 @@ class TestPlayerLogin:
     """Tests for PlayerService.login_player()"""
 
     @pytest.mark.asyncio
-    async def test_login_player_success(self, gsm: GameStateManager, create_test_player):
+    async def test_login_player_success(self, game_state_managers, create_test_player):
         """Test successful player login."""
         player = await create_test_player("login_test_user", "password123")
         
@@ -78,7 +77,7 @@ class TestPlayerLogin:
         assert gsm.is_online(player.id)
 
     @pytest.mark.asyncio
-    async def test_login_loads_player_state(self, gsm: GameStateManager, create_test_player):
+    async def test_login_loads_player_state(self, game_state_managers, create_test_player):
         """Test that login loads player state into GSM."""
         player = await create_test_player("state_load_test", "password123")
         
@@ -96,7 +95,7 @@ class TestPlayerLogout:
     """Tests for PlayerService.logout_player()"""
 
     @pytest.mark.asyncio
-    async def test_logout_player_success(self, gsm: GameStateManager, create_test_player):
+    async def test_logout_player_success(self, game_state_managers, create_test_player):
         """Test successful player logout."""
         player = await create_test_player("logout_test_user", "password123")
         
@@ -111,7 +110,7 @@ class TestGetPlayerByUsername:
     """Tests for PlayerService.get_player_by_username()"""
 
     @pytest.mark.asyncio
-    async def test_get_existing_player(self, gsm: GameStateManager, create_test_player):
+    async def test_get_existing_player(self, game_state_managers, create_test_player):
         """Test getting an existing player by username."""
         original = await create_test_player("get_by_username_test", "password123")
         
@@ -122,7 +121,7 @@ class TestGetPlayerByUsername:
         assert player.username == "get_by_username_test"
 
     @pytest.mark.asyncio
-    async def test_get_nonexistent_player(self, gsm: GameStateManager):
+    async def test_get_nonexistent_player(self, game_state_managers):
         """Test getting a non-existent player returns None."""
         player = await PlayerService.get_player_by_username("nonexistent_username_12345")
         
@@ -133,7 +132,7 @@ class TestGetPlayerById:
     """Tests for PlayerService.get_player_by_id()"""
 
     @pytest.mark.asyncio
-    async def test_get_existing_player_by_id(self, gsm: GameStateManager, create_test_player):
+    async def test_get_existing_player_by_id(self, game_state_managers, create_test_player):
         """Test getting an existing player by ID."""
         original = await create_test_player("get_by_id_test", "password123")
         
@@ -144,7 +143,7 @@ class TestGetPlayerById:
         assert player.username == "get_by_id_test"
 
     @pytest.mark.asyncio
-    async def test_get_nonexistent_player_by_id(self, gsm: GameStateManager):
+    async def test_get_nonexistent_player_by_id(self, game_state_managers):
         """Test getting a non-existent player by ID returns None."""
         player = await PlayerService.get_player_by_id(99999)
         
@@ -154,7 +153,7 @@ class TestGetPlayerById:
 class TestIsPlayerOnline:
     """Tests for PlayerService.is_player_online()"""
 
-    def test_online_player(self, gsm: GameStateManager):
+    def test_online_player(self, game_state_managers):
         """Test that online player returns True."""
         gsm.register_online_player(123, "online_test")
         
@@ -162,7 +161,7 @@ class TestIsPlayerOnline:
         
         assert result is True
 
-    def test_offline_player(self, gsm: GameStateManager):
+    def test_offline_player(self, game_state_managers):
         """Test that offline player returns False."""
         result = PlayerService.is_player_online(99999)
         
@@ -173,7 +172,7 @@ class TestGetPlayerPosition:
     """Tests for PlayerService.get_player_position()"""
 
     @pytest.mark.asyncio
-    async def test_get_position_online_player(self, gsm: GameStateManager, create_test_player):
+    async def test_get_position_online_player(self, game_state_managers, create_test_player):
         """Test getting position for online player."""
         player = await create_test_player("position_test", "password123")
         
@@ -188,7 +187,7 @@ class TestGetPlayerPosition:
         assert position["map_id"] == "samplemap"
 
     @pytest.mark.asyncio
-    async def test_get_position_offline_player(self, gsm: GameStateManager):
+    async def test_get_position_offline_player(self, game_state_managers):
         """Test getting position for offline player returns None."""
         position = await PlayerService.get_player_position(99999)
         
@@ -199,7 +198,7 @@ class TestGetNearbyPlayers:
     """Tests for PlayerService.get_nearby_players()"""
 
     @pytest.mark.asyncio
-    async def test_get_nearby_players_same_map(self, gsm: GameStateManager, create_test_player):
+    async def test_get_nearby_players_same_map(self, game_state_managers, create_test_player):
         """Test finding nearby players on the same map."""
         player1 = await create_test_player("nearby_test1", "password123")
         player2 = await create_test_player("nearby_test2", "password123")
@@ -215,7 +214,7 @@ class TestGetNearbyPlayers:
         assert player2.id in nearby_ids
 
     @pytest.mark.asyncio
-    async def test_get_nearby_players_different_map(self, gsm: GameStateManager, create_test_player):
+    async def test_get_nearby_players_different_map(self, game_state_managers, create_test_player):
         """Test that players on different maps are not nearby."""
         player1 = await create_test_player("map_test1", "password123")
         player2 = await create_test_player("map_test2", "password123")
@@ -231,7 +230,7 @@ class TestGetNearbyPlayers:
         assert player2.id not in nearby_ids
 
     @pytest.mark.asyncio
-    async def test_get_nearby_players_out_of_range(self, gsm: GameStateManager, create_test_player):
+    async def test_get_nearby_players_out_of_range(self, game_state_managers, create_test_player):
         """Test that players far away are not nearby."""
         player1 = await create_test_player("range_test1", "password123")
         player2 = await create_test_player("range_test2", "password123")
@@ -247,7 +246,7 @@ class TestGetNearbyPlayers:
         assert player2.id not in nearby_ids
 
     @pytest.mark.asyncio
-    async def test_get_nearby_players_excludes_self(self, gsm: GameStateManager, create_test_player):
+    async def test_get_nearby_players_excludes_self(self, game_state_managers, create_test_player):
         """Test that player is not in their own nearby list."""
         player = await create_test_player("self_test", "password123")
         
@@ -264,7 +263,7 @@ class TestValidatePlayerPositionAccess:
     """Tests for PlayerService.validate_player_position_access()"""
 
     @pytest.mark.asyncio
-    async def test_valid_access_same_area(self, gsm: GameStateManager, create_test_player):
+    async def test_valid_access_same_area(self, game_state_managers, create_test_player):
         """Test that access is valid for nearby position."""
         player = await create_test_player("access_test", "password123")
         
@@ -277,7 +276,7 @@ class TestValidatePlayerPositionAccess:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_invalid_access_wrong_map(self, gsm: GameStateManager, create_test_player):
+    async def test_invalid_access_wrong_map(self, game_state_managers, create_test_player):
         """Test that access is denied for different map."""
         player = await create_test_player("wrong_map_test", "password123")
         
@@ -290,7 +289,7 @@ class TestValidatePlayerPositionAccess:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_invalid_access_too_far(self, gsm: GameStateManager, create_test_player):
+    async def test_invalid_access_too_far(self, game_state_managers, create_test_player):
         """Test that access is denied for distant position."""
         player = await create_test_player("far_pos_test", "password123")
         
@@ -303,7 +302,7 @@ class TestValidatePlayerPositionAccess:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_invalid_access_offline_player(self, gsm: GameStateManager):
+    async def test_invalid_access_offline_player(self, game_state_managers):
         """Test that access is denied for offline player."""
         result = await PlayerService.validate_player_position_access(
             99999, "samplemap", 50, 50
@@ -316,7 +315,7 @@ class TestGetPlayerRole:
     """Tests for PlayerService.get_player_role()"""
 
     @pytest.mark.asyncio
-    async def test_get_player_role(self, gsm: GameStateManager, create_test_player):
+    async def test_get_player_role(self, game_state_managers, create_test_player):
         """Test getting player role."""
         player = await create_test_player("role_test", "password123")
         
@@ -329,7 +328,7 @@ class TestGetPlayerRole:
             assert role == PlayerRole.ADMIN
 
     @pytest.mark.asyncio
-    async def test_get_player_role_default(self, gsm: GameStateManager, create_test_player):
+    async def test_get_player_role_default(self, game_state_managers, create_test_player):
         """Test getting default player role."""
         player = await create_test_player("default_role_test", "password123")
         
@@ -341,7 +340,7 @@ class TestGetPlayerRole:
             assert role == PlayerRole.PLAYER
 
     @pytest.mark.asyncio
-    async def test_get_player_role_none(self, gsm: GameStateManager):
+    async def test_get_player_role_none(self, game_state_managers):
         """Test getting role for non-existent player."""
         with patch.object(gsm, "get_player_permissions", new_callable=AsyncMock) as mock_perm:
             mock_perm.return_value = None
@@ -355,7 +354,7 @@ class TestCheckGlobalChatPermission:
     """Tests for PlayerService.check_global_chat_permission()"""
 
     @pytest.mark.asyncio
-    async def test_admin_has_global_chat_permission(self, gsm: GameStateManager, create_test_player):
+    async def test_admin_has_global_chat_permission(self, game_state_managers, create_test_player):
         """Test that admin has global chat permission."""
         player = await create_test_player("admin_chat_test", "password123")
         
@@ -371,7 +370,7 @@ class TestCheckGlobalChatPermission:
                 assert result is True
 
     @pytest.mark.asyncio
-    async def test_player_no_global_chat_permission(self, gsm: GameStateManager, create_test_player):
+    async def test_player_no_global_chat_permission(self, game_state_managers, create_test_player):
         """Test that regular player lacks global chat permission."""
         player = await create_test_player("player_chat_test", "password123")
         
@@ -387,7 +386,7 @@ class TestCheckGlobalChatPermission:
                 assert result is False
 
     @pytest.mark.asyncio
-    async def test_global_chat_disabled(self, gsm: GameStateManager, create_test_player):
+    async def test_global_chat_disabled(self, game_state_managers, create_test_player):
         """Test that global chat is denied when disabled."""
         player = await create_test_player("disabled_chat_test", "password123")
         
@@ -403,7 +402,7 @@ class TestGetUsernameByPlayerId:
     """Tests for PlayerService.get_username_by_player_id()"""
 
     @pytest.mark.asyncio
-    async def test_get_username_online_player(self, gsm: GameStateManager, create_test_player):
+    async def test_get_username_online_player(self, game_state_managers, create_test_player):
         """Test getting username for online player (fast path)."""
         player = await create_test_player("username_lookup_test", "password123")
         
@@ -412,7 +411,7 @@ class TestGetUsernameByPlayerId:
         assert username == "username_lookup_test"
 
     @pytest.mark.asyncio
-    async def test_get_username_nonexistent_player(self, gsm: GameStateManager):
+    async def test_get_username_nonexistent_player(self, game_state_managers):
         """Test getting username for non-existent player."""
         username = await PlayerService.get_username_by_player_id(99999)
         
@@ -423,7 +422,7 @@ class TestDeletePlayer:
     """Tests for PlayerService.delete_player()"""
 
     @pytest.mark.asyncio
-    async def test_delete_existing_player(self, gsm: GameStateManager, session):
+    async def test_delete_existing_player(self, game_state_managers, session):
         """Test deleting an existing player."""
         # Create player directly
         player_data = PlayerCreate(username="delete_test_player", password="password123")
@@ -439,7 +438,7 @@ class TestDeletePlayer:
         assert deleted_player is None
 
     @pytest.mark.asyncio
-    async def test_delete_nonexistent_player(self, gsm: GameStateManager):
+    async def test_delete_nonexistent_player(self, game_state_managers):
         """Test deleting a non-existent player."""
         result = await PlayerService.delete_player(99999)
         
@@ -450,7 +449,7 @@ class TestGetPlayerDataById:
     """Tests for PlayerService.get_player_data_by_id() - alias test"""
 
     @pytest.mark.asyncio
-    async def test_get_player_data_by_id(self, gsm: GameStateManager, create_test_player):
+    async def test_get_player_data_by_id(self, game_state_managers, create_test_player):
         """Test that get_player_data_by_id works as alias."""
         player = await create_test_player("data_by_id_test", "password123")
         
@@ -465,7 +464,7 @@ class TestGetPlayersOnMap:
     """Tests for PlayerService.get_players_on_map()"""
 
     @pytest.mark.asyncio
-    async def test_get_players_on_map_returns_players(self, gsm: GameStateManager, create_test_player):
+    async def test_get_players_on_map_returns_players(self, game_state_managers, create_test_player):
         """Test getting players on a specific map."""
         player1 = await create_test_player("map_player1", "password123")
         player2 = await create_test_player("map_player2", "password123")
@@ -489,7 +488,7 @@ class TestGetPlayersOnMap:
                 assert player["y"] == 50
 
     @pytest.mark.asyncio
-    async def test_get_players_on_map_filters_by_map(self, gsm: GameStateManager, create_test_player):
+    async def test_get_players_on_map_filters_by_map(self, game_state_managers, create_test_player):
         """Test that only players on specified map are returned."""
         player1 = await create_test_player("filter_test1", "password123")
         player2 = await create_test_player("filter_test2", "password123")
@@ -511,14 +510,14 @@ class TestGetPlayersOnMap:
         assert player2.id not in ids_on_a
 
     @pytest.mark.asyncio
-    async def test_get_players_on_map_empty(self, gsm: GameStateManager):
+    async def test_get_players_on_map_empty(self, game_state_managers):
         """Test getting players on a map with no players."""
         players = await PlayerService.get_players_on_map("nonexistent_map_12345")
         
         assert players == []
 
     @pytest.mark.asyncio
-    async def test_get_players_on_map_includes_position(self, gsm: GameStateManager, create_test_player):
+    async def test_get_players_on_map_includes_position(self, game_state_managers, create_test_player):
         """Test that returned player data includes position."""
         player = await create_test_player("pos_check_test", "password123")
         

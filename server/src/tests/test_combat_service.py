@@ -1,7 +1,7 @@
 """
 Unit tests for CombatService.
 
-Tests RuneScape-style combat mechanics including:
+Tests classic RPG combat mechanics including:
 - Hit chance calculations
 - Max hit calculations
 - Damage rolls

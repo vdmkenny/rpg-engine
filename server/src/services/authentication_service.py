@@ -12,7 +12,7 @@ from ..core.security import verify_token, verify_password
 from ..core.logging_config import get_logger
 from ..models.player import Player
 from .player_service import PlayerService
-from .game_state_manager import get_game_state_manager
+from .game_state import get_player_state_manager
 
 logger = get_logger(__name__)
 
@@ -49,7 +49,7 @@ class AuthenticationService:
                 return None
 
             # Verify password
-            if not verify_password(password, player.hashed_password):
+            if not verify_password(password, player["hashed_password"]):
                 logger.debug(
                     "Authentication failed - invalid password",
                     extra={"username": username}
@@ -57,17 +57,17 @@ class AuthenticationService:
                 return None
 
             # Check if player is banned
-            if player.is_banned:
+            if player.get("is_banned", False):
                 logger.warning(
                     "Authentication failed - player banned",
-                    extra={"username": username, "player_id": player.id}
+                    extra={"username": username, "player_id": player["id"]}
                 )
                 raise PermissionError("Player is banned")
 
             # Check if player is timed out
-            if player.timeout_until:
+            timeout_until = player.get("timeout_until")
+            if timeout_until:
                 # Handle both timezone-aware and naive datetimes
-                timeout_until = player.timeout_until
                 if timeout_until.tzinfo is None:
                     timeout_until = timeout_until.replace(tzinfo=timezone.utc)
                 if timeout_until > datetime.now(timezone.utc):
@@ -75,15 +75,15 @@ class AuthenticationService:
                         "Authentication failed - player timed out",
                         extra={
                             "username": username,
-                            "player_id": player.id,
-                            "timeout_until": str(player.timeout_until)
+                            "player_id": player["id"],
+                            "timeout_until": str(timeout_until)
                         }
                     )
-                    raise ValueError(f"Player is timed out until {player.timeout_until}")
+                    raise ValueError(f"Player is timed out until {timeout_until}")
 
             logger.info(
                 "User authentication successful",
-                extra={"username": username, "player_id": player.id}
+                extra={"username": username, "player_id": player["id"]}
             )
 
             return player
@@ -174,24 +174,25 @@ class AuthenticationService:
                 return None
 
             # Check if player is banned
-            if player.is_banned:
+            if player.get("is_banned", False):
                 logger.warning(
                     "WebSocket authentication failed - player banned",
-                    extra={"username": username, "player_id": player.id}
+                    extra={"username": username, "player_id": player["id"]}
                 )
                 return None
 
             # Check if player is timed out (timeout_until is a datetime)
-            if player.timeout_until and player.timeout_until > datetime.now(timezone.utc):
+            timeout_until = player.get("timeout_until")
+            if timeout_until and timeout_until > datetime.now(timezone.utc):
                 logger.warning(
                     "WebSocket authentication failed - player timed out",
-                    extra={"username": username, "player_id": player.id}
+                    extra={"username": username, "player_id": player["id"]}
                 )
                 return None
 
             logger.info(
                 "WebSocket authentication successful",
-                extra={"username": username, "player_id": player.id}
+                extra={"username": username, "player_id": player["id"]}
             )
 
             return player
@@ -208,35 +209,42 @@ class AuthenticationService:
 
     @staticmethod
     async def load_player_for_session(
-        player: Player
+        player: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Load complete player data for WebSocket session initialization.
 
         Args:
-            player: Authenticated player
+            player: Authenticated player dict
 
         Returns:
             Dict with complete player session data
         """
+        player_id = player["id"]
+        username = player["username"]
+        
         try:
             # Register player as online and load state
-            await PlayerService.login_player(player)
+            from ..models.player import Player
+            player_model = Player()
+            player_model.id = player_id
+            player_model.username = username
+            await PlayerService.login_player(player_model)
 
             # Get initial position data
-            position_data = await PlayerService.get_player_position(player.id)
+            position_data = await PlayerService.get_player_position(player_id)
             
             # Get basic stats (HP, etc.)
-            state_manager = get_game_state_manager()
-            hp_data = await state_manager.get_player_hp(player.id)
+            player_mgr = get_player_state_manager()
+            hp_data = await player_mgr.get_player_hp(player_id)
 
             session_data = {
-                "player_id": player.id,
-                "username": player.username,
+                "player_id": player_id,
+                "username": username,
                 "position": position_data or {
-                    "x": player.x_coord,
-                    "y": player.y_coord,
-                    "map_id": player.map_id
+                    "x": player.get("x_coord", 10),
+                    "y": player.get("y_coord", 10),
+                    "map_id": player.get("map_id", "samplemap")
                 },
                 "hp": hp_data or {
                     "current_hp": 100,
@@ -248,8 +256,8 @@ class AuthenticationService:
             logger.info(
                 "Player session loaded successfully",
                 extra={
-                    "player_id": player.id,
-                    "username": player.username
+                    "player_id": player_id,
+                    "username": username
                 }
             )
 
@@ -259,20 +267,20 @@ class AuthenticationService:
             logger.error(
                 "Error loading player session data",
                 extra={
-                    "player_id": player.id,
-                    "username": player.username,
+                    "player_id": player_id,
+                    "username": username,
                     "error": str(e),
                     "traceback": traceback.format_exc(),
                 }
             )
             # Return minimal session data on error
             return {
-                "player_id": player.id,
-                "username": player.username,
+                "player_id": player_id,
+                "username": username,
                 "position": {
-                    "x": player.x_coord,
-                    "y": player.y_coord,
-                    "map_id": player.map_id
+                    "x": player.get("x_coord", 10),
+                    "y": player.get("y_coord", 10),
+                    "map_id": player.get("map_id", "samplemap")
                 },
                 "hp": {
                     "current_hp": 100,

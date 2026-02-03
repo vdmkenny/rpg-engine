@@ -25,7 +25,12 @@ from server.src.core.metrics import (
     game_state_broadcasts_total,
 )
 from server.src.services.map_service import get_map_manager
-from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.game_state import (
+    get_player_state_manager,
+    get_entity_manager,
+    get_batch_sync_coordinator,
+    get_reference_data_manager,
+)
 from server.src.services.visibility_service import get_visibility_service
 from server.src.services.visual_registry import get_visual_registry
 from server.src.services.ai_service import AIService
@@ -205,13 +210,13 @@ def is_in_visible_range(
             abs(target_y - player_y) <= visible_range)
 
 
-def _build_equipped_items_map(equipment: Optional[Dict[str, Dict]], gsm) -> Optional[Dict[str, str]]:
+def _build_equipped_items_map(equipment: Optional[Dict[str, Dict]], reference_mgr) -> Optional[Dict[str, str]]:
     """
     Convert equipment data to slot->item_name mapping for paperdoll rendering.
     
     Args:
         equipment: Dict of {slot: {item_id, quantity, ...}}
-        gsm: GameStateManager for item cache lookup
+        reference_mgr: ReferenceDataManager for item cache lookup
         
     Returns:
         Dict of {slot: item_name} or None if no equipment
@@ -224,7 +229,7 @@ def _build_equipped_items_map(equipment: Optional[Dict[str, Dict]], gsm) -> Opti
         item_id = item_data.get("item_id")
         if not item_id:
             continue
-        item_meta = gsm.get_cached_item_meta(item_id)
+        item_meta = reference_mgr.get_item_meta(item_id)
         if not item_meta:
             continue
         equipped_items[slot] = item_meta.get("name", "")
@@ -412,7 +417,8 @@ def get_visible_npc_entities(
 
 
 async def _process_auto_attacks(
-    gsm,
+    player_mgr,
+    entity_mgr,
     manager: ConnectionManager,
     tick_counter: int
 ) -> None:
@@ -422,14 +428,15 @@ async def _process_auto_attacks(
     Called every game tick (20 TPS = 50ms per tick).
     
     Args:
-        gsm: GameStateManager instance
+        player_mgr: PlayerStateManager instance
+        entity_mgr: EntityManager instance
         manager: ConnectionManager for broadcasting
         tick_counter: Current tick number
     """
     from ..services.combat_service import CombatService
     from ..services.player_service import PlayerService
     
-    players_in_combat = await gsm.get_all_players_in_combat()
+    players_in_combat = await player_mgr.get_all_players_in_combat()
     
     for combat_entry in players_in_combat:
         player_id = combat_entry["player_id"]
@@ -447,15 +454,15 @@ async def _process_auto_attacks(
                 continue  # Not ready to attack yet
             
             # Get player position
-            player_pos = await gsm.get_player_position(player_id)
+            player_pos = await player_mgr.get_player_position(player_id)
             if not player_pos:
-                await gsm.clear_player_combat_state(player_id)
+                await player_mgr.clear_player_combat_state(player_id)
                 continue
             
             # Check if player is still alive
-            player_hp = await gsm.get_player_hp(player_id)
+            player_hp = await player_mgr.get_player_hp(player_id)
             if not player_hp or player_hp["current_hp"] <= 0:
-                await gsm.clear_player_combat_state(player_id)
+                await player_mgr.clear_player_combat_state(player_id)
                 continue
             
             # Get target position and validate
@@ -464,9 +471,9 @@ async def _process_auto_attacks(
             target_id = combat_state["target_id"]
             
             if target_type == CombatTargetType.ENTITY:
-                target_data = await gsm.get_entity_instance(target_id)
+                target_data = await entity_mgr.get_entity_instance(target_id)
                 if not target_data:
-                    await gsm.clear_player_combat_state(player_id)
+                    await player_mgr.clear_player_combat_state(player_id)
                     continue
                 
                 target_x = target_data["x"]
@@ -475,7 +482,7 @@ async def _process_auto_attacks(
                 
                 # Check if target is on same map
                 if target_map_id != player_pos["map_id"]:
-                    await gsm.clear_player_combat_state(player_id)
+                    await player_mgr.clear_player_combat_state(player_id)
                     continue
                 
                 # Check range (melee = 1 tile)
@@ -485,7 +492,7 @@ async def _process_auto_attacks(
                 )
                 
                 if distance > 1:  # Melee range
-                    await gsm.clear_player_combat_state(player_id)
+                    await player_mgr.clear_player_combat_state(player_id)
                     continue
                 
                 # Execute attack
@@ -498,12 +505,10 @@ async def _process_auto_attacks(
                 
                 if result.success:
                     # Update last attack tick
-                    await gsm.set_player_combat_state(
-                        player_id=player_id,
-                        target_type=target_type,
-                        target_id=target_id,
-                        last_attack_tick=tick_counter,
-                        attack_speed=attack_speed,
+                    await player_mgr.set_player_combat_state(
+                        player_id,
+                        target_type.value,
+                        target_id
                     )
                     
                     # Get username for display in combat event
@@ -534,10 +539,10 @@ async def _process_auto_attacks(
                     
                     # Clear combat if target died
                     if result.defender_died:
-                        await gsm.clear_player_combat_state(player_id)
+                        await player_mgr.clear_player_combat_state(player_id)
                 else:
                     # Attack failed, clear combat state
-                    await gsm.clear_player_combat_state(player_id)
+                    await player_mgr.clear_player_combat_state(player_id)
             
             # TODO: Handle player vs player combat when implemented
             
@@ -552,7 +557,7 @@ async def _process_auto_attacks(
                 }
             )
             # Clear combat state on error
-            await gsm.clear_player_combat_state(player_id)
+            await player_mgr.clear_player_combat_state(player_id)
 
 
 async def send_chunk_update_if_needed(
@@ -733,13 +738,14 @@ async def _handle_player_death(
     from server.src.services.hp_service import HpService
     
     try:
-        gsm = get_game_state_manager()
+        player_mgr = get_player_state_manager()
+        entity_mgr = get_entity_manager()
         
         # Clear player's combat state immediately
-        await gsm.clear_player_combat_state(player_id)
+        await player_mgr.clear_player_combat_state(player_id)
         
         # Clear all entities targeting this player
-        await AIService.clear_entities_targeting_player(gsm, map_id, player_id)
+        await AIService.clear_entities_targeting_player(entity_mgr, map_id, player_id)
         
         # Create broadcast callback for death/respawn events
         async def broadcast_callback(message_type: str, payload: dict, username: str):
@@ -847,8 +853,8 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
             # Periodic batch sync of dirty data to database
             if current_tick % db_sync_interval == 0:
                 try:
-                    gsm = get_game_state_manager()
-                    await gsm.batch_ops.sync_all()
+                    sync_coordinator = get_batch_sync_coordinator()
+                    await sync_coordinator.sync_all()
                 except Exception as sync_error:
                     logger.error(
                         "Batch sync failed",
@@ -861,8 +867,8 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
 
             # Process entity respawn queue (every tick)
             try:
-                gsm = get_game_state_manager()
-                await EntitySpawnService.check_respawn_queue(gsm)
+                entity_mgr = get_entity_manager()
+                await EntitySpawnService.check_respawn_queue(entity_mgr)
             except Exception as respawn_error:
                 logger.error(
                     "Entity respawn processing failed",
@@ -884,7 +890,9 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 player_ids = list(map_connections.keys())
                 logger.debug(f"[GAMELOOP] Processing map {map_id} with {len(player_ids)} players: {player_ids}")
                 
-                gsm = get_game_state_manager()
+                player_mgr = get_player_state_manager()
+                entity_mgr = get_entity_manager()
+                reference_mgr = get_reference_data_manager()
                 visibility_service = get_visibility_service()
                 visual_registry = get_visual_registry()
                 
@@ -896,7 +904,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 # Fetch player states directly by player_id
                 for player_id in player_ids:
                     # Get player state directly using player_id
-                    data = await gsm.get_player_full_state(player_id)
+                    data = await player_mgr.get_player_full_state(player_id)
                     if data:
                         x = int(data.get("x", 0))
                         y = int(data.get("y", 0))
@@ -922,7 +930,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         
                         # Get equipped items for paperdoll rendering
                         equipment = await EquipmentService.get_equipment_raw(player_id)
-                        equipped_items = _build_equipped_items_map(equipment, gsm)
+                        equipped_items = _build_equipped_items_map(equipment, reference_mgr)
                         
                         # Build visual state and register with visual registry
                         visual_state = _build_visual_state(appearance, equipped_items)
@@ -948,19 +956,19 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     await HpService.batch_regenerate_hp(hp_updates)
 
                 # Process dying entities (death animation completion)
-                entity_instances = await gsm.get_map_entities(map_id)
+                entity_instances = await entity_mgr.get_map_entities(map_id)
                 for entity in entity_instances:
                     if entity.get("state") == EntityState.DYING.value:
                         death_tick = int(entity.get("death_tick", 0))
                         if current_tick >= death_tick:
                             # Death animation complete, finalize death
-                            await gsm.finalize_entity_death(entity["id"])
+                            await entity_mgr.finalize_entity_death(entity["id"])
                             # Clean up AI timer state for dead entity
                             AIService.cleanup_entity_timers(entity["id"])
 
                 # Process entity AI for this map
                 entity_combat_events = await AIService.process_entities(
-                    gsm=gsm,
+                    entity_mgr=entity_mgr,
                     map_id=map_id,
                     current_tick=current_tick,
                 )
@@ -1008,7 +1016,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             state.track_task(task)
 
                 # Process auto-attacks for all players in combat
-                await _process_auto_attacks(gsm, manager, current_tick)
+                await _process_auto_attacks(player_mgr, entity_mgr, manager, current_tick)
 
                 # For each connected player, compute and send their personalized diff
                 for player_id in player_ids:
@@ -1031,7 +1039,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     )
                     
                     # Get entity instances visible to this player
-                    entity_instances = await gsm.get_map_entities(map_id)
+                    entity_instances = await entity_mgr.get_map_entities(map_id)
                     current_visible_entities = get_visible_npc_entities(
                         player_x, player_y, entity_instances
                     )

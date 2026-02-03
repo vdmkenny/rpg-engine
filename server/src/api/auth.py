@@ -18,7 +18,7 @@ from server.src.services.map_service import get_map_manager
 from server.src.services.skill_service import SkillService
 from server.src.services.player_service import PlayerService
 from server.src.services.authentication_service import AuthenticationService
-from server.src.services.game_state_manager import get_game_state_manager
+from server.src.services.game_state import get_player_state_manager
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -134,8 +134,8 @@ async def login_for_access_token(
 
     # Check server capacity (admins and moderators bypass capacity limits)
     if player.role not in ["ADMIN", "MODERATOR"]:
-        gsm = get_game_state_manager()
-        current_players = gsm.get_active_player_count()
+        player_mgr = get_player_state_manager()
+        current_players = player_mgr.get_active_player_count()
         
         if current_players >= settings.MAX_PLAYERS:
             logger.warning(

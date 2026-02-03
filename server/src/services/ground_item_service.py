@@ -13,12 +13,9 @@ Ground items are stored in Valkey (via GSM) and synced to PostgreSQL periodicall
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import select
-
 from ..core.config import settings
 from ..core.items import ItemRarity
 from ..core.logging_config import get_logger
-from ..models.item import Item
 from ..schemas.item import (
     DropItemResult,
     PickupItemResult,
@@ -30,7 +27,9 @@ from ..schemas.service_results import (
     GroundItemServiceResult,
     ServiceErrorCodes
 )
-from .game_state_manager import get_game_state_manager
+from .game_state import get_ground_item_manager, get_inventory_manager, get_equipment_manager
+from .inventory_service import InventoryService
+from .equipment_service import EquipmentService
 from .item_service import ItemService
 
 logger = get_logger(__name__)
@@ -74,9 +73,8 @@ class GroundItemService:
         Returns:
             The ground item ID or None if item not found
         """
-        gsm = get_game_state_manager()
+        ground_item_mgr = get_ground_item_manager()
 
-        # Get item info for rarity-based timers
         item = await ItemService.get_item_by_id(item_id)
 
         if not item:
@@ -86,20 +84,16 @@ class GroundItemService:
             )
             return None
 
-        # Calculate timers based on business rules (STAYS IN SERVICE LAYER)
         current_time = datetime.now(timezone.utc).timestamp()
         despawn_seconds = GroundItemService._get_despawn_seconds(item.rarity)
 
-        # World spawns vs player drops (BUSINESS RULE)
         if dropped_by:
-            # Player dropped - apply loot protection
             protection_seconds = GroundItemService._get_protection_seconds(item.rarity)
             loot_protection_expires_at = current_time + protection_seconds
         else:
-            # World spawn - immediately public
             loot_protection_expires_at = current_time
 
-        ground_item_id = await gsm.add_ground_item(
+        ground_item_id = await ground_item_mgr.add_ground_item(
             map_id=map_id,
             x=x,
             y=y,
@@ -149,10 +143,9 @@ class GroundItemService:
         Returns:
             DropItemResult with success status
         """
-        gsm = get_game_state_manager()
+        inventory_mgr = get_inventory_manager()
 
-        # Get the inventory item from GSM
-        slot_data = await gsm.get_inventory_slot(player_id, inventory_slot)
+        slot_data = await inventory_mgr.get_inventory_slot(player_id, inventory_slot)
         if not slot_data:
             return DropItemResult(
                 success=False,
@@ -163,7 +156,6 @@ class GroundItemService:
         current_quantity = slot_data["quantity"]
         durability = slot_data.get("current_durability")
 
-        # Determine quantity to drop
         drop_quantity = quantity if quantity is not None else current_quantity
         if drop_quantity <= 0:
             return DropItemResult(
@@ -176,7 +168,6 @@ class GroundItemService:
                 message=f"Not enough items (have {current_quantity}, want to drop {drop_quantity})",
             )
 
-        # Get item info for ground item creation
         item = await ItemService.get_item_by_id(item_id)
 
         if not item:
@@ -185,13 +176,12 @@ class GroundItemService:
                 message="Item not found",
             )
 
-        # Calculate timers for player drops (STAYS IN SERVICE LAYER)
         current_time = datetime.now(timezone.utc).timestamp()
         protection_seconds = GroundItemService._get_protection_seconds(item.rarity)
         despawn_seconds = GroundItemService._get_despawn_seconds(item.rarity)
 
-        # Create ground item
-        ground_item_id = await gsm.add_ground_item(
+        ground_item_mgr = get_ground_item_manager()
+        ground_item_id = await ground_item_mgr.add_ground_item(
             map_id=map_id,
             x=x,
             y=y,
@@ -209,11 +199,10 @@ class GroundItemService:
                 message="Failed to create ground item",
             )
 
-        # Update or remove from inventory
         if drop_quantity >= current_quantity:
-            await gsm.delete_inventory_slot(player_id, inventory_slot)
+            await inventory_mgr.delete_inventory_slot(player_id, inventory_slot)
         else:
-            await gsm.set_inventory_slot(
+            await inventory_mgr.set_inventory_slot(
                 player_id,
                 inventory_slot,
                 item_id,
@@ -262,13 +251,10 @@ class GroundItemService:
         Returns:
             PickupItemResult with success status and detailed error messages
         """
-        from .inventory_service import InventoryService
-        
-        gsm = get_game_state_manager()
+        ground_item_mgr = get_ground_item_manager()
         now = datetime.now(timezone.utc).timestamp()
 
-        # Get the ground item from GSM
-        ground_item = await gsm.get_ground_item(ground_item_id)
+        ground_item = await ground_item_mgr.get_ground_item(ground_item_id)
 
         if not ground_item:
             return PickupItemResult(
@@ -276,29 +262,25 @@ class GroundItemService:
                 message="Item not found or already picked up",
             )
 
-        # Check if player is on the same map
         if ground_item["map_id"] != player_map_id:
             return PickupItemResult(
                 success=False,
                 message="Item not found or already picked up",
             )
 
-        # Check if item has despawned
         if ground_item["despawn_at"] <= now:
-            await gsm.remove_ground_item(ground_item_id, ground_item["map_id"])
+            await ground_item_mgr.remove_ground_item(ground_item_id, ground_item["map_id"])
             return PickupItemResult(
                 success=False,
                 message="Item has despawned",
             )
 
-        # Check if player is on the same tile
         if ground_item["x"] != player_x or ground_item["y"] != player_y:
             return PickupItemResult(
                 success=False,
                 message="You must be on the same tile to pick up this item",
             )
 
-        # Check loot protection
         is_owner = ground_item.get("dropped_by_player_id") == player_id
         is_public = ground_item.get("loot_protection_expires_at", 0.0) <= now
 
@@ -308,13 +290,10 @@ class GroundItemService:
                 message="This item is protected",
             )
 
-        # Use InventoryService for adding items instead of direct GSM calls
         durability_val = ground_item.get("durability")
         
-        # Convert GSM's float durability to InventoryService's int durability
         durability_int = None
         if durability_val is not None:
-            # Round float durability to integer for InventoryService compatibility
             durability_int = int(durability_val) if durability_val != 1.0 else None
         
         add_result = await InventoryService.add_item(
@@ -330,8 +309,7 @@ class GroundItemService:
                 message=add_result.message or "Failed to add item to inventory",
             )
 
-        # Remove ground item after successful inventory addition
-        await gsm.remove_ground_item(ground_item_id, ground_item["map_id"])
+        await ground_item_mgr.remove_ground_item(ground_item_id, ground_item["map_id"])
 
         logger.info(
             "Player picked up item",
@@ -353,8 +331,8 @@ class GroundItemService:
     @staticmethod
     async def get_ground_item(ground_item_id: int) -> Optional[Dict[str, Any]]:
         """Get a ground item by ID."""
-        gsm = get_game_state_manager()
-        return await gsm.get_ground_item(ground_item_id)
+        ground_item_mgr = get_ground_item_manager()
+        return await ground_item_mgr.get_ground_item(ground_item_id)
 
     @staticmethod
     async def get_visible_ground_items(
@@ -381,22 +359,19 @@ class GroundItemService:
         Returns:
             GroundItemsResponse with visible items
         """
-        gsm = get_game_state_manager()
-        all_items = await gsm.get_ground_items_on_map(map_id)
+        ground_item_mgr = get_ground_item_manager()
+        all_items = await ground_item_mgr.get_ground_items_on_map(map_id)
         now = datetime.now(timezone.utc).timestamp()
 
-        # Collect visible ground items first
         visible_ground_items = []
         unique_item_ids = set()
         
         for gi in all_items:
-            # Check distance
             if abs(gi["x"] - center_x) > tile_radius:
                 continue
             if abs(gi["y"] - center_y) > tile_radius:
                 continue
 
-            # Check visibility (player dropped it or protection expired)
             is_yours = gi.get("dropped_by_player_id") == player_id
             is_public = gi.get("loot_protection_expires_at", 0.0) <= now
 
@@ -406,7 +381,6 @@ class GroundItemService:
             visible_ground_items.append((gi, is_yours, is_public))
             unique_item_ids.add(gi["item_id"])
 
-        # Look up item metadata for all unique items
         item_metadata = {}
         if unique_item_ids:
             for item_id in unique_item_ids:
@@ -414,14 +388,12 @@ class GroundItemService:
                 if item:
                     item_metadata[item_id] = item
 
-        # Build response with merged data
         items = []
         for gi, is_yours, is_public in visible_ground_items:
             item_id = gi["item_id"]
             item = item_metadata.get(item_id)
             
             if not item:
-                # Skip items we couldn't find metadata for
                 continue
                 
             items.append(
@@ -473,22 +445,19 @@ class GroundItemService:
         Returns:
             List of raw ground item dicts with visibility filtering applied
         """
-        gsm = get_game_state_manager()
-        all_items = await gsm.get_ground_items_on_map(map_id)
+        ground_item_mgr = get_ground_item_manager()
+        all_items = await ground_item_mgr.get_ground_items_on_map(map_id)
         now = datetime.now(timezone.utc).timestamp()
 
-        # Apply visibility filtering (BUSINESS LOGIC STAYS IN SERVICE)
         visible_items = []
         unique_item_ids = set()
         
         for item in all_items:
-            # Distance check
             if abs(item["x"] - center_x) > tile_radius:
                 continue
             if abs(item["y"] - center_y) > tile_radius:
                 continue
 
-            # Visibility check (ownership or protection expired)
             is_owner = item.get("dropped_by_player_id") == player_id
             loot_protection_expires_at = item.get("loot_protection_expires_at", 0)
             is_public = loot_protection_expires_at <= now
@@ -496,14 +465,12 @@ class GroundItemService:
             if not is_owner and not is_public:
                 continue
 
-            # Add visibility metadata
             item_with_metadata = item.copy()
             item_with_metadata["is_protected"] = not is_public and not is_owner
             item_with_metadata["is_yours"] = is_owner
             visible_items.append(item_with_metadata)
             unique_item_ids.add(item["item_id"])
 
-        # Get item metadata for all unique items
         item_metadata = {}
         if unique_item_ids:
             for item_id in unique_item_ids:
@@ -511,7 +478,6 @@ class GroundItemService:
                 if item:
                     item_metadata[item_id] = item
 
-        # Merge item metadata into ground item data
         for item in visible_items:
             item_id = item["item_id"]
             metadata = item_metadata.get(item_id)
@@ -533,11 +499,10 @@ class GroundItemService:
         Returns:
             Number of items cleaned up
         """
-        gsm = get_game_state_manager()
+        ground_item_mgr = get_ground_item_manager()
 
         if map_id:
-            # Get all ground items on this map
-            all_items = await gsm.get_ground_items_on_map(map_id)
+            all_items = await ground_item_mgr.get_ground_items_on_map(map_id)
             if not all_items:
                 return 0
 
@@ -545,11 +510,10 @@ class GroundItemService:
             now = time.time()
             cleanup_count = 0
 
-            # Check and remove expired items
             for item in all_items:
                 despawn_at = item.get("despawn_at", 0)
                 if despawn_at <= now:
-                    success = await gsm.remove_ground_item(item["id"], map_id)
+                    success = await ground_item_mgr.remove_ground_item(item["id"], map_id)
                     if success:
                         cleanup_count += 1
 
@@ -561,9 +525,6 @@ class GroundItemService:
 
             return cleanup_count
 
-        # For now, when map_id is None, we just return 0 since we don't have
-        # a way to enumerate all maps with ground items. This functionality
-        # could be improved later by tracking active maps.
         logger.warning("cleanup_expired_items called without map_id - skipping global cleanup")
         return 0
 
@@ -586,13 +547,13 @@ class GroundItemService:
         Returns:
             Number of items dropped
         """
-        gsm = get_game_state_manager()
+        inventory_mgr = get_inventory_manager()
+        equipment_mgr = get_equipment_manager()
         items_dropped = 0
 
-        inventory = await gsm.get_inventory(player_id)
-        equipment = await gsm.get_equipment(player_id)
+        inventory = await inventory_mgr.get_inventory(player_id)
+        equipment = await equipment_mgr.get_equipment(player_id)
 
-        # Collect all item_ids we need to look up
         all_item_ids = set()
         for slot_data in inventory.values():
             all_item_ids.add(slot_data["item_id"])
@@ -606,22 +567,21 @@ class GroundItemService:
             )
             return 0
 
-        # Replace bulk DB query with individual service calls (no bulk method available)
         items_by_id = {}
         for item_id in all_item_ids:
             item = await ItemService.get_item_by_id(item_id)
-            if item:  # Only add if found
+            if item:
                 items_by_id[item_id] = item
-            # Skip missing items (don't fail entire death drop for missing items)
 
-        # Drop inventory items
+        ground_item_mgr = get_ground_item_manager()
+
         for slot, slot_data in inventory.items():
             item_id = slot_data["item_id"]
             item = items_by_id.get(item_id)
             if not item:
                 continue
 
-            ground_item_id = await gsm.add_ground_item(
+            ground_item_id = await ground_item_mgr.add_ground_item(
                 map_id=map_id,
                 x=x,
                 y=y,
@@ -633,14 +593,13 @@ class GroundItemService:
             if ground_item_id:
                 items_dropped += 1
 
-        # Drop equipped items
         for slot_name, slot_data in equipment.items():
             item_id = slot_data["item_id"]
             item = items_by_id.get(item_id)
             if not item:
                 continue
 
-            ground_item_id = await gsm.add_ground_item(
+            ground_item_id = await ground_item_mgr.add_ground_item(
                 map_id=map_id,
                 x=x,
                 y=y,
@@ -652,8 +611,8 @@ class GroundItemService:
             if ground_item_id:
                 items_dropped += 1
 
-        await gsm.clear_inventory(player_id)
-        await gsm.clear_equipment(player_id)
+        await inventory_mgr.clear_inventory(player_id)
+        await equipment_mgr.clear_equipment(player_id)
 
         logger.info(
             "Dropped player items on death",
@@ -685,6 +644,6 @@ class GroundItemService:
         Returns:
             List of ground items at this position
         """
-        gsm = get_game_state_manager()
-        all_items = await gsm.get_ground_items_on_map(map_id)
+        ground_item_mgr = get_ground_item_manager()
+        all_items = await ground_item_mgr.get_ground_items_on_map(map_id)
         return [item for item in all_items if item["x"] == x and item["y"] == y]

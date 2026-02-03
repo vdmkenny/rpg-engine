@@ -9,7 +9,7 @@ from ..core.humanoids import HumanoidID, HumanoidDefinition
 from ..core.monsters import MonsterID, MonsterDefinition
 from ..core.logging_config import get_logger
 from ..models.entity import Entity
-from .game_state_manager import get_game_state_manager
+from .game_state import get_reference_data_manager
 
 logger = get_logger(__name__)
 
@@ -31,8 +31,8 @@ class EntityService:
         This is called on server startup to ensure the database 'entities' table
         mirrors the code definitions.
         """
-        gsm = get_game_state_manager()
-        await gsm.sync_entities_to_database()
+        ref_mgr = get_reference_data_manager()
+        await ref_mgr.sync_entities_to_database()
 
     @staticmethod
     def _humanoid_def_to_dict(name: str, definition: HumanoidDefinition) -> Dict[str, Any]:

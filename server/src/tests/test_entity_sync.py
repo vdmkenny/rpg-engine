@@ -7,10 +7,9 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from server.src.models.entity import Entity
 from server.src.services.entity_service import EntityService
-from server.src.services.game_state_manager import get_game_state_manager
 
 @pytest.mark.asyncio
-async def test_sync_entities(session: AsyncSession, gsm):
+async def test_sync_entities(session: AsyncSession, game_state_managers):
     """
     Test that entities defined in EntityID enum are correctly synced to the database.
     """
@@ -48,7 +47,7 @@ async def test_sync_entities(session: AsyncSession, gsm):
     assert "Welcome to Bob's General Store!" in bob.dialogue
 
 @pytest.mark.asyncio
-async def test_sync_updates_existing(session: AsyncSession, gsm):
+async def test_sync_updates_existing(session: AsyncSession, game_state_managers):
     """
     Test that sync updates existing records rather than failing or duplicating.
     """

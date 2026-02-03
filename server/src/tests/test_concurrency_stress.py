@@ -11,7 +11,6 @@ import random
 from typing import List
 from unittest.mock import AsyncMock, patch
 
-from server.src.services.game_state_manager import get_game_state_manager
 from server.src.core.items import EquipmentSlot
 
 

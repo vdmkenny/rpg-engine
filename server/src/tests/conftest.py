@@ -27,10 +27,11 @@ from server.src.models.item import Item, GroundItem, PlayerInventory, PlayerEqui
 from server.src.models.skill import Skill, PlayerSkill
 from server.src.models.skill import PlayerSkill
 from server.src.core.security import get_password_hash, create_access_token
-from server.src.services.game_state_manager import (
-    GameStateManager,
-    init_game_state_manager,
-    reset_game_state_manager,
+from server.src.services.game_state import (
+    get_player_state_manager,
+    get_reference_data_manager,
+    init_all_managers,
+    reset_all_managers,
 )
 
 # Configure logger for test fixtures
@@ -660,41 +661,56 @@ async def fake_valkey() -> FakeValkey:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def gsm(fake_valkey: FakeValkey) -> AsyncGenerator[GameStateManager, None]:
+async def game_state_managers(fake_valkey: FakeValkey) -> AsyncGenerator[None, None]:
     """
-    Create GameStateManager instance for testing using proper singleton pattern.
+    Initialize all game state managers for testing.
     
-    GSM manages its own sessions internally - no external session binding.
+    Managers manage their own sessions internally - no external session binding.
     This ensures tests use the same architecture as production code.
-    Tests can call get_game_state_manager() to access this initialized GSM instance.
     """
     if TestingSessionLocal is None:
         raise RuntimeError("TestingSessionLocal not initialized")
     
-    # Initialize the global GSM singleton with test dependencies
-    gsm_instance = init_game_state_manager(fake_valkey, TestingSessionLocal)
+    # Initialize all managers with test dependencies
+    init_all_managers(fake_valkey, TestingSessionLocal)
     
-    # Load item cache from database (GSM uses its own session management)
-    await gsm_instance.load_item_cache_from_db()
+    # Load item cache from database (ReferenceDataManager uses its own session management)
+    ref_manager = get_reference_data_manager()
+    await ref_manager.load_item_cache_from_db()
     
-    yield gsm_instance
+    yield
     
-    # Clean up - reset the global GSM singleton
-    reset_game_state_manager()
+    # Clean up - reset all managers
+    reset_all_managers()
 
 
 @pytest_asyncio.fixture(scope="function")
-async def items_synced(gsm: GameStateManager) -> None:
+async def gsm(fake_valkey: FakeValkey, game_state_managers) -> AsyncGenerator[None, None]:
     """
-    Global fixture to ensure items are synced to database using GSM singleton.
+    Legacy alias for game_state_managers fixture.
     
-    Depends on gsm fixture to ensure GSM is initialized first.
-    Uses GSM's own session management - no external sessions needed.
+    Maintained for backward compatibility with existing tests.
+    Tests can call individual manager getters (get_player_state_manager, etc.)
+    to access the initialized managers.
+    """
+    # Yield nothing - game_state_managers handles initialization
+    # Tests should use get_player_state_manager(), get_inventory_manager(), etc.
+    yield
+
+
+@pytest_asyncio.fixture(scope="function")
+async def items_synced(game_state_managers) -> None:
+    """
+    Global fixture to ensure items are synced to database using ReferenceDataManager.
+    
+    Depends on game_state_managers fixture to ensure managers are initialized first.
+    Uses managers' own session management - no external sessions needed.
     """
     from server.src.services.item_service import ItemService
     await ItemService.sync_items_to_db()
     # Reload cache after syncing to pick up any new items
-    await gsm.load_item_cache_from_db()
+    ref_manager = get_reference_data_manager()
+    await ref_manager.load_item_cache_from_db()
 
 
 @pytest_asyncio.fixture(scope="function")  
@@ -734,12 +750,12 @@ async def map_manager_loaded() -> None:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def skills_synced(gsm: GameStateManager) -> None:
+async def skills_synced(game_state_managers) -> None:
     """
-    Global fixture to ensure skills are synced to database using GSM singleton.
+    Global fixture to ensure skills are synced to database.
     
-    Depends on gsm fixture to ensure GSM is initialized first.
-    Uses GSM's own session management - no external sessions needed.
+    Depends on game_state_managers fixture to ensure managers are initialized first.
+    Uses managers' own session management - no external sessions needed.
     """
     from server.src.services.skill_service import SkillService
     await SkillService.sync_skills_to_db()
@@ -747,7 +763,7 @@ async def skills_synced(gsm: GameStateManager) -> None:
 
 @pytest_asyncio.fixture
 async def client(
-    session: AsyncSession, fake_valkey: FakeValkey, gsm: GameStateManager
+    session: AsyncSession, fake_valkey: FakeValkey, game_state_managers
 ) -> AsyncGenerator[AsyncClient, None]:
     """
     Create an HTTP client that uses the test database session, fake Valkey, and initialized GSM.
@@ -774,7 +790,7 @@ async def client(
 @pytest_asyncio.fixture
 def create_test_player(
     session: AsyncSession,  # Use the same session as HTTP endpoints
-    gsm: GameStateManager,
+    game_state_managers,
 ) -> Callable[..., Awaitable[Player]]:
     """
     Fixture factory to create a test player using the same database session as HTTP endpoints.
@@ -793,6 +809,7 @@ def create_test_player(
     ) -> Player:
         from server.src.core.security import get_password_hash
         from server.src.models.player import Player
+        from server.src.services.game_state import get_player_state_manager, get_skills_manager
         
         # Create player record using the same session as HTTP endpoints
         # This ensures test players are visible to HTTP endpoint calls
@@ -811,9 +828,10 @@ def create_test_player(
         session.add(player)
         await session.flush()  # Get player ID
         
-        # Initialize skills using GSM unified interface 
+        # Initialize skills using SkillsManager
         try:
-            await gsm.grant_all_skills_to_player(player.id)
+            skills_manager = get_skills_manager()
+            await skills_manager.grant_all_skills(player.id)
         except Exception:
             # Skills may not be available in test environment, that's ok
             pass
@@ -822,19 +840,22 @@ def create_test_player(
         # This is required for authentication tests that use separate database sessions
         await session.commit()
         
+        # Get managers for state operations
+        player_state_manager = get_player_state_manager()
+        
         # Apply any extra fields to the created player state  
         if extra_fields:
-            current_state = await gsm.get_player_full_state(player.id)
+            current_state = await player_state_manager.get_player_full_state(player.id)
             if current_state:
                 updated_state = {**current_state, **extra_fields}
                 # Update player state with extra fields
-                await gsm.set_player_full_state(
+                await player_state_manager.set_player_full_state(
                     player_id=player.id,
-                    **updated_state
+                    state=updated_state
                 )
         
-        # Register player as online for GSM operations in tests
-        gsm.register_online_player(player.id, player.username)
+        # Register player as online for operations in tests
+        player_state_manager.register_online_player(player.id, player.username)
         
         return player
     
@@ -1051,7 +1072,7 @@ from server.src.tests.websocket_test_utils import WebSocketTestClient
 
 @pytest_asyncio.fixture
 async def test_client(
-    fake_valkey: FakeValkey, gsm: GameStateManager, map_manager_loaded: None
+    fake_valkey: FakeValkey, game_state_managers, map_manager_loaded: None
 ) -> AsyncGenerator[WebSocketTestClient, None]:
     """
     Create a WebSocket test client with per-test data cleanup.
@@ -1219,7 +1240,7 @@ def create_test_token() -> Callable[[str], str]:
 
 @pytest_asyncio.fixture  
 def test_disconnection_context(
-    fake_valkey: FakeValkey, gsm: GameStateManager
+    fake_valkey: FakeValkey, game_state_managers
 ) -> Dict[str, Any]:
     """
     Provides a context for testing WebSocket disconnection scenarios.

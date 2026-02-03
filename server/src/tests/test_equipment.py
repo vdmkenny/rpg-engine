@@ -58,7 +58,7 @@ async def give_player_skill_level(
     session: AsyncSession, player_id: int, skill_name: str, level: int
 ):
     """Set player skill level for testing equipment requirements."""
-    from server.src.services.game_state_manager import get_game_state_manager
+    from server.src.services.game_state import get_skills_manager
     from server.src.core.skills import SkillType
     
     # Get skill type from name
@@ -66,8 +66,8 @@ async def give_player_skill_level(
     if not skill_type:
         raise ValueError(f"Skill {skill_name} not found in SkillType enum")
     
-    gsm = get_game_state_manager()
-    await gsm.set_skill(player_id, skill_type, level, 0)
+    skills_manager = get_skills_manager()
+    await skills_manager.set_skill(player_id, skill_type.value, level, 0)
 
 
 # =============================================================================

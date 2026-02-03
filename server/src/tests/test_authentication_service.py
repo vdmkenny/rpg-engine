@@ -18,7 +18,6 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from typing import Dict, Any
 
 from server.src.services.authentication_service import AuthenticationService
-from server.src.services.game_state_manager import GameStateManager
 from server.src.core.security import create_access_token, get_password_hash
 from server.src.models.player import Player
 
@@ -28,7 +27,7 @@ class TestAuthenticateWithPassword:
 
     @pytest.mark.asyncio
     async def test_authenticate_with_password_success(
-        self, gsm: GameStateManager, create_test_player
+        self, game_state_managers, create_test_player
     ):
         """Test successful authentication with valid credentials."""
         # Create a test player
@@ -45,7 +44,7 @@ class TestAuthenticateWithPassword:
 
     @pytest.mark.asyncio
     async def test_authenticate_with_password_wrong_password(
-        self, gsm: GameStateManager, create_test_player
+        self, game_state_managers, create_test_player
     ):
         """Test authentication fails with incorrect password."""
         await create_test_player("wrong_pass_user", "correct_password")
@@ -58,7 +57,7 @@ class TestAuthenticateWithPassword:
 
     @pytest.mark.asyncio
     async def test_authenticate_with_password_nonexistent_user(
-        self, gsm: GameStateManager
+        self, game_state_managers
     ):
         """Test authentication fails for non-existent user."""
         result = await AuthenticationService.authenticate_with_password(
@@ -69,7 +68,7 @@ class TestAuthenticateWithPassword:
 
     @pytest.mark.asyncio
     async def test_authenticate_with_password_banned_player(
-        self, gsm: GameStateManager, create_test_player, set_player_banned
+        self, game_state_managers, create_test_player, set_player_banned
     ):
         """Test authentication raises PermissionError for banned players."""
         await create_test_player("banned_user", "password123")
@@ -82,7 +81,7 @@ class TestAuthenticateWithPassword:
 
     @pytest.mark.asyncio
     async def test_authenticate_with_password_timed_out_player(
-        self, gsm: GameStateManager, create_test_player, set_player_timeout
+        self, game_state_managers, create_test_player, set_player_timeout
     ):
         """Test authentication raises ValueError for timed out players."""
         await create_test_player("timeout_user", "password123")
@@ -96,7 +95,7 @@ class TestAuthenticateWithPassword:
 
     @pytest.mark.asyncio
     async def test_authenticate_with_password_expired_timeout(
-        self, gsm: GameStateManager, create_test_player, set_player_timeout
+        self, game_state_managers, create_test_player, set_player_timeout
     ):
         """Test authentication succeeds when timeout has expired."""
         await create_test_player("expired_timeout_user", "password123")
@@ -115,7 +114,7 @@ class TestValidateJwtToken:
     """Tests for AuthenticationService.validate_jwt_token()"""
 
     @pytest.mark.asyncio
-    async def test_validate_jwt_token_valid(self, gsm: GameStateManager):
+    async def test_validate_jwt_token_valid(self, game_state_managers):
         """Test validation succeeds for valid JWT token."""
         token = create_access_token(data={"sub": "test_user"})
         
@@ -126,7 +125,7 @@ class TestValidateJwtToken:
         assert "token_data" in result
 
     @pytest.mark.asyncio
-    async def test_validate_jwt_token_invalid(self, gsm: GameStateManager):
+    async def test_validate_jwt_token_invalid(self, game_state_managers):
         """Test validation fails for invalid JWT token."""
         result = await AuthenticationService.validate_jwt_token("invalid_token_string")
         
@@ -134,7 +133,7 @@ class TestValidateJwtToken:
 
     @pytest.mark.asyncio
     async def test_validate_jwt_token_expired(
-        self, gsm: GameStateManager, create_expired_token
+        self, game_state_managers, create_expired_token
     ):
         """Test validation fails for expired JWT token."""
         expired_token = create_expired_token("test_user")
@@ -144,7 +143,7 @@ class TestValidateJwtToken:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_validate_jwt_token_missing_subject(self, gsm: GameStateManager):
+    async def test_validate_jwt_token_missing_subject(self, game_state_managers):
         """Test validation fails when token lacks subject (username)."""
         # Create a token without the 'sub' claim
         token = create_access_token(data={})
@@ -154,7 +153,7 @@ class TestValidateJwtToken:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_validate_jwt_token_empty_string(self, gsm: GameStateManager):
+    async def test_validate_jwt_token_empty_string(self, game_state_managers):
         """Test validation fails for empty token string."""
         result = await AuthenticationService.validate_jwt_token("")
         
@@ -166,7 +165,7 @@ class TestAuthenticateWebsocketConnection:
 
     @pytest.mark.asyncio
     async def test_authenticate_websocket_success(
-        self, gsm: GameStateManager, create_test_player
+        self, game_state_managers, create_test_player
     ):
         """Test WebSocket authentication succeeds with valid token."""
         player = await create_test_player("ws_auth_user", "password123")
@@ -179,7 +178,7 @@ class TestAuthenticateWebsocketConnection:
         assert result.id == player.id
 
     @pytest.mark.asyncio
-    async def test_authenticate_websocket_invalid_token(self, gsm: GameStateManager):
+    async def test_authenticate_websocket_invalid_token(self, game_state_managers):
         """Test WebSocket authentication fails with invalid token."""
         result = await AuthenticationService.authenticate_websocket_connection(
             "invalid_token"
@@ -189,7 +188,7 @@ class TestAuthenticateWebsocketConnection:
 
     @pytest.mark.asyncio
     async def test_authenticate_websocket_player_not_found(
-        self, gsm: GameStateManager
+        self, game_state_managers
     ):
         """Test WebSocket authentication fails when player doesn't exist."""
         # Create valid token for non-existent player
@@ -201,7 +200,7 @@ class TestAuthenticateWebsocketConnection:
 
     @pytest.mark.asyncio
     async def test_authenticate_websocket_banned_player(
-        self, gsm: GameStateManager, create_test_player, set_player_banned
+        self, game_state_managers, create_test_player, set_player_banned
     ):
         """Test WebSocket authentication fails for banned players."""
         await create_test_player("ws_banned_user", "password123")
@@ -214,7 +213,7 @@ class TestAuthenticateWebsocketConnection:
 
     @pytest.mark.asyncio
     async def test_authenticate_websocket_timed_out_player(
-        self, gsm: GameStateManager, create_test_player, set_player_timeout
+        self, game_state_managers, create_test_player, set_player_timeout
     ):
         """Test WebSocket authentication fails for timed out players."""
         await create_test_player("ws_timeout_user", "password123")
@@ -231,7 +230,7 @@ class TestLoadPlayerForSession:
 
     @pytest.mark.asyncio
     async def test_load_player_for_session_success(
-        self, gsm: GameStateManager, create_test_player
+        self, game_state_managers, create_test_player
     ):
         """Test loading player session data successfully."""
         player = await create_test_player(
@@ -248,7 +247,7 @@ class TestLoadPlayerForSession:
 
     @pytest.mark.asyncio
     async def test_load_player_for_session_has_position(
-        self, gsm: GameStateManager, create_test_player
+        self, game_state_managers, create_test_player
     ):
         """Test that session data includes player position."""
         player = await create_test_player(
@@ -266,7 +265,7 @@ class TestLoadPlayerForSession:
 
     @pytest.mark.asyncio
     async def test_load_player_for_session_has_hp(
-        self, gsm: GameStateManager, create_test_player
+        self, game_state_managers, create_test_player
     ):
         """Test that session data includes HP information."""
         player = await create_test_player("hp_user", "password123")
@@ -428,7 +427,7 @@ class TestAuthenticationServiceEdgeCases:
 
     @pytest.mark.asyncio
     async def test_authenticate_with_unicode_username(
-        self, gsm: GameStateManager, create_test_player
+        self, game_state_managers, create_test_player
     ):
         """Test authentication works with unicode characters in username."""
         # Note: This may fail if username validation doesn't allow unicode
@@ -447,7 +446,7 @@ class TestAuthenticationServiceEdgeCases:
 
     @pytest.mark.asyncio
     async def test_authenticate_with_special_chars_in_password(
-        self, gsm: GameStateManager, create_test_player
+        self, game_state_managers, create_test_player
     ):
         """Test authentication works with special characters in password."""
         special_password = "p@$$w0rd!#$%^&*()"
@@ -462,7 +461,7 @@ class TestAuthenticationServiceEdgeCases:
 
     @pytest.mark.asyncio
     async def test_authenticate_case_sensitive_username(
-        self, gsm: GameStateManager, create_test_player
+        self, game_state_managers, create_test_player
     ):
         """Test that username matching is case-sensitive."""
         await create_test_player("CaseSensitive", "password123")
@@ -478,7 +477,7 @@ class TestAuthenticationServiceEdgeCases:
 
     @pytest.mark.asyncio
     async def test_multiple_authentication_attempts(
-        self, gsm: GameStateManager, create_test_player
+        self, game_state_managers, create_test_player
     ):
         """Test multiple sequential authentication attempts work correctly."""
         await create_test_player("multi_auth_user", "password123")
@@ -504,7 +503,7 @@ class TestAuthenticationServiceEdgeCases:
 
     @pytest.mark.asyncio
     async def test_websocket_auth_flow_complete(
-        self, gsm: GameStateManager, create_test_player
+        self, game_state_managers, create_test_player
     ):
         """Test complete WebSocket authentication flow."""
         player = await create_test_player(

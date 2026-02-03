@@ -19,7 +19,12 @@ from server.src.core.entities import (
 from server.src.core.humanoids import HumanoidID, HumanoidDefinition
 from server.src.core.monsters import MonsterID, MonsterDefinition
 from server.src.core.logging_config import get_logger
-from server.src.services.game_state_manager import GameStateManager
+from server.src.services.game_state import (
+    EntityManager,
+    PlayerStateManager,
+    ENTITY_RESPAWN_QUEUE_KEY,
+)
+from server.src.services.game_state.base_manager import _utc_timestamp
 from server.src.services.map_service import get_map_manager
 from server.src.services.pathfinding_service import PathfindingService
 
@@ -34,12 +39,13 @@ class EntitySpawnService:
     """
     
     @staticmethod
-    async def spawn_map_entities(gsm: GameStateManager, map_id: str) -> int:
+    async def spawn_map_entities(player_mgr: PlayerStateManager, entity_mgr: EntityManager, map_id: str) -> int:
         """
         Spawn all entity instances for a map from Tiled spawn points.
         
         Args:
-            gsm: GameStateManager instance
+            player_mgr: PlayerStateManager instance
+            entity_mgr: EntityManager instance
             map_id: Map identifier
             
         Returns:
@@ -59,7 +65,7 @@ class EntitySpawnService:
         spawned_count = 0
         for spawn_point in tile_map.entity_spawn_points:
             try:
-                await EntitySpawnService._spawn_single_entity(gsm, map_id, spawn_point)
+                await EntitySpawnService._spawn_single_entity(entity_mgr, map_id, spawn_point)
                 spawned_count += 1
             except Exception as e:
                 logger.error(
@@ -81,13 +87,13 @@ class EntitySpawnService:
     
     @staticmethod
     async def _spawn_single_entity(
-        gsm: GameStateManager, map_id: str, spawn_point: Dict
+        entity_mgr: EntityManager, map_id: str, spawn_point: Dict
     ) -> int:
         """
         Spawn a single entity instance from a spawn point.
         
         Args:
-            gsm: GameStateManager instance
+            entity_mgr: EntityManager instance
             map_id: Map identifier
             spawn_point: Spawn point data from Tiled
             
@@ -122,21 +128,36 @@ class EntitySpawnService:
         aggro_override = spawn_point.get("aggro_override")
         disengage_override = spawn_point.get("disengage_override")
         
-        # Spawn entity instance
-        instance_id = await gsm.spawn_entity_instance(
-            entity_name=entity_id_str,
-            entity_type=entity_type,
+        # Get the numeric entity_id from the enum
+        entity_id = entity_enum.value.id if hasattr(entity_enum.value, 'id') else entity_enum.value.value
+        
+        # Spawn entity instance with simplified API
+        instance_id = await entity_mgr.spawn_entity_instance(
+            entity_id=entity_id,
             map_id=map_id,
             x=spawn_x,
             y=spawn_y,
-            spawn_x=spawn_x,
-            spawn_y=spawn_y,
+            current_hp=entity_def.max_hp,
             max_hp=entity_def.max_hp,
-            wander_radius=wander_radius,
-            spawn_point_id=spawn_point_id,
-            aggro_radius=aggro_override,
-            disengage_radius=disengage_override,
+            state="idle",
+            target_player_id=None,
         )
+        
+        # Store additional spawn metadata in entity state
+        key = f"entity_instance:{instance_id}"
+        if entity_mgr._valkey:
+            # Get current data and update with spawn metadata
+            current_data = await entity_mgr._get_from_valkey(key)
+            if current_data:
+                current_data["entity_name"] = entity_id_str
+                current_data["entity_type"] = entity_type.value
+                current_data["spawn_x"] = spawn_x
+                current_data["spawn_y"] = spawn_y
+                current_data["wander_radius"] = wander_radius
+                current_data["spawn_point_id"] = spawn_point_id
+                current_data["aggro_radius"] = aggro_override
+                current_data["disengage_radius"] = disengage_override
+                await entity_mgr._cache_in_valkey(key, current_data, 1800)
         
         logger.debug(
             "Entity spawned",
@@ -152,25 +173,20 @@ class EntitySpawnService:
         return instance_id
     
     @staticmethod
-    async def check_respawn_queue(gsm: GameStateManager) -> int:
+    async def check_respawn_queue(entity_mgr: EntityManager) -> int:
         """
         Check respawn queue and respawn entities that are ready.
         
         This should be called periodically by the game loop.
         
         Args:
-            gsm: GameStateManager instance
+            entity_mgr: EntityManager instance
             
         Returns:
             Number of entities respawned
         """
-        if not gsm.valkey:
+        if not entity_mgr._valkey:
             return 0
-        
-        from server.src.services.game_state_manager import (
-            ENTITY_RESPAWN_QUEUE_KEY,
-            _utc_timestamp,
-        )
         
         # Get entities ready to respawn (score <= current time)
         current_time = _utc_timestamp()
@@ -178,7 +194,7 @@ class EntitySpawnService:
             start=ScoreBoundary(0, is_inclusive=True),
             end=ScoreBoundary(current_time, is_inclusive=True),
         )
-        ready_to_respawn = await gsm.valkey.zrange(
+        ready_to_respawn = await entity_mgr._valkey.zrange(
             ENTITY_RESPAWN_QUEUE_KEY,
             score_query,
         )
@@ -191,27 +207,31 @@ class EntitySpawnService:
             instance_id = int(instance_id_bytes.decode() if isinstance(instance_id_bytes, bytes) else instance_id_bytes)
             
             # Get entity data to respawn
-            entity_data = await gsm.get_entity_instance(instance_id)
+            entity_data = await entity_mgr.get_entity_instance(instance_id)
             if not entity_data:
                 logger.warning("Entity not found for respawn", extra={"instance_id": instance_id})
-                await gsm.valkey.zrem(ENTITY_RESPAWN_QUEUE_KEY, [str(instance_id)])
+                await entity_mgr._valkey.zrem(ENTITY_RESPAWN_QUEUE_KEY, [str(instance_id)])
                 continue
+            
+            # Get spawn coordinates from entity data or fall back to current position
+            spawn_x = entity_data.get("spawn_x", entity_data.get("x"))
+            spawn_y = entity_data.get("spawn_y", entity_data.get("y"))
             
             # Find valid respawn position (avoid entity collision)
             respawn_x, respawn_y = await EntitySpawnService.find_respawn_position(
-                gsm,
+                entity_mgr,
                 entity_data["map_id"],
-                entity_data["spawn_x"],
-                entity_data["spawn_y"],
+                spawn_x,
+                spawn_y,
             )
             
             # Respawn entity at valid position
-            await gsm.update_entity_position(instance_id, respawn_x, respawn_y)
-            await gsm.update_entity_hp(instance_id, entity_data["max_hp"])
-            await gsm.set_entity_state(instance_id, EntityState.IDLE)
+            await entity_mgr.update_entity_position(instance_id, respawn_x, respawn_y)
+            await entity_mgr.update_entity_hp(instance_id, entity_data["max_hp"])
+            await entity_mgr.set_entity_state(instance_id, "idle")
             
             # Remove from respawn queue
-            await gsm.valkey.zrem(ENTITY_RESPAWN_QUEUE_KEY, [str(instance_id)])
+            await entity_mgr._valkey.zrem(ENTITY_RESPAWN_QUEUE_KEY, [str(instance_id)])
             
             respawned_count += 1
             logger.debug(
@@ -219,7 +239,7 @@ class EntitySpawnService:
                 extra={
                     "instance_id": instance_id,
                     "entity_type": entity_data.get("entity_type", "unknown"),
-                    "entity_name": entity_data["entity_name"],
+                    "entity_name": entity_data.get("entity_name", "unknown"),
                     "map_id": entity_data["map_id"],
                 }
             )
@@ -230,20 +250,20 @@ class EntitySpawnService:
         return respawned_count
     
     @staticmethod
-    async def get_entity_positions(gsm: GameStateManager, map_id: str) -> Dict[int, Tuple[int, int]]:
+    async def get_entity_positions(entity_mgr: EntityManager, map_id: str) -> Dict[int, Tuple[int, int]]:
         """
         Get all non-dead entity positions on a map.
         
         Used for entity collision avoidance during pathfinding and respawn.
         
         Args:
-            gsm: GameStateManager instance
+            entity_mgr: EntityManager instance
             map_id: Map identifier
             
         Returns:
             Dict mapping instance_id -> (x, y) position for all non-dead entities
         """
-        entities = await gsm.get_map_entities(map_id)
+        entities = await entity_mgr.get_map_entities(map_id)
         
         positions: Dict[int, Tuple[int, int]] = {}
         for entity in entities:
@@ -252,7 +272,7 @@ class EntitySpawnService:
             if state in ("dead", "dying"):
                 continue
             
-            instance_id = entity.get("id")
+            instance_id = entity.get("instance_id")
             x = entity.get("x")
             y = entity.get("y")
             
@@ -263,7 +283,7 @@ class EntitySpawnService:
     
     @staticmethod
     async def find_respawn_position(
-        gsm: GameStateManager,
+        entity_mgr: EntityManager,
         map_id: str,
         spawn_x: int,
         spawn_y: int,
@@ -275,7 +295,7 @@ class EntitySpawnService:
         walkable position if the spawn point is occupied.
         
         Args:
-            gsm: GameStateManager instance
+            entity_mgr: EntityManager instance
             map_id: Map identifier
             spawn_x: Preferred spawn X coordinate
             spawn_y: Preferred spawn Y coordinate
@@ -297,7 +317,7 @@ class EntitySpawnService:
         collision_grid = tile_map.get_collision_grid()
         
         # Get current entity positions on this map
-        entity_positions = await EntitySpawnService.get_entity_positions(gsm, map_id)
+        entity_positions = await EntitySpawnService.get_entity_positions(entity_mgr, map_id)
         blocked_positions: Set[Tuple[int, int]] = set(entity_positions.values())
         
         # Check if spawn position is available

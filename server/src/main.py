@@ -14,9 +14,12 @@ from server.src.core.metrics import init_metrics, get_metrics, get_metrics_conte
 from server.src.services.map_service import get_map_manager
 from server.src.core.database import get_valkey, AsyncSessionLocal
 from server.src.game.game_loop import game_loop, cleanup_disconnected_player
-from server.src.services.game_state_manager import (
-    init_game_state_manager,
-    get_game_state_manager,
+from server.src.services.game_state import (
+    init_all_managers,
+    get_reference_data_manager,
+    get_entity_manager,
+    get_ground_item_manager,
+    get_batch_sync_coordinator,
 )
 from server.src.core.concurrency import initialize_concurrency_infrastructure
 from common.src.protocol import MessageType, WSMessage
@@ -46,8 +49,11 @@ async def lifespan(app: FastAPI):
     # Initialize Valkey connection
     valkey = await get_valkey()
     
-    # Initialize GameStateManager as the single source of truth
-    gsm = init_game_state_manager(valkey, AsyncSessionLocal)
+    # Initialize all game state managers
+    init_all_managers(valkey, AsyncSessionLocal)
+    ref_manager = get_reference_data_manager()
+    entity_mgr = get_entity_manager()
+    ground_item_mgr = get_ground_item_manager()
     
     # Initialize concurrency infrastructure with Valkey client
     initialize_concurrency_infrastructure(valkey)
@@ -59,7 +65,7 @@ async def lifespan(app: FastAPI):
         await ItemService.sync_items_to_db()
         
         # Load item metadata cache (permanent cache for reference data)
-        items_cached = await gsm.load_item_cache_from_db()
+        items_cached = await ref_manager.load_item_cache_from_db()
         logger.info(f"Loaded {items_cached} items to cache")
     except Exception as e:
         logger.warning(f"Could not load item cache: {e}")
@@ -75,23 +81,25 @@ async def lifespan(app: FastAPI):
     # Clear stale entity instances and spawn entities from Tiled maps
     try:
         # Clear any stale entity instances from previous server run
-        await gsm.clear_all_entity_instances()
+        await entity_mgr.clear_all_entity_instances()
         logger.info("Cleared stale entity instances from Valkey")
         
         # Spawn entities for all loaded maps
         from server.src.services.entity_spawn_service import EntitySpawnService
+        from server.src.services.game_state import get_player_state_manager
         total_spawned = 0
+        player_mgr = get_player_state_manager()
         for map_id in map_manager.maps.keys():
-            spawned = await EntitySpawnService.spawn_map_entities(gsm, map_id)
+            spawned = await EntitySpawnService.spawn_map_entities(player_mgr, entity_mgr, map_id)
             total_spawned += spawned
         
         logger.info(f"Spawned {total_spawned} entity instances from Tiled maps")
     except Exception as e:
         logger.warning(f"Could not spawn entity instances: {e}")
     
-    # Load ground items from database to Valkey via GSM
+    # Load ground items from database to Valkey
     try:
-        ground_items_loaded = await gsm.load_ground_items_from_db()
+        ground_items_loaded = await ground_item_mgr.load_ground_items_from_db()
         logger.info(f"Loaded {ground_items_loaded} ground items from database to Valkey")
     except Exception as e:
         logger.warning(f"Could not load ground items from database: {e}")
@@ -141,17 +149,20 @@ async def lifespan(app: FastAPI):
                 if player_id:
                     active_players[username] = player_id
         
-        # Sync all active players via GSM
+        # Sync all active players before shutdown
         if active_players:
-            await gsm.sync_all_on_shutdown()
+            sync_coordinator = get_batch_sync_coordinator()
+            await sync_coordinator.sync_all_on_shutdown()
             logger.info(f"Synced {len(active_players)} active players to database on shutdown")
     except Exception as e:
         logger.error(f"Error syncing players on shutdown: {e}", exc_info=True)
     
-    # Sync ground items from Valkey to database before shutdown via GSM
+    # Sync ground items from Valkey to database before shutdown
     try:
-        synced = await gsm.sync_ground_items_to_db()
-        logger.info(f"Synced {synced} ground items to database")
+        async with AsyncSessionLocal() as db:
+            await ground_item_mgr.sync_ground_items_to_db(db)
+            await db.commit()
+        logger.info("Synced ground items to database")
     except Exception as e:
         logger.warning(f"Could not sync ground items to database: {e}")
     
@@ -225,8 +236,9 @@ def get_server_status():
     """
     logger.debug("Status endpoint accessed")
     
-    gsm = get_game_state_manager()
-    current_players = gsm.get_active_player_count()
+    from server.src.services.game_state import get_player_state_manager
+    player_mgr = get_player_state_manager()
+    current_players = player_mgr.get_active_player_count()
     max_players = settings.MAX_PLAYERS
     
     # Update Prometheus metrics

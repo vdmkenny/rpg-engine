@@ -101,23 +101,23 @@ async def authenticate_player(auth_message: WSMessage) -> Tuple[str, int]:
                 reason="Player not found"
             )
         
-        if player.is_banned:
+        if player.get("is_banned", False):
             raise WebSocketDisconnect(
                 code=status.WS_1008_POLICY_VIOLATION,
                 reason="Account is banned"
             )
         
-        if player.timeout_until:
-            timeout_until = player.timeout_until
+        timeout_until = player.get("timeout_until")
+        if timeout_until:
             if timeout_until.tzinfo is None:
                 timeout_until = timeout_until.replace(tzinfo=timezone.utc)
             if timeout_until > datetime.now(timezone.utc):
                 raise WebSocketDisconnect(
                     code=status.WS_1008_POLICY_VIOLATION,
-                    reason=f"Account is timed out until {player.timeout_until.isoformat()}"
+                    reason=f"Account is timed out until {timeout_until.isoformat()}"
                 )
         
-        return username, player.id
+        return username, player["id"]
         
     except ValidationError:
         raise WebSocketDisconnect(
