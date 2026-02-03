@@ -51,12 +51,24 @@ rpg-engine/
 │   │   ├── core/       # Core logic, config
 │   │   ├── models/     # SQLAlchemy models
 │   │   ├── schemas/    # Pydantic schemas
-│   │   └── services/   # Business logic
+│   │   ├── services/   # Business logic
+│   │   │   └── game_state/  # 8 focused state managers
+│   │   │       ├── player_state_manager.py
+│   │   │       ├── inventory_manager.py
+│   │   │       ├── equipment_manager.py
+│   │   │       ├── skills_manager.py
+│   │   │       ├── entity_manager.py
+│   │   │       ├── ground_item_manager.py
+│   │   │       └── reference_data_manager.py
+│   │   └── tests/      # 4-tier test suite
+│   │       ├── unit/
+│   │       ├── integration/
+│   │       ├── e2e/
+│   │       └── stress/
 │   ├── alembic/        # Alembic migrations
 │   ├── alembic.ini
 │   ├── Dockerfile
 │   └── requirements.txt
-└── tests/              # Unit and integration tests
 ```
 
 ## WebSocket Protocol
@@ -93,24 +105,36 @@ cd docker && docker-compose -f docker-compose.test.yml up -d --build
 # Run all tests
 docker exec docker-server-1 pytest -v
 
+# Run specific test tiers
+docker exec docker-server-1 pytest server/src/tests/unit -v
+docker exec docker-server-1 pytest server/src/tests/integration -v
+docker exec docker-server-1 pytest server/src/tests/e2e -v
+
 # Run WebSocket integration tests
-docker exec docker-server-1 bash -c "RUN_INTEGRATION_TESTS=1 pytest server/src/tests/test_websocket_chat.py -v"
+docker exec docker-server-1 bash -c "RUN_INTEGRATION_TESTS=1 pytest server/src/tests/e2e/ -v"
 
 # Stop test environment
 cd docker && docker-compose -f docker-compose.test.yml down
 ```
 
-### Test Status
-- **WebSocket Protocol**: 16/16 tests passing (100%)
-- **Integration Tests**: Full authentication, chat, movement, inventory coverage
-- **Unit Tests**: Comprehensive service layer testing
+### Test Structure
+
+Tests are organized in 4 tiers:
+- **unit/**: Fast unit tests (<100ms) - formulas, calculations, schema validation
+- **integration/**: Service + DB tests (<500ms) - business logic, manager operations
+- **e2e/**: WebSocket end-to-end tests (<2s) - full gameplay flows
+- **stress/**: Load/concurrency tests (>1s) - race conditions, atomicity
+
+See [server/src/tests/README.md](server/src/tests/README.md) for detailed testing documentation.
 
 ## Development
 
 ### Architecture Highlights
 
-- **GameStateManager (GSM)**: Centralized state management with hot/cold data lifecycle
-- **Service Layer**: Clean separation between business logic and data access
+- **Game State Managers**: 8 focused domain managers handle persistence (PlayerState, Inventory, Equipment, Entity, GroundItem, Skills, ReferenceData). Services call individual managers; cross-domain operations go through other services.
+- **Auto-loading Pattern**: Data checks Valkey first, loads from PostgreSQL with TTL if missing, refreshes TTL on access.
+- **Hot/Cold Data Lifecycle**: Tier 1 data (position, HP) longer TTL; Tier 2 data (inventory, skills) shorter TTL.
+- **Service Layer**: Clean separation between business logic (services) and persistence (managers). No database access in services.
 - **Protocol Modernization**: Semantic error codes for better developer experience
 - **Message Validation**: Pydantic-based validation with structured error responses
 
@@ -130,6 +154,7 @@ cd docker && docker-compose -f docker-compose.test.yml down
 **Current Status**: Production Ready
 - ✅ WebSocket infrastructure fully operational
 - ✅ Real-time features (chat, movement, inventory) working
-- ✅ Comprehensive test coverage with 100% pass rate
+- ✅ Comprehensive test coverage with 980+ tests
 - ✅ Modern error handling with semantic error codes
 - ✅ Complete protocol documentation
+- ✅ Focused manager architecture for maintainability
