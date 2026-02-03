@@ -17,10 +17,9 @@ from ..core.config import settings
 from ..core.items import ItemRarity
 from ..core.logging_config import get_logger
 from ..schemas.item import (
-    DropItemResult,
-    PickupItemResult,
-    GroundItemInfo,
-    GroundItemsResponse,
+    OperationResult,
+    OperationType,
+    GroundItem,
     ItemInfo,
 )
 from ..schemas.service_results import (
@@ -127,7 +126,7 @@ class GroundItemService:
         x: int,
         y: int,
         quantity: Optional[int] = None,
-    ) -> DropItemResult:
+    ) -> OperationResult:
         """
         Drop an item from player's inventory onto the ground.
 
@@ -140,15 +139,16 @@ class GroundItemService:
             quantity: Number to drop (None = entire stack)
 
         Returns:
-            DropItemResult with success status
+            OperationResult with success status
         """
         inventory_mgr = get_inventory_manager()
 
         slot_data = await inventory_mgr.get_inventory_slot(player_id, inventory_slot)
         if not slot_data:
-            return DropItemResult(
+            return OperationResult(
                 success=False,
                 message="Inventory slot is empty",
+                operation=OperationType.DROP,
             )
 
         item_id = slot_data["item_id"]
@@ -157,22 +157,25 @@ class GroundItemService:
 
         drop_quantity = quantity if quantity is not None else current_quantity
         if drop_quantity <= 0:
-            return DropItemResult(
+            return OperationResult(
                 success=False,
                 message="Quantity must be positive",
+                operation=OperationType.DROP,
             )
         if drop_quantity > current_quantity:
-            return DropItemResult(
+            return OperationResult(
                 success=False,
                 message=f"Not enough items (have {current_quantity}, want to drop {drop_quantity})",
+                operation=OperationType.DROP,
             )
 
         item = await ItemService.get_item_by_id(item_id)
 
         if not item:
-            return DropItemResult(
+            return OperationResult(
                 success=False,
                 message="Item not found",
+                operation=OperationType.DROP,
             )
 
         current_time = datetime.now(timezone.utc).timestamp()
@@ -193,9 +196,10 @@ class GroundItemService:
         )
 
         if not ground_item_id:
-            return DropItemResult(
+            return OperationResult(
                 success=False,
                 message="Failed to create ground item",
+                operation=OperationType.DROP,
             )
 
         if drop_quantity >= current_quantity:
@@ -219,10 +223,11 @@ class GroundItemService:
             },
         )
 
-        return DropItemResult(
+        return OperationResult(
             success=True,
             message="Item dropped",
-            ground_item_id=ground_item_id,
+            operation=OperationType.DROP,
+            data={"ground_item_id": ground_item_id},
         )
 
     @staticmethod
@@ -232,7 +237,7 @@ class GroundItemService:
         player_x: int,
         player_y: int,
         player_map_id: str,
-    ) -> PickupItemResult:
+    ) -> OperationResult:
         """
         Pick up a ground item.
 
@@ -248,7 +253,7 @@ class GroundItemService:
             player_map_id: Player's current map ID
 
         Returns:
-            PickupItemResult with success status and detailed error messages
+            OperationResult with success status and detailed error messages
         """
         ground_item_mgr = get_ground_item_manager()
         now = datetime.now(timezone.utc).timestamp()
@@ -256,37 +261,42 @@ class GroundItemService:
         ground_item = await ground_item_mgr.get_ground_item(ground_item_id)
 
         if not ground_item:
-            return PickupItemResult(
+            return OperationResult(
                 success=False,
                 message="Item not found or already picked up",
+                operation=OperationType.PICKUP,
             )
 
         if ground_item["map_id"] != player_map_id:
-            return PickupItemResult(
+            return OperationResult(
                 success=False,
                 message="Item not found or already picked up",
+                operation=OperationType.PICKUP,
             )
 
         if ground_item["despawn_at"] <= now:
             await ground_item_mgr.remove_ground_item(ground_item_id, ground_item["map_id"])
-            return PickupItemResult(
+            return OperationResult(
                 success=False,
                 message="Item has despawned",
+                operation=OperationType.PICKUP,
             )
 
         if ground_item["x"] != player_x or ground_item["y"] != player_y:
-            return PickupItemResult(
+            return OperationResult(
                 success=False,
                 message="You must be on the same tile to pick up this item",
+                operation=OperationType.PICKUP,
             )
 
         is_owner = ground_item.get("dropped_by_player_id") == player_id
         is_public = ground_item.get("loot_protection_expires_at", 0.0) <= now
 
         if not is_owner and not is_public:
-            return PickupItemResult(
+            return OperationResult(
                 success=False,
                 message="This item is protected",
+                operation=OperationType.PICKUP,
             )
 
         durability_val = ground_item.get("durability")
@@ -303,9 +313,10 @@ class GroundItemService:
         )
         
         if not add_result.success:
-            return PickupItemResult(
+            return OperationResult(
                 success=False,
                 message=add_result.message or "Failed to add item to inventory",
+                operation=OperationType.PICKUP,
             )
 
         await ground_item_mgr.remove_ground_item(ground_item_id, ground_item["map_id"])
@@ -317,21 +328,40 @@ class GroundItemService:
                 "ground_item_id": ground_item_id,
                 "item_id": ground_item["item_id"],
                 "quantity": ground_item["quantity"],
-                "inventory_slot": add_result.slot,
+                "inventory_slot": add_result.data.get("slot"),
             },
         )
 
-        return PickupItemResult(
+        return OperationResult(
             success=True,
             message="Item picked up",
-            inventory_slot=add_result.slot,
+            operation=OperationType.PICKUP,
+            data={"inventory_slot": add_result.data.get("slot")},
         )
 
     @staticmethod
-    async def get_ground_item(ground_item_id: int) -> Optional[Dict[str, Any]]:
+    async def get_ground_item(ground_item_id: int) -> Optional[GroundItem]:
         """Get a ground item by ID."""
         ground_item_mgr = get_ground_item_manager()
-        return await ground_item_mgr.get_ground_item(ground_item_id)
+        item_data = await ground_item_mgr.get_ground_item(ground_item_id)
+        if not item_data:
+            return None
+        
+        item_wrapper = await ItemService.get_item_by_id(item_data["item_id"])
+        if not item_wrapper:
+            return None
+        
+        item_info = ItemService.item_to_info(item_wrapper._data)
+        
+        return GroundItem(
+            id=item_data["id"],
+            item=item_info,
+            x=item_data["x"],
+            y=item_data["y"],
+            quantity=item_data["quantity"],
+            is_yours=False,
+            is_protected=False,
+        )
 
     @staticmethod
     async def get_visible_ground_items(
@@ -340,7 +370,7 @@ class GroundItemService:
         center_x: int,
         center_y: int,
         tile_radius: int = 16,
-    ) -> GroundItemsResponse:
+    ) -> List[GroundItem]:
         """
         Get all ground items visible to a player.
 
@@ -356,7 +386,7 @@ class GroundItemService:
             tile_radius: Visibility radius in tiles
 
         Returns:
-            GroundItemsResponse with visible items
+            List of visible GroundItem objects
         """
         ground_item_mgr = get_ground_item_manager()
         all_items = await ground_item_mgr.get_ground_items_on_map(map_id)
@@ -390,23 +420,17 @@ class GroundItemService:
         items = []
         for gi, is_yours, is_public in visible_ground_items:
             item_id = gi["item_id"]
-            item = item_metadata.get(item_id)
+            item_wrapper = item_metadata.get(item_id)
             
-            if not item:
+            if not item_wrapper:
                 continue
+            
+            item_info = ItemService.item_to_info(item_wrapper._data)
                 
             items.append(
-                GroundItemInfo(
+                GroundItem(
                     id=gi["id"],
-                    item=ItemInfo(
-                        id=item_id,
-                        name=item.name,
-                        display_name=item.display_name,
-                        category=item.category,
-                        rarity=item.rarity,
-                        rarity_color=ItemRarity.get_color(item.rarity),
-                        max_stack_size=item.max_stack_size,
-                    ),
+                    item=item_info,
                     x=gi["x"],
                     y=gi["y"],
                     quantity=gi["quantity"],
@@ -415,77 +439,7 @@ class GroundItemService:
                 )
             )
 
-        return GroundItemsResponse(
-            items=items,
-            map_id=map_id,
-        )
-
-    @staticmethod
-    async def get_visible_ground_items_raw(
-        player_id: int,
-        map_id: str,
-        center_x: int,
-        center_y: int,
-        tile_radius: int = 16,
-    ) -> List[Dict[str, Any]]:
-        """
-        Get raw ground item data visible to a player (for game loop).
-        
-        This method returns raw ground item data with item metadata merged in,
-        suitable for the game loop's entity diff system.
-        
-        Args:
-            player_id: Player ID
-            map_id: Current map
-            center_x: Player's tile X position
-            center_y: Player's tile Y position
-            tile_radius: Visibility radius in tiles
-            
-        Returns:
-            List of raw ground item dicts with visibility filtering applied
-        """
-        ground_item_mgr = get_ground_item_manager()
-        all_items = await ground_item_mgr.get_ground_items_on_map(map_id)
-        now = datetime.now(timezone.utc).timestamp()
-
-        visible_items = []
-        unique_item_ids = set()
-        
-        for item in all_items:
-            if abs(item["x"] - center_x) > tile_radius:
-                continue
-            if abs(item["y"] - center_y) > tile_radius:
-                continue
-
-            is_owner = item.get("dropped_by_player_id") == player_id
-            loot_protection_expires_at = item.get("loot_protection_expires_at", 0)
-            is_public = loot_protection_expires_at <= now
-
-            if not is_owner and not is_public:
-                continue
-
-            item_with_metadata = item.copy()
-            item_with_metadata["is_protected"] = not is_public and not is_owner
-            item_with_metadata["is_yours"] = is_owner
-            visible_items.append(item_with_metadata)
-            unique_item_ids.add(item["item_id"])
-
-        item_metadata = {}
-        if unique_item_ids:
-            for item_id in unique_item_ids:
-                item = await ItemService.get_item_by_id(item_id)
-                if item:
-                    item_metadata[item_id] = item
-
-        for item in visible_items:
-            item_id = item["item_id"]
-            metadata = item_metadata.get(item_id)
-            if metadata:
-                item["item_name"] = metadata.name
-                item["display_name"] = metadata.display_name
-                item["rarity"] = metadata.rarity
-        
-        return visible_items
+        return items
 
     @staticmethod
     async def cleanup_expired_items(map_id: Optional[str] = None) -> int:
@@ -631,7 +585,7 @@ class GroundItemService:
         map_id: str,
         x: int,
         y: int,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[GroundItem]:
         """
         Get all ground items at a specific tile position.
 
@@ -641,8 +595,44 @@ class GroundItemService:
             y: Tile Y position
 
         Returns:
-            List of ground items at this position
+            List of GroundItem objects at this position
         """
         ground_item_mgr = get_ground_item_manager()
         all_items = await ground_item_mgr.get_ground_items_on_map(map_id)
-        return [item for item in all_items if item["x"] == x and item["y"] == y]
+        
+        items_at_pos = []
+        unique_item_ids = set()
+        
+        for item_data in all_items:
+            if item_data["x"] == x and item_data["y"] == y:
+                items_at_pos.append(item_data)
+                unique_item_ids.add(item_data["item_id"])
+        
+        item_metadata = {}
+        if unique_item_ids:
+            for item_id in unique_item_ids:
+                item_wrapper = await ItemService.get_item_by_id(item_id)
+                if item_wrapper:
+                    item_metadata[item_id] = item_wrapper
+        
+        result = []
+        for item_data in items_at_pos:
+            item_wrapper = item_metadata.get(item_data["item_id"])
+            if not item_wrapper:
+                continue
+            
+            item_info = ItemService.item_to_info(item_wrapper._data)
+            
+            result.append(
+                GroundItem(
+                    id=item_data["id"],
+                    item=item_info,
+                    x=item_data["x"],
+                    y=item_data["y"],
+                    quantity=item_data["quantity"],
+                    is_yours=False,
+                    is_protected=False,
+                )
+            )
+        
+        return result
