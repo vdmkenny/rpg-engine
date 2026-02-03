@@ -8,7 +8,6 @@ Supports both database-only and Valkey-first operations:
 """
 
 from typing import Optional, TYPE_CHECKING
-from dataclasses import dataclass
 
 from sqlalchemy import select, delete, func
 from sqlalchemy.orm import selectinload
@@ -25,13 +24,10 @@ from ..core.items import (
 )
 
 from ..schemas.item import (
-    AddItemResult,
-    RemoveItemResult,
-    MoveItemResult,
-    InventorySlotInfo,
-    InventoryResponse,
-    SortInventoryResult,
-    MergeStacksResult,
+    OperationResult,
+    OperationType,
+    InventoryData,
+    InventorySlot,
     ItemInfo,
 )
 from .item_service import ItemService
@@ -47,7 +43,7 @@ class InventoryService:
     """Service for managing player inventory."""
 
     @staticmethod
-    async def get_inventory(player_id: int) -> list:
+    async def get_inventory(player_id: int) -> InventoryData:
         """
         Get all inventory items for a player from GSM.
 
@@ -65,30 +61,28 @@ class InventoryService:
         # Get inventory data from GSM (the single source of truth)
         inventory_data = await inventory_mgr.get_inventory(player_id)
         
-        @dataclass
-        class InventoryItem:
-            """Simple data container matching test expectations."""
-            player_id: int
-            slot: int
-            item_id: int
-            quantity: int
-            durability: Optional[int] = None
+        # Convert GSM inventory data to InventorySlot objects
+        inventory_slots = []
+        for slot_num, item_data in inventory_data.items():
+            # Get item details
+            item = await ItemService.get_item_by_id(item_data["item_id"])
+            if item:
+                item_info = ItemService.item_to_info(item)
+                inventory_slots.append(InventorySlot(
+                    slot=int(slot_num),
+                    item=item_info,
+                    quantity=item_data["quantity"],
+                    current_durability=item_data.get("current_durability")
+                ))
         
-        # Convert GSM inventory data to simple objects for test compatibility
-        inventory_items = []
-        for slot, item_data in inventory_data.items():
-            inventory_items.append(InventoryItem(
-                player_id=player_id,
-                slot=int(slot),
-                item_id=item_data["item_id"],
-                quantity=item_data["quantity"],
-                durability=item_data.get("durability")
-            ))
-        
-        return inventory_items
+        return InventoryData(
+            slots=inventory_slots,
+            max_slots=settings.INVENTORY_MAX_SLOTS,
+            used_slots=len(inventory_slots)
+        )
 
     @staticmethod
-    async def get_inventory_response(player_id: int) -> InventoryResponse:
+    async def get_inventory_response(player_id: int) -> InventoryData:
         """
         Get full inventory state for API response.
 
@@ -96,43 +90,14 @@ class InventoryService:
             player_id: Player ID
 
         Returns:
-            InventoryResponse with all slot info
+            InventoryData with all slot info
         """
-        from .game_state import get_inventory_manager
-        from .item_service import ItemService
-        
-        inventory_mgr = get_inventory_manager()
-        inventory = await InventoryService.get_inventory(player_id)
-        max_slots = settings.INVENTORY_MAX_SLOTS
-
-        slots = []
-        for inv in inventory:
-            # Get item details for inventory display
-            item = await ItemService.get_item_by_id(inv.item_id)
-            if not item:
-                continue  # Skip items not found
-                
-            item_info = ItemService.item_to_info(item)
-            slots.append(
-                InventorySlotInfo(
-                    slot=inv.slot,
-                    item=item_info,
-                    quantity=inv.quantity,
-                    current_durability=inv.durability,
-                )
-            )
-
-        return InventoryResponse(
-            slots=slots,
-            max_slots=max_slots,
-            used_slots=len(slots),
-            free_slots=max_slots - len(slots),
-        )
+        return await InventoryService.get_inventory(player_id)
 
     @staticmethod
     async def get_item_at_slot(
         player_id: int, slot: int
-    ):
+    ) -> Optional[InventorySlot]:
         """
         Get inventory item at a specific slot.
 
@@ -141,37 +106,28 @@ class InventoryService:
             slot: Slot number (0-based)
 
         Returns:
-            Simple InventoryItem if slot is occupied, None if empty
+            InventorySlot if slot is occupied, None if empty
         """
-        from dataclasses import dataclass
         from .game_state import get_inventory_manager
-        
-        @dataclass
-        class InventoryItem:
-            """Simple data container matching updated architecture."""
-            player_id: int
-            slot: int
-            item_id: int
-            quantity: int
-            durability: Optional[int] = None
-            
-            @property
-            def current_durability(self):
-                """Backward compatibility property."""
-                return self.durability
         
         inventory_mgr = get_inventory_manager()
         slot_data = await inventory_mgr.get_inventory_slot(player_id, slot)
         if not slot_data:
             return None
         
-        # Return simple InventoryItem object
-        return InventoryItem(
-            player_id=player_id,
+        # Get item details
+        item = await ItemService.get_item_by_id(slot_data["item_id"])
+        if not item:
+            return None
+            
+        item_info = ItemService.item_to_info(item)
+        
+        # Return InventorySlot
+        return InventorySlot(
             slot=slot,
-            item_id=slot_data["item_id"],
+            item=item_info,
             quantity=slot_data["quantity"],
-            durability=slot_data.get("current_durability")
+            current_durability=slot_data.get("current_durability")
         )
 
     @staticmethod
@@ -257,7 +213,7 @@ class InventoryService:
         item_id: int,
         quantity: int = 1,
         durability: Optional[int] = None,
-    ) -> AddItemResult:
+    ) -> OperationResult:
         """
         Add an item to a player's inventory.
 
@@ -272,23 +228,25 @@ class InventoryService:
             durability: Current durability (uses max if None)
 
         Returns:
-            AddItemResult with success status and details
+            OperationResult with success status and details
         """
         from .game_state import get_inventory_manager
         from .item_service import ItemService
         
         inventory_mgr = get_inventory_manager()
         if quantity <= 0:
-            return AddItemResult(
+            return OperationResult(
                 success=False,
                 message="Quantity must be positive",
+                operation=OperationType.ADD,
             )
         # Get item information for adding to inventory
         item = await ItemService.get_item_by_id(item_id)
         if not item:
-            return AddItemResult(
+            return OperationResult(
                 success=False,
                 message="Item not found",
+                operation=OperationType.ADD,
             )
 
         # Set durability to max if not specified and item has durability
@@ -317,10 +275,11 @@ class InventoryService:
                 
                 remaining = quantity - add_amount
                 if remaining == 0:
-                    return AddItemResult(
+                    return OperationResult(
                         success=True,
-                        slot=slot_num,
                         message=f"Added {quantity} {item.display_name} to existing stack",
+                        operation=OperationType.ADD,
+                        data={"slot": slot_num, "quantity": quantity},
                     )
                 else:
                     # Continue with remaining quantity
@@ -340,18 +299,19 @@ class InventoryService:
                 # No more space available
                 if first_slot_created is not None:
                     # Some items were added successfully
-                    return AddItemResult(
+                    return OperationResult(
                         success=True,
-                        slot=first_slot_created,
-                        overflow_quantity=quantity,
                         message=f"Added items to {item.display_name}, {quantity} items couldn't fit",
+                        operation=OperationType.ADD,
+                        data={"slot": first_slot_created, "overflow_quantity": quantity},
                     )
                 else:
                     # No items were added
-                    return AddItemResult(
+                    return OperationResult(
                         success=False,
-                        overflow_quantity=quantity,
                         message="Inventory is full",
+                        operation=OperationType.ADD,
+                        data={"overflow_quantity": quantity},
                     )
             
             # Determine how much can go in this slot (respect max_stack_size)
@@ -372,10 +332,11 @@ class InventoryService:
             quantity -= slot_quantity
 
         # All items successfully added
-        return AddItemResult(
+        return OperationResult(
             success=True,
-            slot=first_slot_created,
             message=f"Added items to {item.display_name}",
+            operation=OperationType.ADD,
+            data={"slot": first_slot_created},
         )
 
     @staticmethod
@@ -383,7 +344,7 @@ class InventoryService:
         player_id: int,
         slot: int,
         quantity: int = 1,
-    ) -> RemoveItemResult:
+    ) -> OperationResult:
         """
         Remove items from a specific inventory slot.
 
@@ -393,33 +354,36 @@ class InventoryService:
             quantity: Number of items to remove
 
         Returns:
-            RemoveItemResult with success status
+            OperationResult with success status
         """
         from .game_state import get_inventory_manager
         
         inventory_mgr = get_inventory_manager()
         if quantity <= 0:
-            return RemoveItemResult(
+            return OperationResult(
                 success=False,
                 message="Quantity must be positive",
-                removed_quantity=0,
+                operation=OperationType.REMOVE,
+                data={"removed_quantity": 0},
             )
 
         # Get current slot state from GSM
         slot_data = await inventory_mgr.get_inventory_slot(player_id, slot)
         if not slot_data:
-            return RemoveItemResult(
+            return OperationResult(
                 success=False,
                 message="Slot is empty",
-                removed_quantity=0,
+                operation=OperationType.REMOVE,
+                data={"removed_quantity": 0},
             )
         
         current_qty = slot_data["quantity"]
         if current_qty < quantity:
-            return RemoveItemResult(
+            return OperationResult(
                 success=False,
                 message=f"Not enough items (have {current_qty}, need {quantity})",
-                removed_quantity=0,
+                operation=OperationType.REMOVE,
+                data={"removed_quantity": 0},
             )
         
         new_qty = current_qty - quantity
@@ -433,10 +397,11 @@ class InventoryService:
                 float(slot_data.get("current_durability", 1.0))
             )
         
-        return RemoveItemResult(
+        return OperationResult(
             success=True,
             message=f"Removed {quantity} items",
-            removed_quantity=quantity,
+            operation=OperationType.REMOVE,
+            data={"slot": slot, "removed_quantity": quantity},
         )
 
     @staticmethod
@@ -444,7 +409,7 @@ class InventoryService:
         player_id: int,
         from_slot: int,
         to_slot: int,
-    ) -> MoveItemResult:
+    ) -> OperationResult:
         """
         Move or swap items between inventory slots.
 
@@ -457,7 +422,7 @@ class InventoryService:
             to_slot: Destination slot number
 
         Returns:
-            MoveItemResult with success status
+            OperationResult with success status
         """
         from .game_state import get_inventory_manager
         from .item_service import ItemService
@@ -466,22 +431,42 @@ class InventoryService:
         max_slots = settings.INVENTORY_MAX_SLOTS
 
         if from_slot < 0 or from_slot >= max_slots:
-            return MoveItemResult(success=False, message="Invalid source slot")
+            return OperationResult(
+                success=False, 
+                message="Invalid source slot",
+                operation=OperationType.MOVE,
+            )
 
         if to_slot < 0 or to_slot >= max_slots:
-            return MoveItemResult(success=False, message="Invalid destination slot")
+            return OperationResult(
+                success=False, 
+                message="Invalid destination slot",
+                operation=OperationType.MOVE,
+            )
 
         if from_slot == to_slot:
-            return MoveItemResult(success=True, message="Same slot")
+            return OperationResult(
+                success=True, 
+                message="Same slot",
+                operation=OperationType.MOVE,
+            )
 
         # Get current inventory state for move operation
         inventory_data = await inventory_mgr.get_inventory(player_id)
         if not inventory_data:
-            return MoveItemResult(success=False, message="Inventory not found")
+            return OperationResult(
+                success=False, 
+                message="Inventory not found",
+                operation=OperationType.MOVE,
+            )
             
         from_data = inventory_data.get(from_slot)
         if not from_data:
-            return MoveItemResult(success=False, message="Source slot is empty")
+            return OperationResult(
+                success=False, 
+                message="Source slot is empty",
+                operation=OperationType.MOVE,
+            )
             
         to_data = inventory_data.get(to_slot)
         
@@ -520,7 +505,12 @@ class InventoryService:
                             float(to_data.get("current_durability", 1.0))
                         )
                         
-                        return MoveItemResult(success=True, message=f"Merged {transfer_amount} items")
+                        return OperationResult(
+                            success=True, 
+                            message=f"Merged {transfer_amount} items",
+                            operation=OperationType.MOVE,
+                            data={"from_slot": from_slot, "to_slot": to_slot, "merged_amount": transfer_amount},
+                        )
             
             # Swap items
             await inventory_mgr.set_inventory_slot(
@@ -531,7 +521,12 @@ class InventoryService:
                 player_id, to_slot, from_data["item_id"], 
                 from_data.get("quantity", 1), float(from_data.get("current_durability", 1.0))
             )
-            return MoveItemResult(success=True, message="Items swapped")
+            return OperationResult(
+                success=True, 
+                message="Items swapped",
+                operation=OperationType.MOVE,
+                data={"from_slot": from_slot, "to_slot": to_slot},
+            )
         else:
             # Move item to empty slot
             await inventory_mgr.set_inventory_slot(
@@ -539,7 +534,12 @@ class InventoryService:
                 from_data.get("quantity", 1), float(from_data.get("current_durability", 1.0))
             )
             await inventory_mgr.delete_inventory_slot(player_id, from_slot)
-            return MoveItemResult(success=True, message="Item moved")
+            return OperationResult(
+                success=True, 
+                message="Item moved",
+                operation=OperationType.MOVE,
+                data={"from_slot": from_slot, "to_slot": to_slot},
+            )
 
     @staticmethod
     async def has_item(
@@ -598,7 +598,7 @@ class InventoryService:
         return slots_cleared
 
     @staticmethod
-    async def merge_stacks(player_id: int) -> MergeStacksResult:
+    async def merge_stacks(player_id: int) -> OperationResult:
         """
         Merge all split stacks of the same item type.
 
@@ -608,7 +608,7 @@ class InventoryService:
             player_id: Player ID
 
         Returns:
-            MergeStacksResult with merge statistics
+            OperationResult with merge statistics
         """
         from .game_state import get_inventory_manager
         
@@ -702,11 +702,11 @@ class InventoryService:
             },
         )
 
-        return MergeStacksResult(
+        return OperationResult(
             success=True,
             message=f"Merged {stacks_merged} stacks, freed {slots_freed} slots",
-            stacks_merged=stacks_merged,
-            slots_freed=slots_freed,
+            operation=OperationType.MERGE,
+            data={"stacks_merged": stacks_merged, "slots_freed": slots_freed},
         )
 
     @staticmethod
@@ -762,7 +762,7 @@ class InventoryService:
     @staticmethod
     async def sort_inventory(
         player_id: int, sort_type: InventorySortType
-    ) -> SortInventoryResult:
+    ) -> OperationResult:
         """
         Sort inventory by the specified criteria.
 
@@ -774,7 +774,7 @@ class InventoryService:
             sort_type: How to sort the inventory
 
         Returns:
-            SortInventoryResult with sort statistics
+            OperationResult with sort statistics
         """
         from .game_state import get_inventory_manager, get_reference_data_manager
         
@@ -783,26 +783,26 @@ class InventoryService:
         
         # First, merge stacks
         merge_result = await InventoryService.merge_stacks(player_id)
-        stacks_merged = merge_result.stacks_merged
+        stacks_merged = merge_result.data.get("stacks_merged", 0) if merge_result.data else 0
 
         # If STACK_MERGE only, we're done
         if sort_type == InventorySortType.STACK_MERGE:
-            return SortInventoryResult(
+            return OperationResult(
                 success=True,
                 message=f"Merged {stacks_merged} stacks",
-                items_moved=0,
-                stacks_merged=stacks_merged,
+                operation=OperationType.SORT,
+                data={"items_moved": 0, "stacks_merged": stacks_merged},
             )
 
         # Get all inventory items from GSM
         inventory_data = await inventory_mgr.get_inventory(player_id)
 
         if not inventory_data:
-            return SortInventoryResult(
+            return OperationResult(
                 success=True,
                 message="Inventory is empty",
-                items_moved=0,
-                stacks_merged=stacks_merged,
+                operation=OperationType.SORT,
+                data={"items_moved": 0, "stacks_merged": stacks_merged},
             )
 
         # Create list of items with metadata for sorting
@@ -816,11 +816,11 @@ class InventoryService:
                 items_with_meta.append((slot, slot_data, item_meta))
 
         if not items_with_meta:
-            return SortInventoryResult(
+            return OperationResult(
                 success=True,
                 message="No valid items to sort",
-                items_moved=0,
-                stacks_merged=stacks_merged,
+                operation=OperationType.SORT,
+                data={"items_moved": 0, "stacks_merged": stacks_merged},
             )
 
         # Sort items by the specified criteria
@@ -862,9 +862,9 @@ class InventoryService:
             },
         )
 
-        return SortInventoryResult(
+        return OperationResult(
             success=True,
             message=f"Sorted by {sort_type.value}",
-            items_moved=items_moved,
-            stacks_merged=stacks_merged,
+            operation=OperationType.SORT,
+            data={"items_moved": items_moved, "stacks_merged": stacks_merged},
         )
