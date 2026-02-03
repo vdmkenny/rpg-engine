@@ -49,6 +49,7 @@ from common.src.sprites import (
     AppearanceData,
     EquippedVisuals,
 )
+from server.src.schemas.item import EquipmentData, GroundItem
 
 logger = get_logger(__name__)
 
@@ -210,29 +211,30 @@ def is_in_visible_range(
             abs(target_y - player_y) <= visible_range)
 
 
-def _build_equipped_items_map(equipment: Optional[Dict[str, Dict]], reference_mgr) -> Optional[Dict[str, str]]:
+def _build_equipped_items_map(equipment_data: Optional[EquipmentData], reference_mgr) -> Optional[Dict[str, str]]:
     """
     Convert equipment data to slot->item_name mapping for paperdoll rendering.
     
     Args:
-        equipment: Dict of {slot: {item_id, quantity, ...}}
+        equipment_data: EquipmentData Pydantic model with slots list
         reference_mgr: ReferenceDataManager for item cache lookup
         
     Returns:
         Dict of {slot: item_name} or None if no equipment
     """
-    if not equipment:
+    
+    if not equipment_data or not equipment_data.slots:
         return None
     
     equipped_items = {}
-    for slot, item_data in equipment.items():
-        item_id = item_data.get("item_id")
-        if not item_id:
+    for slot_data in equipment_data.slots:
+        if not slot_data.item:
             continue
+        item_id = slot_data.item.id
         item_meta = reference_mgr.get_item_meta(item_id)
         if not item_meta:
             continue
-        equipped_items[slot] = item_meta.get("name", "")
+        equipped_items[slot_data.slot.value] = item_meta.get("name", "")
     
     return equipped_items if equipped_items else None
 
@@ -929,8 +931,8 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             current_hp = new_hp  # Use updated HP for this tick
                         
                         # Get equipped items for paperdoll rendering
-                        equipment = await EquipmentService.get_equipment_raw(player_id)
-                        equipped_items = _build_equipped_items_map(equipment, reference_mgr)
+                        equipment_data = await EquipmentService.get_equipment(player_id)
+                        equipped_items = _build_equipped_items_map(equipment_data, reference_mgr)
                         
                         # Build visual state and register with visual registry
                         visual_state = _build_visual_state(appearance, equipped_items)
@@ -1046,7 +1048,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     
                     # Get ground items visible to this player
                     from ..services.ground_item_service import GroundItemService
-                    visible_ground_items = await GroundItemService.get_visible_ground_items_raw(
+                    visible_ground_items = await GroundItemService.get_visible_ground_items(
                         player_id=player_id,
                         map_id=map_id,
                         center_x=player_x,
@@ -1054,20 +1056,20 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         tile_radius=32,  # Same as visibility range
                     )
                     
-                    # Convert to dict keyed by ground item ID
+                    # Convert GroundItem Pydantic models to dicts for visibility tracking
                     current_visible_ground_items = {}
-                    for item in visible_ground_items:
-                        current_visible_ground_items[item["id"]] = {
+                    for ground_item in visible_ground_items:
+                        current_visible_ground_items[ground_item.id] = {
                             "type": "ground_item",
-                            "id": item["id"],
-                            "item_id": item["item_id"],
-                            "item_name": item["item_name"],
-                            "display_name": item["display_name"],
-                            "rarity": item["rarity"],
-                            "x": item["x"],
-                            "y": item["y"],
-                            "quantity": item["quantity"],
-                            "is_protected": item.get("is_protected", False),
+                            "id": ground_item.id,
+                            "item_id": ground_item.item.id,
+                            "item_name": ground_item.item.name,
+                            "display_name": ground_item.item.display_name,
+                            "rarity": ground_item.item.rarity.value,
+                            "x": ground_item.x,
+                            "y": ground_item.y,
+                            "quantity": ground_item.quantity,
+                            "is_protected": not ground_item.is_yours and ground_item.is_protected,
                         }
                     
                     # Combine players and ground items into single visibility state
