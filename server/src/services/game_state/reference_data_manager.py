@@ -37,6 +37,7 @@ class ReferenceDataManager(BaseManager):
         super().__init__(valkey_client, session_factory)
         # In-memory cache for fast synchronous access
         self._item_cache: Dict[int, Dict[str, Any]] = {}
+        self._item_cache_by_name: Dict[str, Dict[str, Any]] = {}
 
     # =========================================================================
     # Item Reference Data
@@ -56,8 +57,11 @@ class ReferenceDataManager(BaseManager):
                 items = result.scalars().all()
 
                 self._item_cache = {}
+                self._item_cache_by_name = {}
                 for item in items:
-                    self._item_cache[item.id] = self._item_to_dict(item)
+                    item_dict = self._item_to_dict(item)
+                    self._item_cache[item.id] = item_dict
+                    self._item_cache_by_name[item.name.lower()] = item_dict
 
                 # Also cache in Valkey for other services
                 if self._valkey and settings.USE_VALKEY:
@@ -112,6 +116,10 @@ class ReferenceDataManager(BaseManager):
     def get_all_cached_items(self) -> Dict[int, Dict[str, Any]]:
         """Get all cached item metadata."""
         return dict(self._item_cache)
+
+    def get_cached_item_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get item metadata by name (case-insensitive, from memory cache)."""
+        return self._item_cache_by_name.get(name.lower())
 
     async def get_item_from_valkey(self, item_id: int) -> Optional[Dict[str, Any]]:
         """Get item from Valkey cache (for cross-service access)."""

@@ -87,24 +87,17 @@ class ItemService:
         Get an item by its internal name using reference data manager.
 
         Args:
-            name: Internal item name (e.g., "bronze_sword")
+            name: Internal item name (e.g., "bronze_shortsword")
 
         Returns:
             ItemWrapper object if found, None otherwise
         """
         ref_mgr = get_reference_data_manager()
         
-        # Get all cached items and search by name
-        cached_items = ref_mgr.get_all_cached_items()
-        for item_id, item_data in cached_items.items():
-            # Compare lowercase names for case-insensitive matching
-            if item_data.get("name", "").lower() == name.lower():
-                # Create a copy to avoid modifying cached data
-                item_copy = dict(item_data)
-                item_copy["id"] = item_id  # Ensure ID is included
-                if isinstance(item_copy["id"], str):
-                    item_copy["id"] = int(item_copy["id"])
-                return ItemWrapper(item_copy)  # Return wrapped item data
+        # Lookup by name in reference data manager
+        item_data = ref_mgr.get_cached_item_by_name(name)
+        if item_data:
+            return ItemWrapper(item_data)
         
         return None
 
@@ -121,14 +114,8 @@ class ItemService:
         """
         ref_mgr = get_reference_data_manager()
         
-        # Check item reference data first (fastest lookup)
-        cached_item = ref_mgr.get_cached_item_meta(item_id)
-        if cached_item:
-            # Return wrapped reference data
-            return ItemWrapper(cached_item)
-        
-        # Retrieve item data from Valkey if available
-        item_data = await ref_mgr.get_item_from_valkey(item_id)
+        # Lookup in reference data manager cache
+        item_data = ref_mgr.get_cached_item_meta(item_id)
         if item_data:
             return ItemWrapper(item_data)
         

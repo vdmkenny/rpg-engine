@@ -191,6 +191,37 @@ class EquipmentService:
         return eq
 
     @staticmethod
+    def _calculate_stats_from_equipment(equipment_data: Dict[str, Dict[str, Any]]) -> ItemStats:
+        """
+        Calculate total stats from equipment data.
+        
+        Helper method for testing - calculates stats from equipment dict
+        without requiring database access.
+        
+        Args:
+            equipment_data: Dict mapping slot names to item data dicts
+            
+        Returns:
+            ItemStats with aggregated values
+        """
+        stats = ItemStats()
+        
+        for slot_data in equipment_data.values():
+            if slot_data:
+                stats.attack_bonus += slot_data.get("attack_bonus", 0)
+                stats.strength_bonus += slot_data.get("strength_bonus", 0)
+                stats.ranged_attack_bonus += slot_data.get("ranged_attack_bonus", 0)
+                stats.ranged_strength_bonus += slot_data.get("ranged_strength_bonus", 0)
+                stats.magic_attack_bonus += slot_data.get("magic_attack_bonus", 0)
+                stats.magic_damage_bonus += slot_data.get("magic_damage_bonus", 0)
+                stats.physical_defence_bonus += slot_data.get("physical_defence_bonus", 0)
+                stats.magic_defence_bonus += slot_data.get("magic_defence_bonus", 0)
+                stats.health_bonus += slot_data.get("health_bonus", 0)
+                stats.speed_bonus += slot_data.get("speed_bonus", 0)
+        
+        return stats
+
+    @staticmethod
     async def get_total_stats(player_id: int) -> ItemStats:
         """
         Calculate total stats from all equipped items.
@@ -223,26 +254,8 @@ class EquipmentService:
             if item_info:
                 items_stats[item_id] = item_info
         
-        # Calculate total stats
-        stats = ItemStats()
-        for slot_data in equipment_data.values():
-            item_info = items_stats.get(slot_data["item_id"])
-            if item_info:
-                stats.attack_bonus += item_info.get("attack_bonus", 0)
-                stats.strength_bonus += item_info.get("strength_bonus", 0)
-                stats.ranged_attack_bonus += item_info.get("ranged_attack_bonus", 0)
-                stats.ranged_strength_bonus += item_info.get("ranged_strength_bonus", 0)
-                stats.magic_attack_bonus += item_info.get("magic_attack_bonus", 0)
-                stats.magic_damage_bonus += item_info.get("magic_damage_bonus", 0)
-                stats.physical_defence_bonus += item_info.get("physical_defence_bonus", 0)
-                stats.magic_defence_bonus += item_info.get("magic_defence_bonus", 0)
-                stats.health_bonus += item_info.get("health_bonus", 0)
-                stats.speed_bonus += item_info.get("speed_bonus", 0)
-                stats.mining_bonus += item_info.get("mining_bonus", 0)
-                stats.woodcutting_bonus += item_info.get("woodcutting_bonus", 0)
-                stats.fishing_bonus += item_info.get("fishing_bonus", 0)
-
-        return stats
+        # Use helper method for calculation
+        return EquipmentService._calculate_stats_from_equipment(items_stats)
 
     @staticmethod
     async def get_max_hp(player_id: int) -> int:
