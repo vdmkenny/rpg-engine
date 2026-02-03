@@ -4,7 +4,7 @@ Handles player state, inventory, equipment, skills, entities, and combat.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Union
 from enum import Enum
 import time
 
@@ -389,19 +389,36 @@ class ClientGameState:
     # SKILLS METHODS
     # =========================================================================
     
-    def set_skills(self, skills_data: List[Dict[str, Any]]) -> None:
-        """Set skills from server response. Expects list format."""
+    def set_skills(self, skills_data: Union[Dict[str, Any], List[Dict[str, Any]]]) -> None:
+        """
+        Set skills from server response. 
+        Accepts either:
+        - Dict format: {"attack": {"level": 1, "xp": 0}, ...}
+        - List format: [{"name": "attack", "level": 1, "experience": 0}, ...]
+        """
         self.skills.clear()
         
-        for skill_info in skills_data:
-            skill_name = skill_info.get("name", "")
-            if skill_name:
-                self.skills[skill_name] = Skill(
-                    name=skill_name,
-                    level=skill_info.get("current_level", skill_info.get("level", 1)),
-                    experience=skill_info.get("experience", 0),
-                    next_level_xp=skill_info.get("xp_for_next_level", skill_info.get("next_level_xp", 83))
-                )
+        # Handle dict format (keyed by skill name)
+        if isinstance(skills_data, dict):
+            for skill_name, skill_info in skills_data.items():
+                if skill_name:
+                    self.skills[skill_name] = Skill(
+                        name=skill_name,
+                        level=skill_info.get("level", 1),
+                        experience=skill_info.get("xp", skill_info.get("experience", 0)),
+                        next_level_xp=skill_info.get("xp_for_next_level", skill_info.get("next_level_xp", 83))
+                    )
+        # Handle list format (array of skill objects)
+        else:
+            for skill_info in skills_data:
+                skill_name = skill_info.get("name", "")
+                if skill_name:
+                    self.skills[skill_name] = Skill(
+                        name=skill_name,
+                        level=skill_info.get("current_level", skill_info.get("level", 1)),
+                        experience=skill_info.get("experience", 0),
+                        next_level_xp=skill_info.get("xp_for_next_level", skill_info.get("next_level_xp", 83))
+                    )
     
     def update_skill(self, skill_name: str, level: int, experience: int) -> None:
         """Update a single skill."""

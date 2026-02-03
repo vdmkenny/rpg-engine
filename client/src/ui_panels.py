@@ -1,5 +1,5 @@
 """
-OSRS-style UI components for the RPG client.
+Classic RPG-style UI components for the RPG client.
 Stone/brown themed interface panels with classic MMO aesthetics.
 """
 
@@ -21,7 +21,7 @@ from common.src.protocol import ChatChannel
 # =============================================================================
 
 class Colors:
-    """OSRS-inspired color palette."""
+    """Classic RPG color palette."""
     # Stone/Brown Theme
     STONE_DARK = (59, 50, 41)
     STONE_MEDIUM = (79, 67, 55)
@@ -194,7 +194,7 @@ class UIPanel:
 # =============================================================================
 
 class InventoryPanel(UIPanel):
-    """OSRS-style 28-slot inventory panel."""
+    """Classic 28-slot grid inventory panel."""
     
     SLOT_SIZE = 36
     SLOT_PADDING = 2
@@ -325,7 +325,7 @@ class InventoryPanel(UIPanel):
 # =============================================================================
 
 class EquipmentPanel(UIPanel):
-    """OSRS-style equipment panel with slot layout."""
+    """Equipment panel with paperdoll slot layout."""
     
     SLOT_SIZE = 36
     
@@ -450,7 +450,7 @@ class EquipmentPanel(UIPanel):
 # =============================================================================
 
 class StatsPanel(UIPanel):
-    """OSRS-style stats/skills panel."""
+    """Character stats and skills panel."""
     
     SKILL_ICON_SIZE = 24
     SKILLS_PER_ROW = 3
@@ -476,7 +476,8 @@ class StatsPanel(UIPanel):
     
     def set_skills(self, skills: Dict[str, dict]) -> None:
         """Set skills data."""
-        self.skills = skills
+        # Normalize keys to lowercase for consistent lookup
+        self.skills = {k.lower(): v for k, v in skills.items()}
     
     def draw(self, screen: pygame.Surface, font: pygame.font.Font) -> None:
         """Draw the stats panel."""
@@ -485,49 +486,53 @@ class StatsPanel(UIPanel):
         
         super().draw(screen, font)
         
-        small_font = pygame.font.Font(None, 16)
-        tiny_font = pygame.font.Font(None, 14)
+        y_offset = self.y + 30
         
-        start_y = self.y + 28
+        for section_name, keybindings in self.CONTROLS:
+            # Section header
+            header_surface = small_font.render(section_name, True, Colors.TEXT_ORANGE)
+            screen.blit(header_surface, (self.x + 10, y_offset))
+            y_offset += 22
+            
+            # Keybindings
+            for key, description in keybindings:
+                # Key
+                key_surface = tiny_font.render(key, True, Colors.TEXT_YELLOW)
+                screen.blit(key_surface, (self.x + 20, y_offset))
+                
+                # Description
+                desc_surface = tiny_font.render(f"- {description}", True, Colors.TEXT_WHITE)
+                screen.blit(desc_surface, (self.x + 120, y_offset))
+                
+                y_offset += 18
+            
+            y_offset += 8  # Space between sections
         
-        for i, skill_name in enumerate(self.SKILL_ORDER):
-            if skill_name not in self.skills:
-                continue
-            
-            skill = self.skills[skill_name]
-            col = i % self.SKILLS_PER_ROW
-            row = i // self.SKILLS_PER_ROW
-            
-            x = self.x + 8 + col * 64
-            y = start_y + row * 30
-            
-            rect = pygame.Rect(x, y, 60, 26)
-            
-            # Background
-            if skill_name == self.hovered_skill:
-                pygame.draw.rect(screen, Colors.SLOT_HOVER, rect)
-            else:
-                pygame.draw.rect(screen, Colors.SLOT_BG, rect)
-            pygame.draw.rect(screen, Colors.SLOT_BORDER, rect, 1)
-            
-            # Skill name abbreviation
-            abbr = skill_name[:3].capitalize()
-            abbr_surface = tiny_font.render(abbr, True, Colors.TEXT_GRAY)
-            screen.blit(abbr_surface, (x + 2, y + 2))
-            
-            # Level
-            level = skill.get("level", 1)
-            level_surface = small_font.render(str(level), True, Colors.TEXT_YELLOW)
-            screen.blit(level_surface, (x + 38, y + 6))
+        # Close hint at bottom
+        close_text = tiny_font.render("Press ? or click X to close", True, Colors.TEXT_GRAY)
+        screen.blit(close_text, (self.x + (self.width - close_text.get_width()) // 2, self.y + self.height - 24))
+        
+        # Close button (X)
+        close_rect = pygame.Rect(self.x + self.width - 24, self.y + 6, 18, 18)
+        pygame.draw.rect(screen, Colors.STONE_DARK, close_rect)
+        pygame.draw.rect(screen, Colors.SLOT_BORDER, close_rect, 1)
+        x_surface = small_font.render("X", True, Colors.TEXT_RED)
+        screen.blit(x_surface, (close_rect.x + 4, close_rect.y + 1))
     
     def handle_event(self, event: pygame.event.Event) -> bool:
-        """Handle stats events."""
+        """Handle help panel events."""
+        if not self.visible:
+            return False
+        
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            # Check close button
+            close_rect = pygame.Rect(self.x + self.width - 24, self.y + 6, 18, 18)
+            if close_rect.collidepoint(event.pos):
+                self.visible = False
+                return True
+        
         return super().handle_event(event)
 
-
-# =============================================================================
-# HEALTH/PRAYER/RUN ORBS
-# =============================================================================
 
 class StatusOrb:
     """Circular status orb (HP, Prayer, Run Energy)."""
@@ -559,20 +564,10 @@ class StatusOrb:
         # Background circle (dark)
         pygame.draw.circle(screen, Colors.PANEL_BG, (self.x, self.y), self.radius)
         
-        # Progress arc
+        # Progress fill
         if self.max_value > 0:
             ratio = self.current_value / self.max_value
-            # Draw as a filled portion
-            end_angle = 3.14159 * 2 * ratio - 3.14159 / 2
-            
-            # Simple filled circle approach for now
             fill_height = int(self.radius * 2 * ratio)
-            fill_rect = pygame.Rect(
-                self.x - self.radius,
-                self.y + self.radius - fill_height,
-                self.radius * 2,
-                fill_height
-            )
             
             # Create a clipping mask
             clip_surface = pygame.Surface((self.radius * 2, self.radius * 2), pygame.SRCALPHA)
@@ -593,13 +588,25 @@ class StatusOrb:
         # Border
         pygame.draw.circle(screen, Colors.PANEL_BORDER, (self.x, self.y), self.radius, 2)
         
-        # Value text
-        small_font = pygame.font.Font(None, 18)
-        value_text = f"{self.current_value}"
-        text_surface = small_font.render(value_text, True, Colors.TEXT_WHITE)
-        text_x = self.x - text_surface.get_width() // 2
-        text_y = self.y - text_surface.get_height() // 2
-        screen.blit(text_surface, (text_x, text_y))
+        # HP orb special rendering
+        if self.label == "HP":
+            hp_surface = font.render("HP", True, (180, 0, 0))  # Darker red
+            hp_x = self.x - hp_surface.get_width() // 2
+            hp_y = self.y - 9
+            screen.blit(hp_surface, (hp_x, hp_y))
+            
+            value_text = f"{self.current_value}"
+            text_surface = font.render(value_text, True, Colors.TEXT_WHITE)
+            text_x = self.x - text_surface.get_width() // 2
+            text_y = self.y + 3
+            screen.blit(text_surface, (text_x, text_y))
+        else:
+            # Other orbs show number only
+            value_text = f"{self.current_value}"
+            text_surface = font.render(value_text, True, Colors.TEXT_WHITE)
+            text_x = self.x - text_surface.get_width() // 2
+            text_y = self.y - text_surface.get_height() // 2
+            screen.blit(text_surface, (text_x, text_y))
 
 
 # =============================================================================
@@ -698,11 +705,11 @@ class Minimap(UIPanel):
 
 
 # =============================================================================
-# CHAT WINDOW (Updated with OSRS style)
+# CHAT WINDOW
 # =============================================================================
 
 class ChatWindow(UIPanel):
-    """OSRS-style chat window with tabs."""
+    """Classic RPG-style chat window with tabs."""
     
     TAB_HEIGHT = 24
     
@@ -781,8 +788,12 @@ class ChatWindow(UIPanel):
         if not self.visible:
             return
         
-        # Background
-        pygame.draw.rect(screen, (*Colors.PANEL_BG, 200), (self.x, self.y, self.width, self.height))
+        # Translucent background
+        chat_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        chat_surface.fill((*Colors.PANEL_BG, 180))  # 70% opacity
+        screen.blit(chat_surface, (self.x, self.y))
+        
+        # Border
         pygame.draw.rect(screen, Colors.PANEL_BORDER, (self.x, self.y, self.width, self.height), 2)
         
         # Draw tabs
@@ -1112,8 +1123,7 @@ class HelpButton:
         pygame.draw.rect(screen, Colors.STONE_HIGHLIGHT, self.rect, 2)
         
         # Question mark
-        q_font = pygame.font.Font(None, 24)
-        q_surface = q_font.render("?", True, Colors.TEXT_WHITE)
+        q_surface = font.render("?", True, Colors.TEXT_WHITE)
         q_x = self.x + (self.size - q_surface.get_width()) // 2
         q_y = self.y + (self.size - q_surface.get_height()) // 2
         screen.blit(q_surface, (q_x, q_y))
@@ -1172,7 +1182,7 @@ class LogoutButton:
 
 class TabbedSidePanel:
     """
-    OSRS-style tabbed side panel that combines inventory, equipment, stats, and settings.
+    Tabbed side panel that combines inventory, equipment, stats, and settings.
     Positioned below the minimap on the right side.
     """
     
@@ -1258,7 +1268,8 @@ class TabbedSidePanel:
     
     def set_skills(self, skills: Dict[str, dict]) -> None:
         """Set skills data."""
-        self.skills = skills
+        # Normalize keys to lowercase for consistent lookup
+        self.skills = {k.lower(): v for k, v in skills.items()}
     
     def draw(self, screen: pygame.Surface, font: pygame.font.Font) -> None:
         """Draw the tabbed panel."""
@@ -1359,7 +1370,7 @@ class TabbedSidePanel:
         """Draw equipment slots."""
         slot_size = 34
         
-        # OSRS-style equipment layout - centered
+        # Equipment slot layout - centered
         center_x = content_rect.x + content_rect.width // 2
         
         slot_positions = {

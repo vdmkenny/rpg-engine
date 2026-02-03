@@ -15,6 +15,7 @@ from server.src.services.player_service import PlayerService
 from server.src.services.hp_service import HpService
 from server.src.services.connection_service import ConnectionService
 from server.src.services.visual_state_service import VisualStateService
+from server.src.services.skill_service import SkillService
 
 from common.src.protocol import (
     WSMessage,
@@ -92,6 +93,55 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
         
         packed_chat = msgpack.packb(welcome_chat.model_dump(), use_bin_type=True)
         await websocket.send_bytes(packed_chat)
+        
+        # Send initial skills data
+        try:
+            logger.info(f"Fetching skills for player {player_id}")
+            player_skills = await SkillService.get_player_skills(player_id)
+            logger.info(f"Retrieved {len(player_skills)} skills from database")
+            
+            # Format skills for client (convert from list to dict keyed by skill name)
+            skills_dict = {}
+            for skill in player_skills:
+                skill_name = skill.get("name", "").lower()
+                skills_dict[skill_name] = {
+                    "level": skill.get("current_level", 1),
+                    "xp": skill.get("experience", 0),
+                }
+            
+            logger.info(
+                "Sending skills to client",
+                extra={"player_id": player_id, "skill_names": list(skills_dict.keys()), "count": len(skills_dict)}
+            )
+            
+            # Send skills as state update
+            skills_update = WSMessage(
+                id=None,
+                type=MessageType.EVENT_STATE_UPDATE,
+                payload={
+                    "update_type": "full",
+                    "target": "personal",
+                    "systems": {
+                        "skills": skills_dict
+                    }
+                },
+                version=PROTOCOL_VERSION
+            )
+            
+            packed_skills = msgpack.packb(skills_update.model_dump(), use_bin_type=True)
+            await websocket.send_bytes(packed_skills)
+            logger.info(f"Skills sent successfully to player {player_id}")
+            
+        except Exception as skills_error:
+            logger.error(
+                "Error sending skills data",
+                extra={
+                    "player_id": player_id,
+                    "error": str(skills_error),
+                    "error_type": type(skills_error).__name__,
+                    "traceback": traceback.format_exc()
+                }
+            )
         
         logger.debug(
             "Welcome messages sent",

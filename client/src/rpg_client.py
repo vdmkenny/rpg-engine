@@ -91,10 +91,17 @@ class RPGClient:
         pygame.display.set_caption("RPG Client")
         self.clock = pygame.time.Clock()
         
-        # Fonts
-        self.font = pygame.font.Font(None, 36)
-        self.small_font = pygame.font.Font(None, 24)
-        self.tiny_font = pygame.font.Font(None, 18)
+        # Fonts - Use RetroRPG for classic retro style
+        font_path = os.path.join(os.path.dirname(__file__), "..", "assets", "fonts", "RetroRPG.ttf")
+        try:
+            self.font = pygame.font.Font(font_path, 24)
+            self.small_font = pygame.font.Font(font_path, 18)
+            self.tiny_font = pygame.font.Font(font_path, 14)
+        except FileNotFoundError:
+            print(f"Warning: RetroRPG font not found at {font_path}, using default font")
+            self.font = pygame.font.Font(None, 36)
+            self.small_font = pygame.font.Font(None, 24)
+            self.tiny_font = pygame.font.Font(None, 18)
         
         # Game state (received from server)
         self.game_state = ClientGameState()
@@ -154,15 +161,25 @@ class RPGClient:
     
     def _init_ui(self) -> None:
         """Initialize UI components."""
-        # Status orbs (top-left area)
-        self.hp_orb = StatusOrb(70, 70, 25, Colors.HP_GREEN, "HP")
-        self.prayer_orb = StatusOrb(40, 110, 20, Colors.TEXT_CYAN, "Pray")
-        self.run_orb = StatusOrb(100, 110, 20, Colors.TEXT_YELLOW, "Run")
-        
         # Minimap (top-right)
         self.minimap = Minimap(WINDOW_WIDTH - 85, 75, 60)
         
-        # OSRS-style tabbed side panel (bottom-right, mirroring chat position)
+        # HP orb (aligned with ? button margin, bottom aligned with minimap) - RED
+        minimap_y = 75
+        minimap_radius = 60
+        hp_orb_radius = 25
+        # X: Align right edge with help button's right edge (same margin from screen edge)
+        # Help button is at x=WINDOW_WIDTH-40 with size=28, so right edge at WINDOW_WIDTH-12
+        hp_orb_x = WINDOW_WIDTH - 12 - hp_orb_radius  # Right edge aligned with ? button
+        # Y: Bottom edge aligned with minimap's bottom edge
+        hp_orb_y = minimap_y + minimap_radius - hp_orb_radius  # Bottom edges aligned
+        self.hp_orb = StatusOrb(hp_orb_x, hp_orb_y, hp_orb_radius, Colors.TEXT_RED, "HP")
+        
+        # Other status orbs (top-left area)
+        self.prayer_orb = StatusOrb(40, 110, 20, Colors.TEXT_CYAN, "Pray")
+        self.run_orb = StatusOrb(100, 110, 20, Colors.TEXT_YELLOW, "Run")
+        
+        # Tabbed side panel (bottom-right, mirroring chat position)
         self.side_panel = TabbedSidePanel(
             WINDOW_WIDTH - 214, WINDOW_HEIGHT - 322,  # Same height as chat (312 panel + 10 margin)
             on_inventory_click=self._on_inventory_click,
@@ -614,7 +631,8 @@ class RPGClient:
             self.game_state.set_stats(systems["stats"])
         
         if "skills" in systems:
-            self.game_state.set_skills(systems["skills"])
+            skills_data = systems["skills"]
+            self.game_state.set_skills(skills_data)
             self._update_stats_ui()
         
         if "player" in systems:
@@ -1018,7 +1036,7 @@ class RPGClient:
         for name, skill in self.game_state.skills.items():
             skills[name] = {
                 "level": skill.level,
-                "experience": skill.experience,
+                "xp": skill.experience,
             }
         self.stats_panel.set_skills(skills)
         self.side_panel.set_skills(skills)
@@ -1144,7 +1162,7 @@ class RPGClient:
         if self.context_menu.handle_event(event):
             return
         
-        # Tabbed side panel (OSRS-style)
+        # Tabbed side panel
         side_panel_action = self.side_panel.handle_event(event)
         if side_panel_action:
             if side_panel_action == "logout":
@@ -1330,6 +1348,20 @@ class RPGClient:
         
         if direction:
             await self._send_move(direction)
+    
+    def _is_trying_to_move(self) -> bool:
+        """Check if player is trying to move (has movement keys pressed)."""
+        if self.chat_window.input_focused:
+            return False
+        
+        movement_keys = {
+            pygame.K_w, pygame.K_UP,
+            pygame.K_s, pygame.K_DOWN,
+            pygame.K_a, pygame.K_LEFT,
+            pygame.K_d, pygame.K_RIGHT
+        }
+        
+        return bool(self.keys_pressed & movement_keys)
     
     # =========================================================================
     # RENDERING
@@ -1717,7 +1749,8 @@ class RPGClient:
         # Try to render paperdoll sprite
         sprite = None
         if self.game_state.visual_state and self.game_state.visual_hash:
-            if self.game_state.is_moving:
+            # Show walk animation if moving OR if trying to move (keys held)
+            if self.game_state.is_moving or self._is_trying_to_move():
                 # Calculate walk progress
                 current_time = time.time()
                 elapsed = current_time - self.game_state.move_start_time
@@ -1845,10 +1878,6 @@ class RPGClient:
     
     def _draw_ui(self) -> None:
         """Draw all UI elements."""
-        # HP orb
-        self.hp_orb.set_value(self.game_state.current_hp, self.game_state.max_hp)
-        self.hp_orb.draw(self.screen, self.small_font)
-        
         # Minimap
         other_players = [(p.x, p.y) for p in self.game_state.other_players.values()]
         npcs = [(e.x, e.y) for e in self.game_state.entities.values() if e.entity_type == EntityType.NPC]
@@ -1860,10 +1889,14 @@ class RPGClient:
         )
         self.minimap.draw(self.screen, self.small_font)
         
+        # HP orb (drawn after minimap so it appears on top)
+        self.hp_orb.set_value(self.game_state.current_hp, self.game_state.max_hp)
+        self.hp_orb.draw(self.screen, self.small_font)
+        
         # Help button (top-right, before minimap)
         self.help_button.draw(self.screen, self.small_font)
         
-        # OSRS-style tabbed side panel (bottom-right)
+        # Tabbed side panel (bottom-right)
         self.side_panel.draw(self.screen, self.small_font)
         
         # Chat window
