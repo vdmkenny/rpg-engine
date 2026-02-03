@@ -6,16 +6,17 @@ from typing import Optional, TYPE_CHECKING, Dict, Any
 from dataclasses import dataclass
 
 from ..core.config import settings
-from ..core.items import EquipmentSlot, ItemCategory
+from ..core.items import ItemCategory
 from ..core.skills import SkillType
 from ..core.logging_config import get_logger
 from ..schemas.item import (
     ItemStats,
-    EquipItemResult,
-    UnequipItemResult,
-    EquipmentSlotInfo,
-    EquipmentResponse,
-    CanEquipResult,
+    OperationResult,
+    OperationType,
+    EquipmentData,
+    EquipmentSlotData,
+    EquipmentSlot,
+    ItemInfo,
 )
 from .item_service import ItemService
 from .inventory_service import InventoryService
@@ -32,57 +33,11 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-@dataclass
-class EquipmentItem:
-    """Pure data structure for equipped items (replaces PlayerEquipment ORM model)."""
-    player_id: int
-    equipment_slot: str
-    item_id: int
-    quantity: int
-    current_durability: Optional[int]
-    item_data: Dict[str, Any]  # Item metadata from ItemService
-    
-    def get_stats(self) -> ItemStats:
-        """Get item stats for this equipment piece."""
-        return ItemStats(
-            attack_bonus=self.item_data.get("attack_bonus", 0),
-            strength_bonus=self.item_data.get("strength_bonus", 0),
-            physical_defence_bonus=self.item_data.get("physical_defence_bonus", 0),
-            ranged_attack_bonus=self.item_data.get("ranged_attack_bonus", 0),
-            ranged_strength_bonus=self.item_data.get("ranged_strength_bonus", 0),
-            magic_attack_bonus=self.item_data.get("magic_attack_bonus", 0),
-            magic_damage_bonus=self.item_data.get("magic_damage_bonus", 0),
-            magic_defence_bonus=self.item_data.get("magic_defence_bonus", 0),
-            health_bonus=self.item_data.get("health_bonus", 0),
-            speed_bonus=self.item_data.get("speed_bonus", 0),
-            mining_bonus=self.item_data.get("mining_bonus", 0),
-            woodcutting_bonus=self.item_data.get("woodcutting_bonus", 0),
-            fishing_bonus=self.item_data.get("fishing_bonus", 0),
-        )
-
-
 class EquipmentService:
     """Service for managing player equipment."""
 
     @staticmethod
-    async def get_equipment_raw(player_id: int) -> dict[str, dict]:
-        """
-        Get raw equipment data for a player (for game loop rendering).
-
-        This method returns the raw dict format without converting to
-        EquipmentItem objects, optimized for high-frequency game loop calls.
-
-        Args:
-            player_id: Player ID
-
-        Returns:
-            Dictionary mapping slot name to raw equipment data dict
-        """
-        equipment_mgr = get_equipment_manager()
-        return await equipment_mgr.get_equipment(player_id) or {}
-
-    @staticmethod
-    async def get_equipment(player_id: int) -> dict[str, EquipmentItem]:
+    async def get_equipment(player_id: int) -> EquipmentData:
         """
         Get all equipped items for a player.
 
@@ -90,73 +45,43 @@ class EquipmentService:
             player_id: Player ID
 
         Returns:
-            Dictionary mapping slot name to EquipmentItem
+            EquipmentData with all slots and total stats
         """
-        # Get all equipment data for player
         equipment_mgr = get_equipment_manager()
         equipment_data = await equipment_mgr.get_equipment(player_id)
         
-        if not equipment_data:
-            return {}
-            
-        # Convert raw data to structured equipment objects with metadata
-        equipment = {}
-        for slot, slot_data in equipment_data.items():
-            item_id = slot_data["item_id"]
-            
-            # Get item metadata for equipped item
-            item_wrapper = await ItemService.get_item_by_id(item_id)
-            if item_wrapper:
-                # Create structured equipment business object
-                eq = EquipmentItem(
-                    player_id=player_id,
-                    equipment_slot=slot,
-                    item_id=item_id,
-                    quantity=slot_data.get("quantity", 1),
-                    current_durability=slot_data.get("current_durability"),
-                    item_data=item_wrapper._data  # Raw dict from ItemService
-                )
-                equipment[slot] = eq
-                
-        return equipment
-
-    @staticmethod
-    async def get_equipment_response(player_id: int) -> EquipmentResponse:
-        """
-        Get full equipment state for API response.
-
-        Args:
-            player_id: Player ID
-
-        Returns:
-            EquipmentResponse with all slots and total stats
-        """
-        equipment = await EquipmentService.get_equipment(player_id)
-        
-        total_stats = await EquipmentService.get_total_stats(player_id)
-
         slots = []
         for slot in EquipmentSlot:
-            eq = equipment.get(slot.value)
-            if eq:
-                item_info = ItemService.item_to_info(eq.item_data)
-                slots.append(
-                    EquipmentSlotInfo(
-                        slot=slot.value,
-                        item=item_info,
-                        quantity=eq.quantity,
-                        current_durability=eq.current_durability,
+            if equipment_data and slot.value in equipment_data:
+                slot_data = equipment_data[slot.value]
+                item_id = slot_data["item_id"]
+                
+                item_wrapper = await ItemService.get_item_by_id(item_id)
+                if item_wrapper:
+                    item_info = ItemService.item_to_info(item_wrapper._data)
+                    slots.append(
+                        EquipmentSlotData(
+                            slot=slot,
+                            item=item_info,
+                            quantity=slot_data.get("quantity", 1),
+                            current_durability=slot_data.get("current_durability"),
+                        )
                     )
-                )
+                else:
+                    slots.append(EquipmentSlotData(slot=slot, item=None))
             else:
-                slots.append(EquipmentSlotInfo(slot=slot.value, item=None))
+                slots.append(EquipmentSlotData(slot=slot, item=None))
+        
+        total_stats = await EquipmentService.get_total_stats(player_id)
+        
+        return EquipmentData(slots=slots, total_stats=total_stats)
 
-        return EquipmentResponse(slots=slots, total_stats=total_stats)
+
 
     @staticmethod
     async def get_equipped_in_slot(
         player_id: int, slot: EquipmentSlot
-    ) -> Optional[EquipmentItem]:
+    ) -> Optional[EquipmentSlotData]:
         """
         Get the item equipped in a specific slot.
 
@@ -165,30 +90,25 @@ class EquipmentService:
             slot: Equipment slot
 
         Returns:
-            EquipmentItem if slot is occupied, None if empty
+            EquipmentSlotData if slot is occupied, None if empty
         """
-        # Use EquipmentManager for all equipment access (online/offline transparent)
         equipment_mgr = get_equipment_manager()
         slot_data = await equipment_mgr.get_equipment_slot(player_id, slot.value)
         
         if not slot_data:
             return None
             
-        # Get item metadata for equipped item
         item_wrapper = await ItemService.get_item_by_id(slot_data["item_id"])
         if not item_wrapper:
             return None
-            
-        # Create structured equipment business object
-        eq = EquipmentItem(
-            player_id=player_id,
-            equipment_slot=slot.value,
-            item_id=slot_data["item_id"],
+        
+        item_info = ItemService.item_to_info(item_wrapper._data)
+        return EquipmentSlotData(
+            slot=slot,
+            item=item_info,
             quantity=slot_data.get("quantity", 1),
             current_durability=slot_data.get("current_durability"),
-            item_data=item_wrapper._data  # Extract raw dict from ItemWrapper
         )
-        return eq
 
     @staticmethod
     def _calculate_stats_from_equipment(equipment_data: Dict[str, Dict[str, Any]]) -> ItemStats:
@@ -376,7 +296,7 @@ class EquipmentService:
         return new_current_hp
 
     @staticmethod
-    async def can_equip(player_id: int, item_data: Dict[str, Any]) -> CanEquipResult:
+    async def can_equip(player_id: int, item_data: Dict[str, Any]) -> OperationResult:
         """
         Check if player meets skill requirements to equip an item.
 
@@ -385,43 +305,68 @@ class EquipmentService:
             item_data: Item data dict from ItemService
 
         Returns:
-            CanEquipResult with status and reason
+            OperationResult with can_equip in data dict
         """
         if not item_data.get("equipment_slot"):
-            return CanEquipResult(can_equip=False, reason="Item is not equipable")
+            return OperationResult(
+                success=False,
+                message="Item is not equipable",
+                operation=OperationType.EQUIP,
+                data={"can_equip": False}
+            )
 
         if not item_data.get("required_skill"):
-            return CanEquipResult(can_equip=True, reason="OK")
+            return OperationResult(
+                success=True,
+                message="OK",
+                operation=OperationType.EQUIP,
+                data={"can_equip": True}
+            )
 
         required_skill = item_data.get("required_skill")
         if not required_skill or not isinstance(required_skill, str):
-            return CanEquipResult(can_equip=True, reason="OK")
+            return OperationResult(
+                success=True,
+                message="OK",
+                operation=OperationType.EQUIP,
+                data={"can_equip": True}
+            )
 
-        # Convert skill name string to SkillType enum
         skill_type = SkillType.from_name(required_skill)
         if not skill_type:
             logger.warning(
                 "Unknown skill requirement",
                 extra={"required_skill": required_skill}
             )
-            return CanEquipResult(can_equip=True, reason="OK")
+            return OperationResult(
+                success=True,
+                message="OK",
+                operation=OperationType.EQUIP,
+                data={"can_equip": True}
+            )
 
-        # Check skill level for equipment requirements
         current_level = await SkillService.get_skill_level(player_id, skill_type.name.lower())
 
         required_level = item_data.get("required_level", 1)
         if current_level < required_level:
-            return CanEquipResult(
-                can_equip=False,
-                reason=f"Requires {required_skill} level {required_level} (you have {current_level})",
+            return OperationResult(
+                success=False,
+                message=f"Requires {required_skill} level {required_level} (you have {current_level})",
+                operation=OperationType.EQUIP,
+                data={"can_equip": False}
             )
 
-        return CanEquipResult(can_equip=True, reason="OK")
+        return OperationResult(
+            success=True,
+            message="OK",
+            operation=OperationType.EQUIP,
+            data={"can_equip": True}
+        )
 
     @staticmethod
     async def equip_from_inventory(
         player_id: int, inventory_slot: int
-    ) -> EquipItemResult:
+    ) -> OperationResult:
         """
         Equip an item from the player's inventory.
 
@@ -437,46 +382,57 @@ class EquipmentService:
             inventory_slot: Inventory slot containing item to equip
 
         Returns:
-            EquipItemResult with status and updated stats
+            OperationResult with status and updated stats
         """
         equipment_mgr = get_equipment_manager()
         
-        # Get item from inventory
         inv = await InventoryService.get_item_at_slot(player_id, inventory_slot)
         if not inv:
-            return EquipItemResult(success=False, message="Inventory slot is empty")
+            return OperationResult(
+                success=False,
+                message="Inventory slot is empty",
+                operation=OperationType.EQUIP
+            )
 
-        item_wrapper = await ItemService.get_item_by_id(inv.item_id)
+        item_wrapper = await ItemService.get_item_by_id(inv.item.id)
         if not item_wrapper:
-            return EquipItemResult(success=False, message="Item not found")
+            return OperationResult(
+                success=False,
+                message="Item not found",
+                operation=OperationType.EQUIP
+            )
 
-        # Check if item is equipable
-        if not item_wrapper.get("equipment_slot"):
-            return EquipItemResult(success=False, message="Item cannot be equipped")
+        item_data = item_wrapper._data
 
-        # Check requirements
-        can_equip = await EquipmentService.can_equip(player_id, item_wrapper._data)
-        if not can_equip.can_equip:
-            return EquipItemResult(success=False, message=can_equip.reason)
+        if not item_data.get("equipment_slot"):
+            return OperationResult(
+                success=False,
+                message="Item cannot be equipped",
+                operation=OperationType.EQUIP
+            )
+
+        can_equip_result = await EquipmentService.can_equip(player_id, item_data)
+        if not can_equip_result.data.get("can_equip"):
+            return OperationResult(
+                success=False,
+                message=can_equip_result.message,
+                operation=OperationType.EQUIP
+            )
 
         equipment_slot = EquipmentSlot(item_data.get("equipment_slot"))
         unequipped_item_id = None
 
-        # Check if this is stackable ammunition
         is_stackable_ammo = (
             item_data.get("category") == ItemCategory.AMMUNITION.value
             and item_data.get("max_stack_size", 1) > 1
             and equipment_slot == EquipmentSlot.AMMO
         )
 
-        # Get currently equipped item in target slot
         current_equipped = await EquipmentService.get_equipped_in_slot(
             player_id, equipment_slot
         )
 
-        # Handle stackable ammunition - add to existing stack if same item
-        if is_stackable_ammo and current_equipped and current_equipped.item_id == item_data.get("id"):
-            # Same ammo type already equipped - add to stack
+        if is_stackable_ammo and current_equipped and current_equipped.item and current_equipped.item.id == item_data.get("id"):
             max_stack = item_data.get("max_stack_size", 1)
             current_qty = current_equipped.quantity
             add_qty = inv.quantity
@@ -484,13 +440,10 @@ class EquipmentService:
             new_total = current_qty + add_qty
             
             if new_total <= max_stack:
-                # All ammo fits in equipped stack
-                # Update equipment (preserving durability)
                 current_durability = current_equipped.current_durability or 1.0
                 await equipment_mgr.set_equipment_slot(
                     player_id, equipment_slot.value, item_data.get("id"), new_total, current_durability
                 )
-                # Remove the inventory item using service layer
                 await InventoryService.remove_item(player_id, inventory_slot, add_qty)
                 
                 updated_stats = await EquipmentService.get_total_stats(player_id)
@@ -505,23 +458,21 @@ class EquipmentService:
                     },
                 )
                 
-                return EquipItemResult(
+                return OperationResult(
                     success=True,
                     message=f"Added {add_qty} {item_data.get('display_name')} (now {new_total})",
-                    updated_stats=updated_stats,
+                    operation=OperationType.EQUIP,
+                    data={"slot": equipment_slot.value, "stat_changes": updated_stats}
                 )
             else:
-                # Partial fit - equip what we can, leave rest in inventory
                 amount_to_add = max_stack - current_qty
                 remaining_qty = new_total - max_stack
                 
-                # Update equipment to max stack
                 current_durability = current_equipped.current_durability or 1.0
                 await equipment_mgr.set_equipment_slot(
                     player_id, equipment_slot.value, item_data.get("id"), max_stack, current_durability
                 )
                 
-                # Remove amount_to_add from inventory (leaving remaining_qty)
                 await InventoryService.remove_item(player_id, inventory_slot, amount_to_add)
                 
                 updated_stats = await EquipmentService.get_total_stats(player_id)
@@ -536,98 +487,88 @@ class EquipmentService:
                     },
                 )
                 
-                return EquipItemResult(
+                return OperationResult(
                     success=True,
                     message=f"Added {amount_to_add} {item_data.get('display_name')} (stack full at {max_stack}, {remaining_qty} remain in inventory)",
-                    updated_stats=updated_stats,
+                    operation=OperationType.EQUIP,
+                    data={"slot": equipment_slot.value, "stat_changes": updated_stats}
                 )
 
-        # Handle two-handed weapon logic
         items_to_unequip = []
 
         if item_data.get("is_two_handed") and equipment_slot == EquipmentSlot.WEAPON:
-            # Unequip shield if equipping two-handed weapon
             shield = await EquipmentService.get_equipped_in_slot(
                 player_id, EquipmentSlot.SHIELD
             )
-            if shield:
+            if shield and shield.item:
                 items_to_unequip.append(shield)
 
         if equipment_slot == EquipmentSlot.SHIELD:
-            # Check if current weapon is two-handed
             weapon = await EquipmentService.get_equipped_in_slot(
                 player_id, EquipmentSlot.WEAPON
             )
-            if weapon:
-                weapon_item_wrapper = await ItemService.get_item_by_id(weapon.item_id)
+            if weapon and weapon.item:
+                weapon_item_wrapper = await ItemService.get_item_by_id(weapon.item.id)
                 if weapon_item_wrapper and weapon_item_wrapper.get("is_two_handed"):
                     items_to_unequip.append(weapon)
 
-        # Add currently equipped item to unequip list (if different from what we're equipping)
-        if current_equipped:
+        if current_equipped and current_equipped.item:
             items_to_unequip.append(current_equipped)
 
-        # Check if we have inventory space for all items to unequip
-        # We'll be freeing one slot (the one we're equipping from)
         slots_needed = len(items_to_unequip)
-        slots_available = 1  # The slot we're equipping from
+        slots_available = 1
 
         if slots_needed > slots_available:
-            # Check for additional free slots
             inv_count = await InventoryService.get_inventory_count(player_id)
             max_slots = settings.INVENTORY_MAX_SLOTS
             free_slots = max_slots - inv_count
-            # We get back 1 slot from removing the item we're equipping
             if free_slots + 1 < slots_needed:
-                return EquipItemResult(
+                return OperationResult(
                     success=False,
                     message="Not enough inventory space to unequip items",
+                    operation=OperationType.EQUIP
                 )
 
-        # Remove item from inventory
-        equip_quantity = inv.quantity  # For stackable ammo
+        equip_quantity = inv.quantity
         await InventoryService.remove_item(player_id, inventory_slot, equip_quantity)
 
-        # Unequip items that need to be moved to inventory
         for eq in items_to_unequip:
-            unequip_qty = eq.quantity  # Preserve quantity for ammo
-            
-            # Remove from equipment
-            try:
-                eq_slot = EquipmentSlot(eq.equipment_slot)
-                await equipment_mgr.delete_equipment_slot(player_id, eq_slot.value)
-            except ValueError:
-                logger.warning(
-                    "Unknown equipment slot during unequip",
-                    extra={"player_id": player_id, "slot": eq.equipment_slot}
+            if eq.item:
+                unequip_qty = eq.quantity
+                
+                try:
+                    eq_slot = EquipmentSlot(eq.slot.value)
+                    await equipment_mgr.delete_equipment_slot(player_id, eq_slot.value)
+                except ValueError:
+                    logger.warning(
+                        "Unknown equipment slot during unequip",
+                        extra={"player_id": player_id, "slot": eq.slot.value}
+                    )
+
+                add_result = await InventoryService.add_item(
+                    player_id=player_id,
+                    item_id=eq.item.id,
+                    quantity=unequip_qty,
+                    durability=eq.current_durability,
                 )
+                if add_result.success and add_result.data.get("overflow_quantity", 0) == 0:
+                    unequipped_item_id = eq.item.id
 
-            # Add to inventory using service
-            add_result = await InventoryService.add_item(
-                player_id=player_id,
-                item_id=eq.item_id,
-                quantity=unequip_qty,
-                durability=eq.current_durability,
-            )
-            if add_result.success and add_result.overflow_quantity == 0:
-                unequipped_item_id = eq.item_id
-
-        # Equip the new item
         await equipment_mgr.set_equipment_slot(
             player_id, 
             equipment_slot.value, 
             item_data.get("id"), 
             equip_quantity if is_stackable_ammo else 1,
-            float(inv.durability) if inv.durability is not None else 1.0
+            float(inv.current_durability) if inv.current_durability is not None else 1.0
         )
 
-        # Handle HP adjustment for health bonus changes
         health_bonus_gained = item_data.get("health_bonus", 0)
         health_bonus_lost = 0
         for eq in items_to_unequip:
-            eq_item_wrapper = await ItemService.get_item_by_id(eq.item_id)
-            if eq_item_wrapper and eq_item_wrapper.get("health_bonus"):
-                health_bonus_lost += eq_item_wrapper.get("health_bonus", 0)
+            if eq.item:
+                eq_item_wrapper = await ItemService.get_item_by_id(eq.item.id)
+                if eq_item_wrapper and eq_item_wrapper.get("health_bonus"):
+                    health_bonus_lost += eq_item_wrapper.get("health_bonus", 0)
 
         net_health_change = health_bonus_gained - health_bonus_lost
         if net_health_change != 0:
@@ -635,15 +576,12 @@ class EquipmentService:
             
             current_hp, max_hp = await HpService.get_hp(player_id)
             if net_health_change > 0:
-                # Gained health bonus - add to current HP
                 new_hp = current_hp + net_health_change
             else:
-                # Lost health bonus - reduce current HP, minimum 1
                 new_hp = max(1, min(current_hp + net_health_change, max_hp))
             
             await HpService.set_hp(player_id, new_hp)
 
-        # Get updated stats for return value
         updated_stats = await EquipmentService.get_total_stats(player_id)
 
         logger.info(
@@ -656,11 +594,11 @@ class EquipmentService:
             },
         )
 
-        return EquipItemResult(
+        return OperationResult(
             success=True,
             message=f"Equipped {item_data.get('display_name')}" + (f" x{equip_quantity}" if is_stackable_ammo and equip_quantity > 1 else ""),
-            unequipped_item_id=unequipped_item_id,
-            updated_stats=updated_stats,
+            operation=OperationType.EQUIP,
+            data={"slot": equipment_slot.value, "unequipped_item_id": unequipped_item_id, "stat_changes": updated_stats}
         )
 
     @staticmethod
@@ -670,7 +608,7 @@ class EquipmentService:
         map_id: Optional[str] = None,
         player_x: Optional[int] = None,
         player_y: Optional[int] = None,
-    ) -> UnequipItemResult:
+    ) -> OperationResult:
         """
         Move an equipped item to inventory, or drop to ground if inventory full.
 
@@ -685,45 +623,42 @@ class EquipmentService:
             player_y: Optional player Y position for dropping
 
         Returns:
-            UnequipItemResult with status
+            OperationResult with status
         """
         equipment_mgr = get_equipment_manager()
         
-        # Get equipped item
         equipped = await EquipmentService.get_equipped_in_slot(
             player_id, equipment_slot
         )
-        if not equipped:
-            return UnequipItemResult(
+        if not equipped or not equipped.item:
+            return OperationResult(
                 success=False,
                 message="Nothing equipped in that slot",
+                operation=OperationType.UNEQUIP
             )
 
-        item_wrapper = await ItemService.get_item_by_id(equipped.item_id)
+        item_wrapper = await ItemService.get_item_by_id(equipped.item.id)
         if not item_wrapper:
-            return UnequipItemResult(
+            return OperationResult(
                 success=False,
                 message="Item not found",
+                operation=OperationType.UNEQUIP
             )
             
-        quantity = equipped.quantity  # Preserve quantity for stackable items (ammo)
+        quantity = equipped.quantity
 
-        # Try to add to inventory (handles stacking for stackable items)
         add_result = await InventoryService.add_item(
             player_id=player_id,
-            item_id=equipped.item_id,
+            item_id=equipped.item.id,
             quantity=quantity,
             durability=equipped.current_durability,
         )
 
-        if add_result.success and add_result.overflow_quantity == 0:
-            # Successfully added all to inventory
+        if add_result.success and add_result.data.get("overflow_quantity", 0) == 0:
             health_bonus_lost = item_wrapper.get("health_bonus", 0)
             
-            # Remove from equipment
             await equipment_mgr.delete_equipment_slot(player_id, equipment_slot.value)
 
-            # Handle HP adjustment for health_bonus loss
             if health_bonus_lost > 0:
                 from .hp_service import HpService
                 
@@ -738,25 +673,23 @@ class EquipmentService:
                 extra={
                     "player_id": player_id,
                     "slot": equipment_slot.value,
-                    "to_inventory_slot": add_result.slot,
+                    "to_inventory_slot": add_result.data.get("slot"),
                     "quantity": quantity,
                 },
             )
 
-            return UnequipItemResult(
+            return OperationResult(
                 success=True,
                 message=f"Unequipped {item_wrapper.get('display_name')}" + (f" x{quantity}" if quantity > 1 else ""),
-                inventory_slot=add_result.slot,
-                updated_stats=updated_stats,
+                operation=OperationType.UNEQUIP,
+                data={"slot": equipment_slot.value, "inventory_slot": add_result.data.get("slot"), "stat_changes": updated_stats}
             )
 
-        # Inventory full or partial - try to drop to ground
         if map_id is not None and player_x is not None and player_y is not None:
-            # Determine how many need to be dropped
-            dropped_quantity = quantity if not add_result.success else add_result.overflow_quantity
+            dropped_quantity = quantity if not add_result.success else add_result.data.get("overflow_quantity", 0)
 
             ground_item_id = await GroundItemService.create_ground_item(
-                item_id=equipped.item_id,
+                item_id=equipped.item.id,
                 map_id=map_id,
                 x=player_x,
                 y=player_y,
@@ -768,10 +701,8 @@ class EquipmentService:
             if ground_item_id:
                 health_bonus_lost = item_wrapper.get("health_bonus", 0)
                 
-                # Remove from equipment
                 await equipment_mgr.delete_equipment_slot(player_id, equipment_slot.value)
 
-                # Handle HP adjustment for health_bonus loss
                 if health_bonus_lost > 0:
                     from .hp_service import HpService
                     
@@ -781,8 +712,7 @@ class EquipmentService:
 
                 updated_stats = await EquipmentService.get_total_stats(player_id)
 
-                if add_result.success and add_result.overflow_quantity > 0:
-                    # Partial inventory, rest dropped
+                if add_result.success and add_result.data.get("overflow_quantity", 0) > 0:
                     logger.info(
                         "Unequipped item partially to inventory, rest dropped",
                         extra={
@@ -793,14 +723,13 @@ class EquipmentService:
                         },
                     )
                     
-                    return UnequipItemResult(
+                    return OperationResult(
                         success=True,
                         message=f"Unequipped {item_wrapper.get('display_name')} ({quantity - dropped_quantity} to inventory, {dropped_quantity} dropped)",
-                        inventory_slot=add_result.slot,
-                        updated_stats=updated_stats,
+                        operation=OperationType.UNEQUIP,
+                        data={"slot": equipment_slot.value, "inventory_slot": add_result.data.get("slot"), "stat_changes": updated_stats}
                     )
                 else:
-                    # All dropped to ground
                     logger.info(
                         "Unequipped item dropped to ground (inventory full)",
                         extra={
@@ -811,17 +740,17 @@ class EquipmentService:
                         },
                     )
                     
-                    return UnequipItemResult(
+                    return OperationResult(
                         success=True,
                         message=f"Inventory full - {item_wrapper.get('display_name')} dropped to ground",
-                        inventory_slot=None,
-                        updated_stats=updated_stats,
+                        operation=OperationType.UNEQUIP,
+                        data={"slot": equipment_slot.value, "ground_item_id": ground_item_id, "stat_changes": updated_stats}
                     )
 
-        # No position provided and inventory full - fail
-        return UnequipItemResult(
+        return OperationResult(
             success=False,
             message="Inventory is full",
+            operation=OperationType.UNEQUIP
         )
 
     @staticmethod
@@ -846,37 +775,34 @@ class EquipmentService:
         if not equipped:
             return None
 
-        if equipped.current_durability is None:
-            return None  # Item has no durability
+        if equipped.current_durability is None or not equipped.item:
+            return None
 
-        item_wrapper = await ItemService.get_item_by_id(equipped.item_id)
+        item_wrapper = await ItemService.get_item_by_id(equipped.item.id)
         if not item_wrapper:
             return None
 
         if item_wrapper.get("is_indestructible", False):
-            return equipped.current_durability  # Item cannot degrade
+            return equipped.current_durability
 
         amount = amount * settings.EQUIPMENT_DURABILITY_LOSS_PER_HIT
         new_durability = max(0, equipped.current_durability - amount)
         
-        # Update durability
         await equipment_mgr.set_equipment_slot(
             player_id,
             slot.value,
-            equipped.item_id,
+            equipped.item.id,
             equipped.quantity,
             int(new_durability)
         )
 
         if new_durability == 0:
-            # Item broke - move to inventory in broken state
-            # (or could be destroyed - depends on game design)
             logger.warning(
                 "Equipment broke",
                 extra={
                     "player_id": player_id,
                     "slot": slot.value,
-                    "item_id": equipped.item_id,
+                    "item_id": equipped.item.id,
                 },
             )
 
@@ -899,17 +825,16 @@ class EquipmentService:
         """
         equipment_mgr = get_equipment_manager()
         equipped = await EquipmentService.get_equipped_in_slot(player_id, slot)
-        if not equipped:
+        if not equipped or not equipped.item:
             return (False, 0)
 
         if equipped.current_durability is None:
-            return (False, 0)  # Item has no durability
+            return (False, 0)
 
-        item_wrapper = await ItemService.get_item_by_id(equipped.item_id)
+        item_wrapper = await ItemService.get_item_by_id(equipped.item.id)
         if not item_wrapper or item_wrapper.get("max_durability") is None:
             return (False, 0)
 
-        # Calculate repair cost
         damage_percent = 1 - (equipped.current_durability / item_wrapper.get("max_durability"))
         repair_cost = int(
             item_wrapper.get("value", 0)
@@ -917,11 +842,10 @@ class EquipmentService:
             * damage_percent
         )
 
-        # Update durability to max
         await equipment_mgr.set_equipment_slot(
             player_id,
             slot.value,
-            equipped.item_id,
+            equipped.item.id,
             equipped.quantity,
             float(item_wrapper.get("max_durability"))
         )
@@ -969,36 +893,36 @@ class EquipmentService:
         new_quantity = equipped.quantity - amount
 
         if new_quantity == 0:
-            # No ammo left - remove from equipment
             await equipment_mgr.delete_equipment_slot(player_id, EquipmentSlot.AMMO.value)
 
-            logger.info(
-                "Ammo depleted",
-                extra={
-                    "player_id": player_id,
-                    "item_id": equipped.item_id,
-                },
-            )
+            if equipped.item:
+                logger.info(
+                    "Ammo depleted",
+                    extra={
+                        "player_id": player_id,
+                        "item_id": equipped.item.id,
+                    },
+                )
             return (True, 0)
 
-        # Update quantity
-        await equipment_mgr.set_equipment_slot(
-            player_id,
-            EquipmentSlot.AMMO.value,
-            equipped.item_id,
-            new_quantity,
-            float(equipped.current_durability) if equipped.current_durability else 0.0
-        )
+        if equipped.item:
+            await equipment_mgr.set_equipment_slot(
+                player_id,
+                EquipmentSlot.AMMO.value,
+                equipped.item.id,
+                new_quantity,
+                float(equipped.current_durability) if equipped.current_durability else 0.0
+            )
 
-        logger.debug(
-            "Consumed ammo",
-            extra={
-                "player_id": player_id,
-                "item_id": equipped.item_id,
-                "consumed": amount,
-                "remaining": new_quantity,
-            },
-        )
+            logger.debug(
+                "Consumed ammo",
+                extra={
+                    "player_id": player_id,
+                    "item_id": equipped.item.id,
+                    "consumed": amount,
+                    "remaining": new_quantity,
+                },
+            )
 
         return (True, new_quantity)
 
@@ -1028,7 +952,7 @@ class EquipmentService:
         return item_count
 
     @staticmethod
-    async def get_all_equipped_items(player_id: int) -> list[EquipmentItem]:
+    async def get_all_equipped_items(player_id: int) -> list[EquipmentSlotData]:
         """
         Get all equipped items with their item data.
 
@@ -1036,7 +960,7 @@ class EquipmentService:
             player_id: Player ID
 
         Returns:
-            List of EquipmentItem objects
+            List of EquipmentSlotData objects
         """
         equipment_mgr = get_equipment_manager()
         equipment_data = await equipment_mgr.get_equipment(player_id)
@@ -1044,22 +968,18 @@ class EquipmentService:
         if not equipment_data:
             return []
         
-        # Build list of EquipmentItem objects using ItemService
         equipped_items = []
-        for slot, slot_data in equipment_data.items():
+        for slot_name, slot_data in equipment_data.items():
             item_id = slot_data["item_id"]
             
-            # Use ItemService for item data (service-first architecture)
             item_wrapper = await ItemService.get_item_by_id(item_id)
             if item_wrapper:
-                # Create EquipmentItem business object
-                eq = EquipmentItem(
-                    player_id=player_id,
-                    equipment_slot=slot,
-                    item_id=item_id,
+                item_info = ItemService.item_to_info(item_wrapper._data)
+                eq = EquipmentSlotData(
+                    slot=EquipmentSlot(slot_name),
+                    item=item_info,
                     quantity=slot_data.get("quantity", 1),
                     current_durability=slot_data.get("current_durability"),
-                    item_data=item_wrapper._data  # Raw dict from ItemService
                 )
                 equipped_items.append(eq)
                 
