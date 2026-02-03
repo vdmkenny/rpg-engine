@@ -38,8 +38,7 @@ from tileset_manager import TilesetManager
 from sprite_manager import SpriteManager
 from paperdoll_renderer import PaperdollRenderer, create_fallback_sprite
 from ui_panels import (
-    Colors, UIPanel, InventoryPanel, EquipmentPanel, StatsPanel,
-    StatusOrb, Minimap, ChatWindow, ContextMenu, ContextMenuItem, Tooltip,
+    Colors, StatusOrb, Minimap, ChatWindow, ContextMenu, ContextMenuItem, Tooltip,
     HelpPanel, HelpButton, LogoutButton, TabbedSidePanel
 )
 from common.src.sprites.enums import AnimationType
@@ -187,23 +186,6 @@ class RPGClient:
             on_logout=self._on_logout_click
         )
         
-        # Keep old panels for compatibility but hide them
-        panel_x = WINDOW_WIDTH - 170
-        self.inventory_panel = InventoryPanel(
-            panel_x, 300,
-            on_slot_click=self._on_inventory_click
-        )
-        self.inventory_panel.visible = False
-        
-        self.equipment_panel = EquipmentPanel(
-            panel_x, 50,
-            on_slot_click=self._on_equipment_click
-        )
-        self.equipment_panel.visible = False
-        
-        self.stats_panel = StatsPanel(panel_x - 210, 50)
-        self.stats_panel.visible = False
-        
         # Chat window (bottom-left, wider for readability)
         self.chat_window = ChatWindow(
             10, WINDOW_HEIGHT - 220,
@@ -223,9 +205,6 @@ class RPGClient:
         # Protocol version warning
         self.protocol_warning: Optional[str] = None
         self.protocol_warning_time: float = 0.0
-        
-        # Tab buttons for panel switching (legacy)
-        self.active_panel = "inventory"
     
     def _register_event_handlers(self) -> None:
         """Register handlers for server events."""
@@ -1015,7 +994,6 @@ class RPGClient:
                 "quantity": item.quantity,
                 "rarity": item.rarity,
             }
-        self.inventory_panel.set_items(items)
         self.side_panel.set_items(items)
     
     def _update_equipment_ui(self) -> None:
@@ -1027,7 +1005,6 @@ class RPGClient:
                 "name": item.name,
                 "rarity": item.rarity,
             }
-        self.equipment_panel.set_equipment(equipment)
         self.side_panel.set_equipment(equipment)
     
     def _update_stats_ui(self) -> None:
@@ -1038,7 +1015,6 @@ class RPGClient:
                 "level": skill.level,
                 "xp": skill.experience,
             }
-        self.stats_panel.set_skills(skills)
         self.side_panel.set_skills(skills)
     
     # =========================================================================

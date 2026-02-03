@@ -187,6 +187,25 @@ class UIPanel:
                 return True
         
         return False
+    
+    def _draw_item_placeholder(self, screen: pygame.Surface, rect: pygame.Rect, item: dict) -> None:
+        """Draw item placeholder colored by rarity (shared method for panels)."""
+        item_rect = rect.inflate(-6, -6)
+        
+        rarity = item.get("rarity", "common")
+        if rarity == "legendary":
+            color = Colors.RARITY_LEGENDARY
+        elif rarity == "epic":
+            color = Colors.RARITY_EPIC
+        elif rarity == "rare":
+            color = Colors.RARITY_RARE
+        elif rarity == "uncommon":
+            color = Colors.RARITY_UNCOMMON
+        else:
+            color = Colors.RARITY_COMMON
+        
+        pygame.draw.rect(screen, color, item_rect)
+        pygame.draw.rect(screen, Colors.PANEL_BORDER, item_rect, 1)
 
 
 # =============================================================================
@@ -266,36 +285,14 @@ class InventoryPanel(UIPanel):
             # Draw item if present
             if slot in self.items:
                 item = self.items[slot]
-                self._draw_item(screen, rect, item, small_font)
-    
-    def _draw_item(self, screen: pygame.Surface, rect: pygame.Rect, item: dict, font: pygame.font.Font) -> None:
-        """Draw an item in a slot."""
-        # For now, draw a colored rectangle based on item category
-        item_rect = rect.inflate(-4, -4)
-        
-        # Color based on rarity
-        rarity = item.get("rarity", "common")
-        if rarity == "legendary":
-            color = Colors.RARITY_LEGENDARY
-        elif rarity == "epic":
-            color = Colors.RARITY_EPIC
-        elif rarity == "rare":
-            color = Colors.RARITY_RARE
-        elif rarity == "uncommon":
-            color = Colors.RARITY_UNCOMMON
-        else:
-            color = Colors.RARITY_COMMON
-        
-        # Draw item placeholder (colored square)
-        pygame.draw.rect(screen, color, item_rect)
-        pygame.draw.rect(screen, Colors.PANEL_BORDER, item_rect, 1)
-        
-        # Draw quantity if > 1
-        quantity = item.get("quantity", 1)
-        if quantity > 1:
-            qty_text = str(quantity) if quantity < 100000 else f"{quantity // 1000}K"
-            qty_surface = font.render(qty_text, True, Colors.TEXT_YELLOW)
-            screen.blit(qty_surface, (rect.x + 2, rect.y + 2))
+                self._draw_item_placeholder(screen, rect, item)
+                
+                # Draw quantity if > 1
+                quantity = item.get("quantity", 1)
+                if quantity > 1:
+                    qty_text = str(quantity) if quantity < 100000 else f"{quantity // 1000}K"
+                    qty_surface = small_font.render(qty_text, True, Colors.TEXT_YELLOW)
+                    screen.blit(qty_surface, (rect.x + 2, rect.y + 2))
     
     def handle_event(self, event: pygame.event.Event) -> bool:
         """Handle inventory events."""
@@ -405,27 +402,7 @@ class EquipmentPanel(UIPanel):
             # Draw item if present
             if slot_name in self.equipment:
                 item = self.equipment[slot_name]
-                self._draw_item(screen, rect, item)
-    
-    def _draw_item(self, screen: pygame.Surface, rect: pygame.Rect, item: dict) -> None:
-        """Draw an equipped item."""
-        item_rect = rect.inflate(-6, -6)
-        
-        # Color based on rarity
-        rarity = item.get("rarity", "common")
-        if rarity == "legendary":
-            color = Colors.RARITY_LEGENDARY
-        elif rarity == "epic":
-            color = Colors.RARITY_EPIC
-        elif rarity == "rare":
-            color = Colors.RARITY_RARE
-        elif rarity == "uncommon":
-            color = Colors.RARITY_UNCOMMON
-        else:
-            color = Colors.RARITY_COMMON
-        
-        pygame.draw.rect(screen, color, item_rect)
-        pygame.draw.rect(screen, Colors.PANEL_BORDER, item_rect, 1)
+                self._draw_item_placeholder(screen, rect, item)
     
     def handle_event(self, event: pygame.event.Event) -> bool:
         """Handle equipment events."""
