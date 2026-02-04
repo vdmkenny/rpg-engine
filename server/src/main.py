@@ -145,7 +145,7 @@ async def lifespan(app: FastAPI):
         for map_id, map_connections in websockets.manager.connections_by_map.items():
             for username in map_connections.keys():
                 from .services.connection_service import ConnectionService
-                player_id = ConnectionService.get_online_player_id_by_username(username)
+                player_id = await ConnectionService.get_online_player_id_by_username(username)
                 if player_id:
                     active_players[username] = player_id
         

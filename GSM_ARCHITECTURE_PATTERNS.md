@@ -1,7 +1,8 @@
 # GSM Architecture Patterns & Guidelines
 
-**Document Version**: 1.0  
+**Document Version**: 2.0  
 **Created**: January 2026  
+**Updated**: February 2026  
 **Purpose**: Standard patterns for AI agents and developers working with the rpg-engine GameStateManager
 
 ## Core Architecture Principles
@@ -298,7 +299,7 @@ class EquipmentService:
 2. Player data schema changes need migration scripts
 3. Always maintain data consistency during transitions
 
-## Common Anti-Patterns
+### Common Anti-Patterns
 
 ### ❌ Things to Never Do
 1. **"God Service" GSM** - Don't put business logic in GSM
@@ -307,6 +308,8 @@ class EquipmentService:
 4. **Leaky Abstractions** - Don't expose GSM internals to services
 5. **Silent Failures** - Always return explicit success/failure results
 6. **Fallback Patterns** - No database fallbacks, fail fast instead
+7. **Dictionary Access on Pydantic Models** - Use attribute access (`model.field`), not dict access (`model["field"]`)
+8. **Legacy Compatibility** - Never create backward compatibility layers, update all references
 
 ### Code Review Red Flags
 - Services importing database models for data access
@@ -314,6 +317,238 @@ class EquipmentService:
 - Online/offline branching logic in services
 - Direct Valkey/database operations outside GSM
 - Database session parameters in service methods
+- Accessing Pydantic models with dictionary syntax
+- Creating legacy compatibility wrappers
+
+## Player State Management Patterns
+
+### Player Data Structure
+
+**PlayerData Schema (Pydantic)**:
+```python
+class PlayerData(BaseModel):
+    id: int
+    username: str
+    x: int
+    y: int
+    map_id: str
+    is_online: bool
+    facing_direction: Direction  # Runtime state
+    animation_state: AnimationState  # Runtime state
+    current_hp: int
+    max_hp: int  # Computed from hitpoints skill level
+    total_level: int  # Computed from all skill levels
+```
+
+**Key Fields**:
+- **Database Fields**: `id`, `username`, `x`, `y`, `map_id`
+- **Runtime Fields**: `is_online`, `facing_direction`, `animation_state` (not persisted)
+- **Computed Fields**: `max_hp`, `total_level` (calculated from other data)
+
+### PlayerStateManager Methods
+
+**Position Management**:
+```python
+async def get_player_position(player_id: int) -> Optional[Dict[str, Any]]
+async def set_player_position(player_id: int, x: int, y: int, map_id: str) -> bool
+```
+
+**HP Management**:
+```python
+async def get_player_hp(player_id: int) -> Optional[Dict[str, int]]
+async def set_player_hp(player_id: int, current_hp: int, max_hp: int) -> bool
+```
+
+**Online Registry**:
+```python
+async def register_online_player(player_id: int, username: str) -> None
+async def unregister_online_player(player_id: int) -> None
+async def is_online(player_id: int) -> bool
+async def get_all_online_player_ids() -> List[int]
+async def get_username_for_player(player_id: int) -> Optional[str]
+```
+
+**Combat State**:
+```python
+async def get_player_combat_state(player_id: int) -> Optional[Dict[str, Any]]
+async def set_player_combat_state(player_id: int, combat_state: Dict[str, Any]) -> None
+async def clear_player_combat_state(player_id: int) -> None
+```
+
+**Player Settings**:
+```python
+async def get_player_settings(player_id: int) -> Optional[Dict[str, Any]]
+async def set_player_settings(player_id: int, settings: Dict[str, Any]) -> bool
+```
+
+**Player Data Loading**:
+```python
+async def get_player_data(player_id: int) -> Optional[PlayerData]
+async def get_player_data_by_username(username: str) -> Optional[PlayerData]
+```
+
+### Pydantic Model Access Patterns
+
+**✅ Correct - Attribute Access**:
+```python
+# PlayerData is a Pydantic model
+player_data = await PlayerService.get_player_by_username(username)
+if player_data:
+    player_id = player_data.id  # ✅ Correct
+    username = player_data.username  # ✅ Correct
+    
+# NearbyPlayer is a Pydantic model
+nearby = await PlayerService.get_nearby_players(player_id, radius=10)
+for player in nearby:
+    x = player.x  # ✅ Correct
+    username = player.username  # ✅ Correct
+
+# PlayerPosition is a Pydantic model  
+position = await PlayerService.get_player_position(player_id)
+if position:
+    map_id = position.map_id  # ✅ Correct
+    x = position.x  # ✅ Correct
+```
+
+**❌ Incorrect - Dictionary Access**:
+```python
+player_data = await PlayerService.get_player_by_username(username)
+if player_data:
+    player_id = player_data["id"]  # ❌ AttributeError!
+    username = player_data["username"]  # ❌ AttributeError!
+
+nearby = await PlayerService.get_nearby_players(player_id, radius=10)
+for player in nearby:
+    x = player["x"]  # ❌ TypeError: 'NearbyPlayer' object is not subscriptable
+```
+
+**Converting to Dictionary** (when needed):
+```python
+player_data = await PlayerService.get_player_by_username(username)
+if player_data:
+    # Convert Pydantic model to dict if needed
+    player_dict = player_data.model_dump()  # ✅ Correct
+    player_id = player_dict["id"]  # ✅ Now works
+```
+
+### Combat Mechanics
+
+**Combat State Lifecycle**:
+1. **Initiate Combat**: When player attacks or is attacked
+   - Set combat state via `set_player_combat_state()`
+   - Track target, last action time, etc.
+
+2. **Movement Breaks Combat**: Moving clears combat state
+   - Call `clear_player_combat_state()` on movement
+   - Auto-retaliation will re-engage combat
+
+3. **Auto-Retaliation**: NPC/player can re-initiate combat
+   - Check if target moved away
+   - Re-engage if within range
+
+**Example - Movement Service**:
+```python
+async def execute_movement(player_id: int, direction: str) -> Dict:
+    # ... validate and move ...
+    
+    # Break combat on movement
+    player_mgr = get_player_state_manager()
+    await player_mgr.clear_player_combat_state(player_id)
+    
+    return {"success": True, "new_position": new_pos}
+```
+
+### HP Calculation Patterns
+
+**Max HP Computation**:
+```python
+# Max HP is calculated from hitpoints skill level
+async def calculate_max_hp(player_id: int) -> int:
+    # Query hitpoints skill level from database
+    hitpoints_result = await db.execute(
+        select(PlayerSkill.current_level)
+        .join(Skill)
+        .where(
+            PlayerSkill.player_id == player_id,
+            Skill.name == SkillType.HITPOINTS.value.name  # Note: .value.name
+        )
+    )
+    max_hp = hitpoints_result.scalar_one_or_none() or HITPOINTS_START_LEVEL
+    return max_hp
+```
+
+**Critical**: Use `SkillType.HITPOINTS.value.name` to get the string name, not just `.value` which returns a `SkillDefinition` object.
+
+### Missing Await Patterns
+
+**Common Missing Await Errors**:
+```python
+# ❌ Incorrect - Missing await
+online_players = player_mgr.get_all_online_player_ids()  # Returns coroutine!
+username = player_mgr.get_username_for_player(other_id)  # Returns coroutine!
+
+# ✅ Correct - With await
+online_players = await player_mgr.get_all_online_player_ids()
+username = await player_mgr.get_username_for_player(other_id)
+
+# ❌ Incorrect - Missing await in condition
+if not player_mgr.is_online(self.player_id):  # Always truthy (coroutine object)!
+
+# ✅ Correct - With await
+if not await player_mgr.is_online(self.player_id):
+```
+
+**Rule**: All `PlayerStateManager` async methods MUST be awaited.
+
+### Authentication Patterns
+
+**Password Verification Requires Database Access**:
+```python
+# ❌ Incorrect - PlayerData doesn't include hashed_password
+async def authenticate_with_password(username: str, password: str):
+    player = await PlayerService.get_player_by_username(username)  # Returns PlayerData
+    if not verify_password(password, player["hashed_password"]):  # Field doesn't exist!
+        return None
+    return player
+
+# ✅ Correct - Query database directly for password verification
+async def authenticate_with_password(username: str, password: str) -> Optional[PlayerData]:
+    from sqlalchemy import select
+    
+    player_mgr = get_player_state_manager()
+    
+    # Use PlayerStateManager's session factory for test isolation
+    async with player_mgr._db_session() as db:
+        result = await db.execute(
+            select(Player).where(Player.username == username)
+        )
+        player_record = result.scalar_one_or_none()
+        
+        if not player_record:
+            return None
+        
+        # Verify password against database record
+        if not verify_password(password, player_record.hashed_password):
+            return None
+        
+        # Check ban/timeout status
+        if player_record.is_banned:
+            raise PermissionError("Player is banned")
+    
+    # Return PlayerData via service for consistency
+    return await PlayerService.get_player_by_username(username)
+```
+
+**Why PlayerData Excludes hashed_password**:
+- **Security**: Never expose password hashes outside authentication layer
+- **Separation**: Authentication requires database, normal operations use GSM
+- **Test Isolation**: Using `player_mgr._db_session()` ensures test database is used
+
+**Key Principles**:
+1. `PlayerData` is for normal game operations - excludes sensitive fields
+2. Authentication is the ONLY operation requiring direct database access for passwords
+3. Use `player_mgr._db_session()` for test isolation, NOT `AsyncSessionLocal()`
+4. Always return Pydantic models (`PlayerData`) to calling code, not SQLAlchemy models
 
 ## Decision Log
 
@@ -326,6 +561,12 @@ class EquipmentService:
 - **Memory Management**: Player count limits (configurable)
 - **Loading**: First-come-first-served for on-demand loading
 - **Batch Sync**: 60 seconds OR 50 dirty players (both configurable)
+- **Pydantic Models**: Always use attribute access, never dictionary access
+- **Legacy Compatibility**: No backward compatibility layers - clean break approach
+- **Combat Mechanics**: Movement breaks combat, auto-retaliation re-engages
+- **HP Calculation**: Max HP computed from hitpoints skill level, not stored separately
+- **Authentication**: Password verification is the only operation requiring direct database access
+- **Test Isolation**: Services must use `player_mgr._db_session()` for database access to maintain test isolation
 
 ### Rationale
 - Simplicity over complexity in data access patterns
@@ -333,6 +574,7 @@ class EquipmentService:
 - Clear separation of concerns between layers
 - Performance optimization through permanent reference caching
 - Memory efficiency through intelligent TTL management
+- Security through separation of concerns (password hashes never in game state)
 
 ---
 

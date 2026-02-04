@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from ..core.security import verify_token, verify_password
 from ..core.logging_config import get_logger
 from ..models.player import Player
+from ..schemas.player import PlayerData
 from .player_service import PlayerService
 from .game_state import get_player_state_manager
 
@@ -23,7 +24,7 @@ class AuthenticationService:
     @staticmethod
     async def authenticate_with_password(
         username: str, password: str
-    ) -> Optional[Player]:
+    ) -> Optional[PlayerData]:
         """
         Authenticate a user with username and password.
 
@@ -32,61 +33,74 @@ class AuthenticationService:
             password: User's password
 
         Returns:
-            Player instance if authenticated, None otherwise
+            PlayerData instance if authenticated, None otherwise
             
         Raises:
             PermissionError: If player is banned
             ValueError: If player is timed out
         """
         try:
-            # Get player by username
-            player = await PlayerService.get_player_by_username(username)
-            if not player:
-                logger.debug(
-                    "Authentication failed - player not found",
-                    extra={"username": username}
+            # Authentication requires direct database access to get hashed_password
+            # PlayerData doesn't include hashed_password for security reasons
+            from sqlalchemy import select
+            
+            player_mgr = get_player_state_manager()
+            
+            # Use PlayerStateManager's session factory to ensure test isolation
+            async with player_mgr._db_session() as db:
+                result = await db.execute(
+                    select(Player).where(Player.username == username)
                 )
-                return None
-
-            # Verify password
-            if not verify_password(password, player["hashed_password"]):
-                logger.debug(
-                    "Authentication failed - invalid password",
-                    extra={"username": username}
-                )
-                return None
-
-            # Check if player is banned
-            if player.get("is_banned", False):
-                logger.warning(
-                    "Authentication failed - player banned",
-                    extra={"username": username, "player_id": player["id"]}
-                )
-                raise PermissionError("Player is banned")
-
-            # Check if player is timed out
-            timeout_until = player.get("timeout_until")
-            if timeout_until:
-                # Handle both timezone-aware and naive datetimes
-                if timeout_until.tzinfo is None:
-                    timeout_until = timeout_until.replace(tzinfo=timezone.utc)
-                if timeout_until > datetime.now(timezone.utc):
-                    logger.warning(
-                        "Authentication failed - player timed out",
-                        extra={
-                            "username": username,
-                            "player_id": player["id"],
-                            "timeout_until": str(timeout_until)
-                        }
+                player_record = result.scalar_one_or_none()
+                
+                if not player_record:
+                    logger.debug(
+                        "Authentication failed - player not found",
+                        extra={"username": username}
                     )
-                    raise ValueError(f"Player is timed out until {timeout_until}")
+                    return None
 
-            logger.info(
-                "User authentication successful",
-                extra={"username": username, "player_id": player["id"]}
-            )
+                # Verify password
+                if not verify_password(password, player_record.hashed_password):
+                    logger.debug(
+                        "Authentication failed - invalid password",
+                        extra={"username": username}
+                    )
+                    return None
 
-            return player
+                # Check if player is banned
+                if player_record.is_banned:
+                    logger.warning(
+                        "Authentication failed - player banned",
+                        extra={"username": username, "player_id": player_record.id}
+                    )
+                    raise PermissionError("Player is banned")
+
+                # Check if player is timed out
+                timeout_until = player_record.timeout_until
+                if timeout_until:
+                    # Handle both timezone-aware and naive datetimes
+                    if timeout_until.tzinfo is None:
+                        timeout_until = timeout_until.replace(tzinfo=timezone.utc)
+                    if timeout_until > datetime.now(timezone.utc):
+                        logger.warning(
+                            "Authentication failed - player timed out",
+                            extra={
+                                "username": username,
+                                "player_id": player_record.id,
+                                "timeout_until": str(timeout_until)
+                            }
+                        )
+                        raise ValueError(f"Player is timed out until {timeout_until}")
+
+                logger.info(
+                    "User authentication successful",
+                    extra={"username": username, "player_id": player_record.id}
+                )
+
+            # Return player data via PlayerService for consistent Pydantic model
+            player_data = await PlayerService.get_player_by_username(username)
+            return player_data
 
         except (PermissionError, ValueError):
             # Re-raise permission and timeout errors 
@@ -146,7 +160,7 @@ class AuthenticationService:
     @staticmethod
     async def authenticate_websocket_connection(
         token: str
-    ) -> Optional[Player]:
+    ) -> Optional[PlayerData]:
         """
         Authenticate a WebSocket connection and return player data.
 
@@ -154,7 +168,7 @@ class AuthenticationService:
             token: JWT authentication token
 
         Returns:
-            Player instance if authenticated, None otherwise
+            PlayerData instance if authenticated, None otherwise
         """
         try:
             # Validate JWT token
@@ -174,25 +188,25 @@ class AuthenticationService:
                 return None
 
             # Check if player is banned
-            if player.get("is_banned", False):
+            if player.is_banned:
                 logger.warning(
                     "WebSocket authentication failed - player banned",
-                    extra={"username": username, "player_id": player["id"]}
+                    extra={"username": username, "player_id": player.id}
                 )
                 return None
 
             # Check if player is timed out (timeout_until is a datetime)
-            timeout_until = player.get("timeout_until")
+            timeout_until = player.timeout_until
             if timeout_until and timeout_until > datetime.now(timezone.utc):
                 logger.warning(
                     "WebSocket authentication failed - player timed out",
-                    extra={"username": username, "player_id": player["id"]}
+                    extra={"username": username, "player_id": player.id}
                 )
                 return None
 
             logger.info(
                 "WebSocket authentication successful",
-                extra={"username": username, "player_id": player["id"]}
+                extra={"username": username, "player_id": player.id}
             )
 
             return player
@@ -209,27 +223,23 @@ class AuthenticationService:
 
     @staticmethod
     async def load_player_for_session(
-        player: Dict[str, Any]
+        player: PlayerData
     ) -> Dict[str, Any]:
         """
         Load complete player data for WebSocket session initialization.
 
         Args:
-            player: Authenticated player dict
+            player: Authenticated PlayerData model
 
         Returns:
             Dict with complete player session data
         """
-        player_id = player["id"]
-        username = player["username"]
+        player_id = player.id
+        username = player.username
         
         try:
             # Register player as online and load state
-            from ..models.player import Player
-            player_model = Player()
-            player_model.id = player_id
-            player_model.username = username
-            await PlayerService.login_player(player_model)
+            await PlayerService.login_player(player_id, username)
 
             # Get initial position data
             position_data = await PlayerService.get_player_position(player_id)
@@ -242,9 +252,9 @@ class AuthenticationService:
                 "player_id": player_id,
                 "username": username,
                 "position": position_data or {
-                    "x": player.get("x_coord", 10),
-                    "y": player.get("y_coord", 10),
-                    "map_id": player.get("map_id", "samplemap")
+                    "x": player.x,
+                    "y": player.y,
+                    "map_id": player.map_id
                 },
                 "hp": hp_data or {
                     "current_hp": 100,
@@ -278,9 +288,9 @@ class AuthenticationService:
                 "player_id": player_id,
                 "username": username,
                 "position": {
-                    "x": player.get("x_coord", 10),
-                    "y": player.get("y_coord", 10),
-                    "map_id": player.get("map_id", "samplemap")
+                    "x": player.x,
+                    "y": player.y,
+                    "map_id": player.map_id
                 },
                 "hp": {
                     "current_hp": 100,

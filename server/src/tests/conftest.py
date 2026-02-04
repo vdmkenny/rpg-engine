@@ -349,6 +349,27 @@ class FakeValkey:
             return [k.encode() for k in all_keys]
         return [k.encode() for k in all_keys if fnmatch.fnmatch(k, pattern)]
     
+    async def scan(self, cursor: int, pattern: str, count: int = 10) -> tuple[int, list]:
+        """
+        Iterate over keys matching a pattern (simplified for testing).
+        
+        Returns:
+            Tuple of (next_cursor, list_of_keys)
+            next_cursor is 0 when iteration is complete
+        """
+        import fnmatch
+        all_keys = list(self._data.keys()) + list(self._string_data.keys()) + list(self._set_data.keys())
+        
+        # Filter by pattern
+        if pattern and pattern != "*":
+            matching_keys = [k for k in all_keys if fnmatch.fnmatch(k, pattern)]
+        else:
+            matching_keys = all_keys
+        
+        # Return all matching keys at once (simplified, real Redis uses cursor pagination)
+        # For testing, we just return cursor 0 to indicate we're done
+        return (0, [k.encode() for k in matching_keys])
+    
     # Set operations
     async def sadd(self, key: str, members: list) -> int:
         """Add one or more members to a set."""
@@ -718,35 +739,16 @@ async def map_manager_loaded() -> None:
     """
     Global fixture to ensure maps are loaded for tests that need spawn positions.
     
-    Creates a minimal mock map instead of loading real files to avoid test hangs.
+    Loads real map files from server/maps/ directory.
     """
     from server.src.services.map_service import get_map_manager
     
     map_manager = get_map_manager()
     
-    # Create a minimal mock map for testing
-    # We'll just add it directly to the maps dict
-    class MockTileMap:
-        def __init__(self):
-            self.width = 10
-            self.height = 10
-            self.tile_width = 32 
-            self.tile_height = 32
-            self.player_spawn_point = {"x": 5, "y": 5}  # Default spawn point
-            
-        def get_spawn_position(self):
-            return (5, 5)  # Center of mock map
-            
-        def is_walkable(self, x, y):
-            return True  # Everything is walkable in mock
-            
-        def get_chunks_around_position(self, x, y, radius):
-            return []  # No chunks in mock
-    
-    # Add the mock map if no real maps are loaded
+    # Load real maps if not already loaded
     if not map_manager.maps:
-        map_manager.maps["samplemap"] = MockTileMap()
-        logger.info("Mock map loaded for testing")
+        await map_manager.load_maps()
+        logger.info(f"Loaded {len(map_manager.maps)} real map(s) for testing")
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -818,8 +820,8 @@ def create_test_player(
         player = Player(
             username=username,
             hashed_password=hashed_password,
-            x_coord=x,
-            y_coord=y,
+            x=x,
+            y=y,
             map_id=map_id,
             current_hp=current_hp
         )
@@ -855,7 +857,7 @@ def create_test_player(
                 )
         
         # Register player as online for operations in tests
-        player_state_manager.register_online_player(player.id, player.username)
+        await player_state_manager.register_online_player(player.id, player.username)
         
         return player
     
@@ -1081,150 +1083,139 @@ async def test_client(
     to prevent conflicts. Uses PlayerService for player creation following
     the service-first architecture pattern.
     
-    Uses manual context management to avoid pytest-asyncio task boundary issues
-    with httpx-ws's internal anyio TaskGroups.
+    Uses AsyncExitStack for proper resource cleanup and timeouts to prevent hanging.
     """
     import uuid
+    from contextlib import AsyncExitStack
     from httpx import AsyncClient
     from httpx_ws import aconnect_ws
     from httpx_ws.transport import ASGIWebSocketTransport
     from server.src.services.player_service import PlayerService
     from server.src.schemas.player import PlayerCreate
+    from common.src.protocol import WSMessage, MessageType, AuthenticatePayload
+    from server.src.core.security import create_access_token
     
     # Create a session for this integration test
     if TestingSessionLocal is None:
         raise RuntimeError("TestingSessionLocal not initialized")
     
-    # Track resources for cleanup
-    session = None
-    http_client = None
-    ws_context = None
-    websocket = None
-    client = None
-    player_id = None
-    username = None
-    
-    try:
-        # Create session for cleanup operations
-        session = TestingSessionLocal()
-        await session.__aenter__()
+    # Use AsyncExitStack for guaranteed cleanup
+    async with AsyncExitStack() as stack:
+        # Track for final cleanup
+        player_id = None
         
-        # Override dependencies for WebSocket endpoint
-        async def override_get_db():
-            yield session
-        
-        async def override_get_valkey():
-            return fake_valkey
-        
-        app.dependency_overrides[get_db] = override_get_db
-        app.dependency_overrides[get_valkey] = override_get_valkey
-        
-        # Create test player using PlayerService (service-first pattern)
-        from server.src.core.security import create_access_token
-        
-        username = f"testuser_{uuid.uuid4().hex[:8]}"  # Unique username for each test
-        password = "testpass123"
-        
-        # Use PlayerService.create_player which handles GSM, DB, and skill initialization
-        player_data = PlayerCreate(username=username, password=password)
-        player_result = await PlayerService.create_player(
-            player_data=player_data,
-            x=10,
-            y=10,
-            map_id="samplemap"
-        )
-        player_id = player_result["id"]
-        
-        # Create JWT token
-        token = create_access_token(data={"sub": username})
-        
-        # Create httpx-ws transport for ASGI app
-        transport = ASGIWebSocketTransport(app)
-        
-        # Manually enter AsyncClient context
-        http_client = AsyncClient(transport=transport, base_url="http://test")
-        await http_client.__aenter__()
-        
-        # Manually enter WebSocket context
-        ws_context = aconnect_ws("http://test/ws", http_client)
-        websocket = await ws_context.__aenter__()
-        
-        # Send authentication message
-        from common.src.protocol import WSMessage, MessageType, AuthenticatePayload
-        
-        auth_message = WSMessage(
-            id=str(uuid.uuid4()),
-            type=MessageType.CMD_AUTHENTICATE,
-            payload=AuthenticatePayload(token=token).model_dump(),
-            version="2.0"
-        )
-        
-        # Send auth message (natively async with httpx-ws)
-        packed_auth = msgpack.packb(auth_message.model_dump(), use_bin_type=True)
-        await websocket.send_bytes(packed_auth)
-        
-        # Wait for auth response (natively async with httpx-ws)
-        auth_response_bytes = await websocket.receive_bytes()
-        auth_response_data = msgpack.unpackb(auth_response_bytes, raw=False)
-        auth_response = WSMessage(**auth_response_data)
-        
-        if auth_response.type != MessageType.EVENT_WELCOME:
-            raise Exception(f"Authentication failed: expected WELCOME but got {auth_response.type}")
-        
-        # After EVENT_WELCOME, server sends a EVENT_CHAT_MESSAGE welcome - consume it
-        chat_response_bytes = await websocket.receive_bytes()
-        chat_response_data = msgpack.unpackb(chat_response_bytes, raw=False)
-        chat_response = WSMessage(**chat_response_data)
-        
-        if chat_response.type != MessageType.EVENT_CHAT_MESSAGE:
-            raise Exception(f"Expected welcome chat message but got {chat_response.type}")
-        
-        # Create WebSocket test client wrapper
-        client = WebSocketTestClient(websocket)
-        
-        yield client
-        
-    finally:
-        # Clean up in reverse order - all in the same task context
-        
-        # 1. Clean up test client first
-        if client is not None:
+        try:
+            # Create session
+            session = await stack.enter_async_context(TestingSessionLocal())
+            
+            # Override dependencies for WebSocket endpoint
+            async def override_get_db():
+                yield session
+            
+            async def override_get_valkey():
+                return fake_valkey
+            
+            app.dependency_overrides[get_db] = override_get_db
+            app.dependency_overrides[get_valkey] = override_get_valkey
+            
+            # Create test player using PlayerService (service-first pattern)
+            username = f"testuser_{uuid.uuid4().hex[:8]}"
+            password = "testpass123"
+            
+            player_data = PlayerCreate(username=username, password=password)
+            player_result = await PlayerService.create_player(
+                player_data=player_data,
+                x=10,
+                y=10,
+                map_id="samplemap"
+            )
+            player_id = player_result.id
+            
+            # Create JWT token
+            token = create_access_token(data={"sub": username})
+            
+            # Create httpx-ws transport and client (manual management to avoid cancel scope issues)
+            transport = ASGIWebSocketTransport(app)
+            http_client = AsyncClient(transport=transport, base_url="http://test")
+            await http_client.__aenter__()
+            
+            # Connect WebSocket with timeout
+            ws_context = aconnect_ws("http://test/ws", http_client)
+            websocket = await asyncio.wait_for(
+                ws_context.__aenter__(),
+                timeout=5.0
+            )
+            
             try:
-                await client.close()
-            except Exception as e:
-                logger.warning(f"Error closing test client: {e}")
-        
-        # 2. Clean up WebSocket context
-        if ws_context is not None:
-            try:
-                await ws_context.__aexit__(None, None, None)
-            except Exception as e:
-                logger.warning(f"Error closing WebSocket: {e}")
-        
-        # 3. Clean up HTTP client
-        if http_client is not None:
-            try:
-                await http_client.__aexit__(None, None, None)
-            except Exception as e:
-                logger.warning(f"Error closing HTTP client: {e}")
-        
-        # 4. Delete the test player completely using service-first pattern
-        # This handles both GSM cache cleanup and database deletion
-        if player_id is not None:
-            try:
-                await PlayerService.delete_player(player_id)
-            except Exception as e:
-                logger.warning(f"Error deleting test player: {e}")
-        
-        # 5. Close session
-        if session is not None:
-            try:
-                await session.__aexit__(None, None, None)
-            except Exception as e:
-                logger.warning(f"Error closing session: {e}")
-        
-        # 6. Clear dependency overrides
-        app.dependency_overrides.clear()
+                # Authenticate with timeout
+                auth_message = WSMessage(
+                    id=str(uuid.uuid4()),
+                    type=MessageType.CMD_AUTHENTICATE,
+                    payload=AuthenticatePayload(token=token).model_dump(),
+                    version="2.0"
+                )
+                
+                packed_auth = msgpack.packb(auth_message.model_dump(), use_bin_type=True)
+                await websocket.send_bytes(packed_auth)
+                
+                # Wait for auth response with timeout
+                auth_response_bytes = await asyncio.wait_for(
+                    websocket.receive_bytes(),
+                    timeout=5.0
+                )
+                auth_response_data = msgpack.unpackb(auth_response_bytes, raw=False)
+                auth_response = WSMessage(**auth_response_data)
+                
+                if auth_response.type != MessageType.EVENT_WELCOME:
+                    raise Exception(f"Authentication failed: expected WELCOME but got {auth_response.type}")
+                
+                # Consume welcome chat message with timeout
+                chat_response_bytes = await asyncio.wait_for(
+                    websocket.receive_bytes(),
+                    timeout=5.0
+                )
+                chat_response_data = msgpack.unpackb(chat_response_bytes, raw=False)
+                chat_response = WSMessage(**chat_response_data)
+                
+                if chat_response.type != MessageType.EVENT_CHAT_MESSAGE:
+                    raise Exception(f"Expected welcome chat message but got {chat_response.type}")
+                
+                # Create WebSocket test client wrapper
+                client = WebSocketTestClient(websocket)
+                await client.__aenter__()
+                
+                yield client
+                
+            finally:
+                # Clean up WebSocket client
+                try:
+                    await client.close()
+                except Exception as e:
+                    logger.warning(f"Error closing WebSocket client: {e}")
+                
+                # Close WebSocket connection
+                try:
+                    await ws_context.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.warning(f"Error closing WebSocket connection: {e}")
+                
+                # Close HTTP client
+                try:
+                    await http_client.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.warning(f"Error closing HTTP client: {e}")
+            
+        finally:
+            # AsyncExitStack will clean up all contexts automatically
+            # We only need to handle player deletion which is outside the stack
+            if player_id is not None:
+                try:
+                    await PlayerService.delete_player(player_id)
+                except Exception as e:
+                    logger.warning(f"Error deleting test player: {e}")
+            
+            # Clear dependency overrides
+            app.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture

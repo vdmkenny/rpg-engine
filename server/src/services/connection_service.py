@@ -62,13 +62,14 @@ class ConnectionService:
                     extra={"player_id": player_id, "position": {"x": x, "y": y, "map_id": map_id}}
                 )
 
-            # Set HP data in player state manager
+            # Set HP data through HpService
+            from server.src.services.hp_service import HpService
             hp_data = {"current_hp": current_hp, "max_hp": max_hp}
-            await player_mgr.set_player_hp(player_id, current_hp, max_hp)
+            await HpService.set_hp(player_id, current_hp, max_hp)
 
             # Get nearby players for initial state
             nearby_players = await PlayerService.get_nearby_players(
-                player_id, range_tiles=80
+                player_id, radius=80
             )
 
             initialization_data = {
@@ -122,12 +123,12 @@ class ConnectionService:
         try:
             # Get nearby players to notify
             nearby_players = await PlayerService.get_nearby_players(
-                player_id, range_tiles=80
+                player_id, radius=80
             )
 
             notified_players = []
             for nearby_player in nearby_players:
-                notified_players.append(nearby_player["player_id"])
+                notified_players.append(nearby_player.player_id)
 
             if notified_players:
                 logger.info(
@@ -187,15 +188,15 @@ class ConnectionService:
                     "error": "Player not found"
                 }
             
-            player_id = player["id"]
+            player_id = player.id
 
             # Get nearby players before cleanup for notifications
             nearby_players = await PlayerService.get_nearby_players(
-                player_id, range_tiles=80
+                player_id, radius=80
             )
 
             # Save player state and logout
-            await PlayerService.logout_player(player_id, username)
+            await PlayerService.logout_player(player_id)
 
             # Cleanup any additional connection-specific resources
             await ConnectionService._cleanup_connection_resources(player_id)
@@ -203,7 +204,7 @@ class ConnectionService:
             disconnection_data = {
                 "player_id": player_id,
                 "username": username,
-                "nearby_players_to_notify": [p["player_id"] for p in nearby_players],
+                "nearby_players_to_notify": [p.player_id for p in nearby_players],
                 "cleanup_completed": True
             }
 
@@ -224,7 +225,7 @@ class ConnectionService:
             try:
                 player = await PlayerService.get_player_by_username(username)
                 if player:
-                    player_id = player["id"]
+                    player_id = player.id
             except:
                 pass
 
@@ -304,11 +305,10 @@ class ConnectionService:
             player_mgr = get_player_state_manager()
             
             # Check if player is registered as online
-            is_online = player_mgr.is_online(player_id)
+            is_online = await player_mgr.is_online(player_id)
             
             # Verify username matches
-            from .player_service import PlayerService
-            stored_username = await PlayerService.get_username_by_player_id(player_id)
+            stored_username = await player_mgr.get_username_for_player(player_id)
             username_matches = stored_username == username
 
             # Get position data to verify state integrity
@@ -391,19 +391,19 @@ class ConnectionService:
                         # First get player ID for this username - use PlayerService to avoid direct DB access
                         player = await PlayerService.get_player_by_username(other_username)
                         
-                        if player and PlayerService.is_player_online(player["id"]):
-                            position_data = await PlayerService.get_player_position(player["id"])
+                        if player and await PlayerService.is_player_online(player.id):
+                            position_data = await PlayerService.get_player_position(player.id)
                             if position_data:
                                 # Get visual state via service layer
-                                visual_data = await VisualStateService.get_player_visual_state(player["id"])
+                                visual_data = await VisualStateService.get_player_visual_state(player.id)
                                 
                                 player_data = {
                                     "type": "player",
-                                    "player_id": player["id"],
+                                    "player_id": player.id,
                                     "username": other_username,
-                                    "x": position_data["x"],
-                                    "y": position_data["y"], 
-                                    "map_id": position_data["map_id"],
+                                    "x": position_data.x,
+                                    "y": position_data.y, 
+                                    "map_id": position_data.map_id,
                                 }
                                 
                                 # Add visual state if available
@@ -484,7 +484,7 @@ class ConnectionService:
     # =========================================================================
     
     @staticmethod
-    def get_online_player_ids() -> set[int]:
+    async def get_online_player_ids() -> set[int]:
         """
         Get set of all online player IDs.
         
@@ -492,10 +492,11 @@ class ConnectionService:
             Set of online player IDs
         """
         player_mgr = get_player_state_manager()
-        return set(player_mgr.get_all_online_player_ids())
+        player_ids = await player_mgr.get_all_online_player_ids()
+        return set(player_ids)
     
     @staticmethod
-    def get_online_player_id_by_username(username: str) -> Optional[int]:
+    async def get_online_player_id_by_username(username: str) -> Optional[int]:
         """
         Get player ID by username for currently connected players.
         
@@ -505,11 +506,13 @@ class ConnectionService:
         Returns:
             Player ID if online, None otherwise
         """
-        player_mgr = get_player_state_manager()
-        return player_mgr.get_player_id_for_username(username)
+        player = await PlayerService.get_player_by_username(username)
+        if player and await PlayerService.is_player_online(player.id):
+            return player.id
+        return None
     
     @staticmethod 
-    def get_all_online_players() -> List[Dict[str, Any]]:
+    async def get_all_online_players() -> List[Dict[str, Any]]:
         """
         Get all online players with basic info for broadcasting and administration.
         
@@ -519,8 +522,9 @@ class ConnectionService:
         player_mgr = get_player_state_manager()
         online_players = []
         
-        for player_id in player_mgr.get_all_online_player_ids():
-            username = player_mgr.get_username_for_player(player_id)
+        player_ids = await player_mgr.get_all_online_player_ids()
+        for player_id in player_ids:
+            username = await player_mgr.get_username_for_player(player_id)
             if username:
                 online_players.append({
                     "player_id": player_id,
@@ -530,7 +534,7 @@ class ConnectionService:
         return online_players
     
     @staticmethod
-    def is_player_online(player_id: int) -> bool:
+    async def is_player_online(player_id: int) -> bool:
         """
         Check if a player is currently connected.
         
@@ -541,4 +545,4 @@ class ConnectionService:
             True if player is online, False otherwise
         """
         player_mgr = get_player_state_manager()
-        return player_mgr.is_online(player_id)
+        return await player_mgr.is_online(player_id)
