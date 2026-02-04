@@ -206,6 +206,7 @@ async def websocket_endpoint(
         
         # Wait for authentication message
         auth_message = await receive_auth_message(websocket)
+        
         username, player_id = await authenticate_player(auth_message)
         
         # Initialize player connection and load into GSM
@@ -222,7 +223,7 @@ async def websocket_endpoint(
         
         # Register connection with manager
         player_mgr = get_player_state_manager()
-        position = await player_mgr.get_position(player_id)
+        position = await player_mgr.get_player_position(player_id)
         if not position:
             raise WebSocketDisconnect(
                 code=status.WS_1011_INTERNAL_ERROR,

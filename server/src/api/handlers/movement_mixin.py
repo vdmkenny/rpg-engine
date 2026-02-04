@@ -35,7 +35,7 @@ class MovementHandlerMixin:
         try:
             player_mgr = get_player_state_manager()
             
-            if not player_mgr.is_online(self.player_id):
+            if not await player_mgr.is_online(self.player_id):
                 logger.warning(
                     "Player attempted movement while not online",
                     extra={"player_id": self.player_id, "username": self.username}

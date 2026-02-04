@@ -857,7 +857,7 @@ def create_test_player(
                 )
         
         # Register player as online for operations in tests
-        await player_state_manager.register_online_player(player.id, player.username)
+        await player_state_manager.register_online_player(player.id)
         
         return player
     

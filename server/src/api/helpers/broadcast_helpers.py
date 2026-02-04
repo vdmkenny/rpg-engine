@@ -44,10 +44,11 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
         visual_data = await VisualStateService.get_player_visual_state(player_id)
         
         # Build player payload
+        # Convert Pydantic models to dicts for proper serialization
         player_payload = {
             "id": player_id,
             "username": username,
-            "position": position,
+            "position": position.model_dump() if position else None,
             "hp": {
                 "current_hp": current_hp,
                 "max_hp": max_hp
@@ -103,10 +104,10 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
             # Format skills for client (convert from list to dict keyed by skill name)
             skills_dict = {}
             for skill in player_skills:
-                skill_name = skill.get("name", "").lower()
+                skill_name = skill.name.lower()
                 skills_dict[skill_name] = {
-                    "level": skill.get("current_level", 1),
-                    "xp": skill.get("experience", 0),
+                    "level": skill.current_level,
+                    "xp": skill.experience,
                 }
             
             logger.info(
@@ -185,7 +186,7 @@ async def handle_player_join_broadcast(
             )
             return
             
-        map_id = position["map_id"]
+        map_id = position.map_id
         
         # Get existing players on this map
         existing_players_data = await ConnectionService.get_existing_players_on_map(

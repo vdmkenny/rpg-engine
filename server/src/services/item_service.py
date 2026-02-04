@@ -71,15 +71,18 @@ class ItemService:
     """Service for managing item definitions."""
 
     @staticmethod
-    async def sync_items_to_db() -> None:
+    async def sync_items_to_db() -> int:
         """
         Sync items from ItemType enum to database.
         
-        Note: This loads item cache from DB which assumes items are already
-        synced via alembic migrations or other means.
+        Uses ReferenceDataManager to perform UPSERT operations for all items
+        defined in the ItemType enum, ensuring database stays in sync with code.
+        
+        Returns:
+            Number of items synced
         """
         ref_mgr = get_reference_data_manager()
-        await ref_mgr.load_item_cache_from_db()
+        return await ref_mgr.sync_items_to_database()
 
     @staticmethod
     async def get_item_by_name(name: str) -> Optional[ItemWrapper]:
@@ -122,26 +125,18 @@ class ItemService:
         return None
 
     @staticmethod
-    async def sync_enum_definitions_to_database():
+    async def sync_enum_definitions_to_database() -> int:
         """
         Sync all item enum definitions to the database.
         
         This ensures the database has the latest item definitions from code.
-        Maintains separation between reference data and player data.
-
-        Note: This method currently requires implementation of reference data sync.
-        For now, it logs the intent and returns empty list.
-
-        Returns:
-            Empty list (placeholder until sync methods are implemented)
-        """
-        logger.info(
-            "Item sync requested - requires reference data sync implementation",
-            extra={"enum_items": len(ItemType)},
-        )
+        Uses ReferenceDataManager to perform UPSERT operations for all items
+        defined in the ItemType enum.
         
-        # Reference item system not yet implemented
-        return []
+        Returns:
+            Number of items synced to database
+        """
+        return await ItemService.sync_items_to_db()
 
     @staticmethod
     def item_to_info(item_data: Dict[str, Any]) -> ItemInfo:
@@ -191,6 +186,8 @@ class ItemService:
             is_tradeable=bool(item_data.get("is_tradeable", True)),
             value=int(item_data.get("value", 0)),
             stats=stats,
+            icon_sprite_id=str(item_data.get("icon_sprite_id", "")),
+            equipped_sprite_id=item_data.get("equipped_sprite_id"),
         )
 
     # Item data conversion methods available above

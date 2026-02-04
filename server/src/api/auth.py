@@ -12,7 +12,7 @@ from server.src.core.metrics import (
     auth_tokens_issued_total,
 )
 from server.src.core.security import create_access_token
-from server.src.schemas.player import PlayerCreate, PlayerPublic
+from server.src.schemas.player import PlayerCreate, PlayerData
 from server.src.schemas.token import Token
 from server.src.services.map_service import get_map_manager
 from server.src.services.skill_service import SkillService
@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 @router.post(
     "/register",
-    response_model=PlayerPublic,
+    response_model=PlayerData,
     status_code=status.HTTP_201_CREATED,
     summary="Register a new player",
 )
@@ -135,7 +135,7 @@ async def login_for_access_token(
     # Check server capacity (admins and moderators bypass capacity limits)
     if player.role not in ["ADMIN", "MODERATOR"]:
         player_mgr = get_player_state_manager()
-        current_players = player_mgr.get_active_player_count()
+        current_players = await player_mgr.get_active_player_count()
         
         if current_players >= settings.MAX_PLAYERS:
             logger.warning(

@@ -913,8 +913,11 @@ class MapManager:
         """
         tile_map = self.get_map(map_id)
         if not tile_map:
+            # DEBUG: Print available maps for debugging
+            print(f"[MAP DEBUG] Map '{map_id}' not found. Available maps: {list(self.maps.keys())}")
             logger.warning(
-                "Map not found for movement validation", extra={"map_id": map_id}
+                "Map not found for movement validation", 
+                extra={"map_id": map_id, "available_maps": list(self.maps.keys())}
             )
             return False
 

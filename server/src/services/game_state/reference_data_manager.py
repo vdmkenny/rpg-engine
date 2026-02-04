@@ -241,6 +241,95 @@ class ReferenceDataManager(BaseManager):
             logger.info(f"Synced {count} entity definitions to database")
             return count
 
+    async def sync_items_to_database(self) -> int:
+        """Sync ItemType enum definitions to database."""
+        from server.src.core.items import ItemType
+        from server.src.models.item import Item
+
+        if not self._session_factory:
+            logger.warning("No database connection for item sync")
+            return 0
+
+        async with self._db_session() as db:
+            count = 0
+
+            for item_enum in ItemType:
+                item_def = item_enum.value
+
+                # Build insert values directly from ItemDefinition
+                stmt = pg_insert(Item).values(
+                    name=item_enum.name.lower(),
+                    display_name=item_def.display_name,
+                    description=item_def.description,
+                    category=item_def.category.value,
+                    rarity=item_def.rarity.value,
+                    equipment_slot=item_def.equipment_slot.value if item_def.equipment_slot else None,
+                    max_stack_size=item_def.max_stack_size,
+                    is_two_handed=item_def.is_two_handed,
+                    max_durability=item_def.max_durability,
+                    is_indestructible=item_def.is_indestructible,
+                    is_tradeable=item_def.is_tradeable,
+                    required_skill=item_def.required_skill.value if item_def.required_skill else None,
+                    required_level=item_def.required_level,
+                    ammo_type=item_def.ammo_type.value if item_def.ammo_type else None,
+                    value=item_def.value,
+                    attack_bonus=item_def.attack_bonus,
+                    strength_bonus=item_def.strength_bonus,
+                    ranged_attack_bonus=item_def.ranged_attack_bonus,
+                    ranged_strength_bonus=item_def.ranged_strength_bonus,
+                    magic_attack_bonus=item_def.magic_attack_bonus,
+                    magic_damage_bonus=item_def.magic_damage_bonus,
+                    physical_defence_bonus=item_def.physical_defence_bonus,
+                    magic_defence_bonus=item_def.magic_defence_bonus,
+                    health_bonus=item_def.health_bonus,
+                    speed_bonus=item_def.speed_bonus,
+                    mining_bonus=item_def.mining_bonus,
+                    woodcutting_bonus=item_def.woodcutting_bonus,
+                    fishing_bonus=item_def.fishing_bonus,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["name"],
+                    set_=dict(
+                        display_name=item_def.display_name,
+                        description=item_def.description,
+                        category=item_def.category.value,
+                        rarity=item_def.rarity.value,
+                        equipment_slot=item_def.equipment_slot.value if item_def.equipment_slot else None,
+                        max_stack_size=item_def.max_stack_size,
+                        is_two_handed=item_def.is_two_handed,
+                        max_durability=item_def.max_durability,
+                        is_indestructible=item_def.is_indestructible,
+                        is_tradeable=item_def.is_tradeable,
+                        required_skill=item_def.required_skill.value if item_def.required_skill else None,
+                        required_level=item_def.required_level,
+                        ammo_type=item_def.ammo_type.value if item_def.ammo_type else None,
+                        value=item_def.value,
+                        attack_bonus=item_def.attack_bonus,
+                        strength_bonus=item_def.strength_bonus,
+                        ranged_attack_bonus=item_def.ranged_attack_bonus,
+                        ranged_strength_bonus=item_def.ranged_strength_bonus,
+                        magic_attack_bonus=item_def.magic_attack_bonus,
+                        magic_damage_bonus=item_def.magic_damage_bonus,
+                        physical_defence_bonus=item_def.physical_defence_bonus,
+                        magic_defence_bonus=item_def.magic_defence_bonus,
+                        health_bonus=item_def.health_bonus,
+                        speed_bonus=item_def.speed_bonus,
+                        mining_bonus=item_def.mining_bonus,
+                        woodcutting_bonus=item_def.woodcutting_bonus,
+                        fishing_bonus=item_def.fishing_bonus,
+                    )
+                )
+                await db.execute(stmt)
+                count += 1
+
+            await self._commit_if_not_test_session(db)
+
+            # Reload cache after sync
+            await self.load_item_cache_from_db()
+
+            logger.info(f"Synced {count} item definitions to database")
+            return count
+
     async def _cache_entity_definitions(self) -> None:
         """Cache entity definitions in Valkey."""
         if not self._session_factory:

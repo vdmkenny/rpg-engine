@@ -91,7 +91,7 @@ class CapacityBenchmark:
             player_id = 1000 + i
             
             # Register player as online
-            gsm.register_online_player(player_id, username)
+            await gsm.register_online_player(player_id)
             
             # Set basic player state using full state method
             await gsm.set_player_full_state(

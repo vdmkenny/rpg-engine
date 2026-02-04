@@ -1,108 +1,437 @@
 """
-Player state management - Tier 1 essential data.
+Player state management.
 
-Handles online registry, position, HP, settings, and combat state.
-All data follows hot/cold TTL lifecycle with transparent auto-loading.
+Handles player positions, HP, settings, and combat state.
 """
 
-import traceback
-from typing import Any, Dict, List, Optional, Set
-
-from glide import GlideClient
+from typing import Dict, Any, Optional, List
+from datetime import datetime, timezone
 from sqlalchemy import select
-from sqlalchemy.orm import sessionmaker
+from time import time
 
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
-
-from .base_manager import BaseManager, TIER1_TTL
+from server.src.schemas.player import PlayerData, Direction, AnimationState
 
 logger = get_logger(__name__)
 
+# Valkey key patterns
 PLAYER_KEY = "player:{player_id}"
 PLAYER_SETTINGS_KEY = "player_settings:{player_id}"
-PLAYER_COMBAT_STATE_KEY = "player_combat_state:{player_id}"
+PLAYER_COMBAT_STATE_KEY = "player_combat:{player_id}"
 
-# Dirty tracking keys
-DIRTY_POSITION_KEY = "dirty:position"
-DIRTY_PLAYER_STATE_KEY = "dirty:player_state"
+# TTL tiers
+TIER1_TTL = 300  # 5 minutes - frequently accessed
+TIER2_TTL = 600  # 10 minutes
 
 
-class PlayerStateManager(BaseManager):
-    """Manages player online status, position, HP, settings, and combat state."""
+class PlayerStateManager:
+    """Manages player state with Valkey caching."""
 
-    def __init__(
-        self,
-        valkey_client: Optional[GlideClient] = None,
-        session_factory: Optional[sessionmaker] = None,
-    ):
-        super().__init__(valkey_client, session_factory)
-        self._online_players: Set[int] = set()
-        self._username_to_id: Dict[str, int] = {}
-        self._id_to_username: Dict[int, str] = {}
+    def __init__(self, session_factory=None, valkey=None):
+        self._session_factory = session_factory
+        self._valkey = valkey
+
+    def _db_session(self):
+        """Create a database session."""
+        return self._session_factory()
+
+    async def _commit_if_not_test_session(self, db):
+        """Commit if this is not a test session."""
+        await db.commit()
+
+    def _utc_timestamp(self) -> float:
+        """Get current UTC timestamp."""
+        return time()
+
+    def _decode_bytes(self, value: Any) -> Any:
+        """Decode bytes to string."""
+        if isinstance(value, bytes):
+            return value.decode('utf-8')
+        return value
+
+    def _decode_from_valkey(self, value: Any, type_func=None) -> Any:
+        """Decode value from Valkey."""
+        if value is None:
+            return None
+        decoded = self._decode_bytes(value)
+        if type_func and decoded is not None:
+            try:
+                return type_func(decoded)
+            except (ValueError, TypeError):
+                return decoded
+        return decoded
+
+    async def _cache_in_valkey(
+        self, key: str, data: Dict[str, Any], ttl: int
+    ) -> None:
+        """Cache data in Valkey."""
+        if not self._valkey or not settings.USE_VALKEY:
+            return
+
+        import json
+        encoded_data = {k: json.dumps(v) if isinstance(v, (dict, list)) else str(v) for k, v in data.items()}
+        await self._valkey.hset(key, encoded_data)
+        await self._valkey.expire(key, ttl)
+
+    async def _get_from_valkey(self, key: str) -> Optional[Dict[str, Any]]:
+        """Get data from Valkey."""
+        if not self._valkey or not settings.USE_VALKEY:
+            return None
+
+        raw = await self._valkey.hgetall(key)
+        if not raw:
+            return None
+
+        import json
+        result = {}
+        for k, v in raw.items():
+            decoded_key = self._decode_bytes(k)
+            decoded_value = self._decode_bytes(v)
+            # Try to parse JSON strings back into dicts/lists
+            if isinstance(decoded_value, str):
+                try:
+                    decoded_value = json.loads(decoded_value)
+                except json.JSONDecodeError:
+                    pass  # Keep as string if not valid JSON
+            result[decoded_key] = decoded_value
+        return result
+
+    async def _refresh_ttl(self, key: str, ttl: int) -> None:
+        """Refresh TTL for a key."""
+        if self._valkey and settings.USE_VALKEY:
+            await self._valkey.expire(key, ttl)
 
     # =========================================================================
     # Online Player Registry
     # =========================================================================
 
-    def register_online_player(self, player_id: int, username: str) -> None:
-        self._online_players.add(player_id)
-        self._username_to_id[username] = player_id
-        self._id_to_username[player_id] = username
-        logger.debug(
-            "Player registered as online",
-            extra={"player_id": player_id, "username": username},
-        )
+    async def register_online_player(self, player_id: int, username: Optional[str] = None) -> None:
+        """
+        Register player as online.
+        
+        Args:
+            player_id: Player database ID
+            username: Optional username. If not provided, will be looked up from database.
+        """
+        # Look up username if not provided
+        if username is None:
+            username = await self.get_username_for_player(player_id)
+            if not username:
+                logger.error(
+                    "Cannot register online player - username lookup failed",
+                    extra={"player_id": player_id}
+                )
+                return
+        
+        key = PLAYER_KEY.format(player_id=player_id)
+        data = {
+            "player_id": player_id,
+            "username": username,
+            "online_since": self._utc_timestamp(),
+        }
+        await self._cache_in_valkey(key, data, TIER1_TTL)
 
     async def unregister_online_player(self, player_id: int) -> None:
-        username = self._id_to_username.get(player_id, f"player_{player_id}")
+        """Unregister player from online registry."""
+        key = PLAYER_KEY.format(player_id=player_id)
+        if self._valkey and settings.USE_VALKEY:
+            await self._valkey.delete([key])
 
-        self._online_players.discard(player_id)
+    async def is_online(self, player_id: int) -> bool:
+        """Check if player is online."""
+        if not self._valkey or not settings.USE_VALKEY:
+            return False
+        key = PLAYER_KEY.format(player_id=player_id)
+        exists = await self._valkey.exists(key)
+        return bool(exists)
 
-        if username and username != f"player_{player_id}":
-            self._username_to_id.pop(username, None)
-        self._id_to_username.pop(player_id, None)
+    async def get_all_online_player_ids(self) -> List[int]:
+        """Get all online player IDs."""
+        if not self._valkey or not settings.USE_VALKEY:
+            return []
 
-        # Remove all player data from cache
-        try:
-            await self._cleanup_player_cache(player_id)
-            logger.debug(
-                "Player cache cleaned up on logout",
-                extra={"player_id": player_id, "username": username},
+        player_ids = []
+        cursor = 0
+        pattern = PLAYER_KEY.format(player_id="*")
+
+        while True:
+            cursor, keys = await self._valkey.scan(cursor, pattern, count=100)
+            for key in keys:
+                key_str = self._decode_bytes(key)
+                # Extract player_id from key pattern "player:{player_id}"
+                if key_str.startswith("player:"):
+                    try:
+                        player_id = int(key_str.split(":")[1])
+                        player_ids.append(player_id)
+                    except (ValueError, IndexError):
+                        continue
+            if cursor == 0:
+                break
+
+        return player_ids
+
+    async def get_active_player_count(self) -> int:
+        """Get count of currently active (online) players."""
+        online_players = await self.get_all_online_player_ids()
+        return len(online_players)
+
+    async def get_username_for_player(self, player_id: int) -> Optional[str]:
+        """Get username for a player from cache or database."""
+        if self._valkey and settings.USE_VALKEY:
+            key = PLAYER_KEY.format(player_id=player_id)
+            data = await self._get_from_valkey(key)
+            if data and "username" in data:
+                return data["username"]
+
+        if not self._session_factory:
+            return None
+
+        from server.src.models.player import Player
+
+        async with self._db_session() as db:
+            result = await db.execute(
+                select(Player.username).where(Player.id == player_id)
             )
-        except Exception as e:
-            logger.error(
-                "Failed to cleanup player cache",
-                extra={
-                    "player_id": player_id,
-                    "username": username,
-                    "error": str(e),
-                    "traceback": traceback.format_exc(),
-                },
-            )
-
-    def is_online(self, player_id: int) -> bool:
-        return player_id in self._online_players
-
-    def get_active_player_count(self) -> int:
-        return len(self._online_players)
-
-    def get_username_for_player(self, player_id: int) -> Optional[str]:
-        return self._id_to_username.get(player_id)
-
-    def get_player_id_for_username(self, username: str) -> Optional[int]:
-        return self._username_to_id.get(username)
-
-    def get_all_online_player_ids(self) -> List[int]:
-        return list(self._online_players)
+            row = result.first()
+            return row.username if row else None
 
     # =========================================================================
-    # Player Position
+    # HP Management
+    # =========================================================================
+
+    async def get_player_hp(self, player_id: int) -> Optional[Dict[str, int]]:
+        """
+        Get player's current and max HP from Valkey cache.
+        
+        Args:
+            player_id: Player's database ID
+            
+        Returns:
+            Dict with 'current_hp' and 'max_hp' or None if not cached
+        """
+        if not self._valkey or not settings.USE_VALKEY:
+            return None
+            
+        key = PLAYER_KEY.format(player_id=player_id)
+        data = await self._get_from_valkey(key)
+        
+        if not data or "current_hp" not in data or "max_hp" not in data:
+            return None
+            
+        return {
+            "current_hp": int(data["current_hp"]),
+            "max_hp": int(data["max_hp"])
+        }
+
+    async def set_player_hp(
+        self, player_id: int, current_hp: int, max_hp: Optional[int] = None
+    ) -> None:
+        """
+        Set player's HP in Valkey cache.
+        
+        Args:
+            player_id: Player's database ID
+            current_hp: New current HP value
+            max_hp: Optional new max HP value (if not provided, existing max_hp is preserved)
+        """
+        if not self._valkey or not settings.USE_VALKEY:
+            return
+            
+        key = PLAYER_KEY.format(player_id=player_id)
+        
+        # Get existing data to preserve other fields and max_hp if not provided
+        existing_data = await self._get_from_valkey(key)
+        
+        if existing_data:
+            # Update existing cache entry
+            existing_data["current_hp"] = current_hp
+            if max_hp is not None:
+                existing_data["max_hp"] = max_hp
+            await self._cache_in_valkey(key, existing_data, TIER1_TTL)
+        else:
+            # Create new cache entry (requires max_hp)
+            if max_hp is None:
+                logger.warning(
+                    "Attempting to set HP without max_hp for non-cached player",
+                    extra={"player_id": player_id}
+                )
+                return
+                
+            data = {
+                "player_id": player_id,
+                "current_hp": current_hp,
+                "max_hp": max_hp,
+            }
+            await self._cache_in_valkey(key, data, TIER1_TTL)
+
+    # =========================================================================
+    # Player Record Management
+    # =========================================================================
+
+    async def username_exists(self, username: str) -> bool:
+        """Check if username exists in database."""
+        if not self._session_factory:
+            return False
+
+        from server.src.models.player import Player
+
+        async with self._db_session() as db:
+            result = await db.execute(
+                select(Player).where(Player.username == username)
+            )
+            return result.first() is not None
+
+    async def create_player_record(
+        self,
+        username: str,
+        hashed_password: str,
+        x: int,
+        y: int,
+        map_id: str,
+        current_hp: int,
+        max_hp: int,
+    ) -> int:
+        """Create new Player record in database and return the player_id."""
+        if not self._session_factory:
+            raise RuntimeError("Session factory not available")
+
+        from server.src.models.player import Player
+
+        async with self._db_session() as db:
+            player = Player(
+                username=username,
+                hashed_password=hashed_password,
+                x=x,
+                y=y,
+                map_id=map_id,
+                current_hp=current_hp,
+            )
+            db.add(player)
+            await db.flush()
+            await db.refresh(player)
+            await db.commit()
+            return player.id
+
+    async def get_player_record_by_username(self, username: str) -> Optional[PlayerData]:
+        """Get player record by username from database."""
+        if not self._session_factory:
+            return None
+
+        from server.src.models.player import Player
+        from server.src.models.skill import PlayerSkill, Skill
+        from server.src.core.skills import SkillType, HITPOINTS_START_LEVEL
+
+        async with self._db_session() as db:
+            result = await db.execute(
+                select(Player).where(Player.username == username)
+            )
+            player = result.scalar_one_or_none()
+
+            if not player:
+                return None
+
+            # Get hitpoints skill level for max_hp calculation
+            hitpoints_result = await db.execute(
+                select(PlayerSkill.current_level)
+                .join(Skill)
+                .where(
+                    PlayerSkill.player_id == player.id,
+                    Skill.name == SkillType.HITPOINTS.value.name
+                )
+            )
+            max_hp = hitpoints_result.scalar_one_or_none() or HITPOINTS_START_LEVEL
+            
+            return PlayerData(
+                id=player.id,
+                username=player.username,
+                x=player.x,
+                y=player.y,
+                map_id=player.map_id,
+                current_hp=player.current_hp,
+                max_hp=max_hp,
+                role=player.role,
+                is_banned=player.is_banned,
+                timeout_until=player.timeout_until,
+                is_online=False,  # Runtime state, set by connection service
+                facing_direction=Direction.SOUTH,  # Default, overridden by hot data
+                animation_state=AnimationState.IDLE,  # Default, overridden by hot data
+                total_level=0  # TODO: Calculate from skills when needed
+            )
+
+    async def get_player_record_by_id(self, player_id: int) -> Optional[PlayerData]:
+        """Get player record by ID from database."""
+        if not self._session_factory:
+            return None
+
+        from server.src.models.player import Player
+        from server.src.models.skill import PlayerSkill, Skill
+        from server.src.core.skills import SkillType, HITPOINTS_START_LEVEL
+
+        async with self._db_session() as db:
+            result = await db.execute(
+                select(Player).where(Player.id == player_id)
+            )
+            player = result.scalar_one_or_none()
+
+            if not player:
+                return None
+
+            # Get hitpoints skill level for max_hp calculation
+            hitpoints_result = await db.execute(
+                select(PlayerSkill.current_level)
+                .join(Skill)
+                .where(
+                    PlayerSkill.player_id == player.id,
+                    Skill.name == SkillType.HITPOINTS.value.name
+                )
+            )
+            max_hp = hitpoints_result.scalar_one_or_none() or HITPOINTS_START_LEVEL
+            
+            return PlayerData(
+                id=player.id,
+                username=player.username,
+                x=player.x,
+                y=player.y,
+                map_id=player.map_id,
+                current_hp=player.current_hp,
+                max_hp=max_hp,
+                role=player.role,
+                is_banned=player.is_banned,
+                timeout_until=player.timeout_until,
+                is_online=False,  # Runtime state, set by connection service
+                facing_direction=Direction.SOUTH,  # Default, overridden by hot data
+                animation_state=AnimationState.IDLE,  # Default, overridden by hot data
+                total_level=0  # TODO: Calculate from skills when needed
+            )
+
+    async def delete_player_record(self, player_id: int) -> bool:
+        """Delete player from database."""
+        if not self._session_factory:
+            return False
+
+        from server.src.models.player import Player
+
+        async with self._db_session() as db:
+            result = await db.execute(
+                select(Player).where(Player.id == player_id)
+            )
+            player = result.scalar_one_or_none()
+
+            if not player:
+                return False
+
+            await db.delete(player)
+            await db.commit()
+            return True
+
+    # =========================================================================
+    # Position Management
     # =========================================================================
 
     async def get_player_position(self, player_id: int) -> Optional[Dict[str, Any]]:
+        """Get player position from cache or database."""
         if not settings.USE_VALKEY or not self._valkey:
-            # Database-only mode - load directly
             return await self._load_position_from_db(player_id)
 
         key = PLAYER_KEY.format(player_id=player_id)
@@ -124,6 +453,7 @@ class PlayerStateManager(BaseManager):
         return None
 
     async def _load_position_from_db(self, player_id: int) -> Optional[Dict[str, Any]]:
+        """Load player position from database."""
         if not self._session_factory:
             return None
 
@@ -131,7 +461,7 @@ class PlayerStateManager(BaseManager):
 
         async with self._db_session() as db:
             result = await db.execute(
-                select(Player.x_coord, Player.y_coord, Player.map_id, Player.last_move_time).where(
+                select(Player.x, Player.y, Player.map_id, Player.last_move_time).where(
                     Player.id == player_id
                 )
             )
@@ -139,133 +469,52 @@ class PlayerStateManager(BaseManager):
 
             if row:
                 return {
-                    "x": row.x_coord or 0,
-                    "y": row.y_coord or 0,
+                    "x": row.x or 0,
+                    "y": row.y or 0,
                     "map_id": row.map_id or "",
-                    "last_move_time": (
-                        row.last_move_time.timestamp() if row.last_move_time else 0
-                    ),
+                    "last_move_time": (row.last_move_time or datetime.now(timezone.utc)).timestamp(),
                 }
             return None
 
     async def set_player_position(
         self, player_id: int, x: int, y: int, map_id: str
     ) -> None:
+        """Set player position in cache."""
+        key = PLAYER_KEY.format(player_id=player_id)
+        data = await self._get_from_valkey(key) or {}
+        data["x"] = x
+        data["y"] = y
+        data["map_id"] = map_id
+        await self._cache_in_valkey(key, data, TIER1_TTL)
+
+    # =========================================================================
+    # Full State Management
+    # =========================================================================
+
+    async def get_player_full_state(self, player_id: int) -> Optional[Dict[str, Any]]:
+        """Get full player state from cache."""
+        key = PLAYER_KEY.format(player_id=player_id)
+        return await self._get_from_valkey(key)
+
+    async def set_player_full_state(
+        self, player_id: int, state: Dict[str, Any]
+    ) -> None:
+        """Set full player state in cache."""
         if not self._valkey or not settings.USE_VALKEY:
-            # Database-only mode - update directly
-            await self._update_position_in_db(player_id, x, y, map_id)
             return
 
         key = PLAYER_KEY.format(player_id=player_id)
-        position_data = {
-            "x": x,
-            "y": y,
-            "map_id": map_id,
-            "last_move_time": self._utc_timestamp(),
-        }
-        await self._cache_in_valkey(key, position_data, TIER1_TTL)
-
-        # Mark for batch sync
-        if self._valkey:
-            await self._valkey.sadd(DIRTY_POSITION_KEY, [str(player_id)])
-
-    async def _update_position_in_db(
-        self, player_id: int, x: int, y: int, map_id: str
-    ) -> None:
-        if not self._session_factory:
-            return
-
-        from server.src.models.player import Player
-        from datetime import datetime, timezone
-
-        async with self._db_session() as db:
-            result = await db.execute(select(Player).where(Player.id == player_id))
-            player = result.scalar_one_or_none()
-            if player:
-                player.x_coord = x
-                player.y_coord = y
-                player.map_id = map_id
-                await self._commit_if_not_test_session(db)
+        await self._cache_in_valkey(key, state, TIER1_TTL)
 
     # =========================================================================
-    # Player HP
-    # =========================================================================
-
-    async def get_player_hp(self, player_id: int) -> Optional[Dict[str, int]]:
-        if not settings.USE_VALKEY or not self._valkey:
-            return await self._load_hp_from_db(player_id)
-
-        key = PLAYER_KEY.format(player_id=player_id)
-        data = await self._get_from_valkey(key)
-
-        if data:
-            await self._refresh_ttl(key, TIER1_TTL)
-            current_hp = self._decode_from_valkey(data.get("current_hp"), int)
-            max_hp = self._decode_from_valkey(data.get("max_hp"), int)
-            if current_hp is not None and max_hp is not None:
-                return {"current_hp": current_hp, "max_hp": max_hp}
-
-        # Auto-load from DB
-        return await self._load_hp_from_db(player_id)
-
-    async def _load_hp_from_db(self, player_id: int) -> Optional[Dict[str, int]]:
-        if not self._session_factory:
-            return None
-
-        from server.src.models.player import Player
-
-        async with self._db_session() as db:
-            result = await db.execute(
-                select(Player.current_hp, Player.max_hp).where(Player.id == player_id)
-            )
-            row = result.first()
-
-            if row:
-                return {"current_hp": row.current_hp or 1, "max_hp": row.max_hp or 1}
-            return None
-
-    async def set_player_hp(
-        self, player_id: int, current_hp: int, max_hp: Optional[int] = None
-    ) -> None:
-        if not self._valkey or not settings.USE_VALKEY:
-            await self._update_hp_in_db(player_id, current_hp, max_hp)
-            return
-
-        key = PLAYER_KEY.format(player_id=player_id)
-
-        # Get existing data first
-        existing = await self._get_from_valkey(key) or {}
-        existing["current_hp"] = current_hp
-        if max_hp is not None:
-            existing["max_hp"] = max_hp
-
-        await self._cache_in_valkey(key, existing, TIER1_TTL)
-        await self._valkey.sadd(DIRTY_PLAYER_STATE_KEY, [str(player_id)])
-
-    async def _update_hp_in_db(
-        self, player_id: int, current_hp: int, max_hp: Optional[int]
-    ) -> None:
-        if not self._session_factory:
-            return
-
-        from server.src.models.player import Player
-
-        async with self._db_session() as db:
-            result = await db.execute(select(Player).where(Player.id == player_id))
-            player = result.scalar_one_or_none()
-            if player:
-                player.current_hp = current_hp
-                if max_hp is not None:
-                    player.max_hp = max_hp
-                await self._commit_if_not_test_session(db)
-
-    # =========================================================================
-    # Player Settings
+    # Settings
     # =========================================================================
 
     async def get_player_settings(self, player_id: int) -> Dict[str, Any]:
+        """Get player settings from Valkey (database fallback not implemented)."""
         if not settings.USE_VALKEY or not self._valkey:
-            return await self._load_settings_from_db(player_id)
+            # Database fallback not implemented - PlayerSettings model doesn't exist
+            return {}
 
         key = PLAYER_SETTINGS_KEY.format(player_id=player_id)
         data = await self._get_from_valkey(key)
@@ -277,25 +526,12 @@ class PlayerStateManager(BaseManager):
                 for k, v in data.items()
             }
 
-        return await self._load_settings_from_db(player_id)
-
-    async def _load_settings_from_db(self, player_id: int) -> Dict[str, Any]:
-        if not self._session_factory:
-            return {}
-
-        from server.src.models.player import PlayerSettings
-
-        async with self._db_session() as db:
-            result = await db.execute(
-                select(PlayerSettings).where(PlayerSettings.player_id == player_id)
-            )
-            settings_list = result.scalars().all()
-
-            return {s.setting_key: s.setting_value for s in settings_list}
+        return {}
 
     async def set_player_setting(self, player_id: int, key: str, value: Any) -> None:
+        """Set a player setting in Valkey (database fallback not implemented)."""
         if not self._valkey or not settings.USE_VALKEY:
-            await self._update_setting_in_db(player_id, key, value)
+            # Database fallback not implemented - PlayerSettings model doesn't exist
             return
 
         settings_key = PLAYER_SETTINGS_KEY.format(player_id=player_id)
@@ -306,111 +542,43 @@ class PlayerStateManager(BaseManager):
 
         await self._cache_in_valkey(settings_key, existing, TIER1_TTL)
 
-    async def _update_setting_in_db(
-        self, player_id: int, key: str, value: Any
-    ) -> None:
-        if not self._session_factory:
-            return
-
-        from server.src.models.player import PlayerSettings
-        from sqlalchemy.dialects.postgresql import insert
-
-        async with self._db_session() as db:
-            stmt = insert(PlayerSettings).values(
-                player_id=player_id, setting_key=key, setting_value=str(value)
-            )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["player_id", "setting_key"],
-                set_={"setting_value": str(value)},
-            )
-            await db.execute(stmt)
-            await self._commit_if_not_test_session(db)
-
     # =========================================================================
     # Combat State
     # =========================================================================
 
     async def get_player_combat_state(self, player_id: int) -> Optional[Dict[str, Any]]:
+        """Get player combat state."""
         if not settings.USE_VALKEY or not self._valkey:
             return None
 
         key = PLAYER_COMBAT_STATE_KEY.format(player_id=player_id)
-        data = await self._get_from_valkey(key)
-
-        if data:
-            await self._refresh_ttl(key, TIER1_TTL)
-            return {
-                "in_combat": self._decode_from_valkey(data.get("in_combat"), bool),
-                "target_type": data.get("target_type"),
-                "target_id": self._decode_from_valkey(data.get("target_id"), int),
-                "auto_retaliate": self._decode_from_valkey(
-                    data.get("auto_retaliate"), bool
-                ),
-            }
-        return None
+        return await self._get_from_valkey(key)
 
     async def set_player_combat_state(
-        self, player_id: int, target_type: str, target_id: int
+        self, player_id: int, combat_state: Dict[str, Any]
     ) -> None:
+        """Set player combat state."""
         if not self._valkey or not settings.USE_VALKEY:
             return
 
         key = PLAYER_COMBAT_STATE_KEY.format(player_id=player_id)
-        combat_data = {
-            "in_combat": True,
-            "target_type": target_type,
-            "target_id": target_id,
-            "auto_retaliate": True,  # Default, can be overridden by settings
-        }
-        await self._cache_in_valkey(key, combat_data, TIER1_TTL)
+        await self._cache_in_valkey(key, combat_state, TIER1_TTL)
 
     async def clear_player_combat_state(self, player_id: int) -> None:
+        """Clear player combat state (e.g., on movement)."""
         if not self._valkey or not settings.USE_VALKEY:
             return
 
         key = PLAYER_COMBAT_STATE_KEY.format(player_id=player_id)
-        await self._delete_from_valkey(key)
-
-    # =========================================================================
-    # Full State Operations
-    # =========================================================================
-
-    async def get_player_full_state(self, player_id: int) -> Optional[Dict[str, Any]]:
-        position = await self.get_player_position(player_id)
-        if not position:
-            return None
-
-        hp = await self.get_player_hp(player_id)
-        settings = await self.get_player_settings(player_id)
-        combat_state = await self.get_player_combat_state(player_id)
-
-        return {
-            "player_id": player_id,
-            "username": self._id_to_username.get(player_id, ""),
-            "x": position.get("x", 0),
-            "y": position.get("y", 0),
-            "map_id": position.get("map_id", ""),
-            "current_hp": hp.get("current_hp", 1) if hp else 1,
-            "max_hp": hp.get("max_hp", 1) if hp else 1,
-            "settings": settings,
-            "combat_state": combat_state,
-        }
-
-    async def set_player_full_state(
-        self, player_id: int, state: Dict[str, Any]
-    ) -> None:
-        if not self._valkey or not settings.USE_VALKEY:
-            return
-
-        key = PLAYER_KEY.format(player_id=player_id)
-        await self._cache_in_valkey(key, state, TIER1_TTL)
+        await self._valkey.delete(key)
 
     # =========================================================================
     # Cleanup
     # =========================================================================
 
-    async def _cleanup_player_cache(self, player_id: int) -> None:
-        if not self._valkey:
+    async def cleanup_player(self, player_id: int) -> None:
+        """Clean up all player data from cache."""
+        if not self._valkey or not settings.USE_VALKEY:
             return
 
         keys = [
@@ -418,211 +586,54 @@ class PlayerStateManager(BaseManager):
             PLAYER_SETTINGS_KEY.format(player_id=player_id),
             PLAYER_COMBAT_STATE_KEY.format(player_id=player_id),
         ]
-
-        for key in keys:
-            await self._delete_from_valkey(key)
-
-    async def cleanup_player_state(self, player_id: int) -> None:
-        await self._cleanup_player_cache(player_id)
+        await self._valkey.delete(keys)
 
     # =========================================================================
-    # Batch Sync Support
+    # Auto-load helper
     # =========================================================================
 
-    async def get_dirty_positions(self) -> List[int]:
-        if not self._valkey:
-            return []
-
-        dirty = await self._valkey.smembers(DIRTY_POSITION_KEY)
-        return [int(self._decode_bytes(p)) for p in dirty]
-
-    async def clear_dirty_position(self, player_id: int) -> None:
-        if self._valkey:
-            await self._valkey.srem(DIRTY_POSITION_KEY, [str(player_id)])
-
-    async def sync_player_position_to_db(self, player_id: int, db) -> None:
-        if not self._valkey:
-            return
-
-        from server.src.models.player import Player
-        from datetime import datetime, timezone
-
-        key = PLAYER_KEY.format(player_id=player_id)
+    async def auto_load_with_ttl(
+        self,
+        key: str,
+        load_fn: callable,
+        ttl: int,
+        decoder: Optional[Dict[str, type]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Auto-load data from loader function with TTL."""
         data = await self._get_from_valkey(key)
 
-        if not data:
-            return
+        if data is None:
+            data = await load_fn()
+            if data:
+                await self._cache_in_valkey(key, data, ttl)
 
-        x = self._decode_from_valkey(data.get("x"), int)
-        y = self._decode_from_valkey(data.get("y"), int)
-        map_id = data.get("map_id", "")
-        last_move_time = self._decode_from_valkey(data.get("last_move_time"), float)
+        if data and decoder:
+            for k, type_func in decoder.items():
+                if k in data:
+                    data[k] = self._decode_from_valkey(data[k], type_func)
 
-        result = await db.execute(select(Player).where(Player.id == player_id))
-        player = result.scalar_one_or_none()
-
-        if player:
-            player.x_coord = x
-            player.y_coord = y
-            player.map_id = map_id
-            if last_move_time:
-                player.last_move_time = datetime.fromtimestamp(
-                    last_move_time, tz=timezone.utc
-                )
-
-    # =========================================================================
-    # Player Record CRUD
-    # =========================================================================
-
-    async def create_player_record(
-        self,
-        username: str,
-        hashed_password: str,
-        x: int,
-        y: int,
-        map_id: str,
-        current_hp: int,
-        max_hp: int,
-    ) -> int:
-        """Create a new player record in the database."""
-        if not self._session_factory:
-            raise RuntimeError("Database session factory not initialized")
-
-        from server.src.models.player import Player
-
-        async with self._db_session() as db:
-            player = Player(
-                username=username,
-                hashed_password=hashed_password,
-                x_coord=x,
-                y_coord=y,
-                map_id=map_id,
-                current_hp=current_hp,
-            )
-            db.add(player)
-            await self._commit_if_not_test_session(db)
-            await db.refresh(player)
-            return player.id
-
-    async def get_player_record_by_username(self, username: str) -> Optional[Dict[str, Any]]:
-        """Get player record by username."""
-        if not self._session_factory:
-            return None
-
-        from server.src.models.player import Player
-
-        async with self._db_session() as db:
-            result = await db.execute(select(Player).where(Player.username == username))
-            player = result.scalar_one_or_none()
-
-            if player:
-                return {
-                    "id": player.id,
-                    "username": player.username,
-                    "hashed_password": player.hashed_password,
-                    "x": player.x_coord,
-                    "y": player.y_coord,
-                    "map_id": player.map_id,
-                    "current_hp": player.current_hp,
-                    "role": player.role,
-                    "is_banned": player.is_banned,
-                }
-            return None
-
-    async def get_player_record_by_id(self, player_id: int) -> Optional[Dict[str, Any]]:
-        """Get player record by ID."""
-        if not self._session_factory:
-            return None
-
-        from server.src.models.player import Player
-
-        async with self._db_session() as db:
-            result = await db.execute(select(Player).where(Player.id == player_id))
-            player = result.scalar_one_or_none()
-
-            if player:
-                return {
-                    "id": player.id,
-                    "username": player.username,
-                    "hashed_password": player.hashed_password,
-                    "x": player.x_coord,
-                    "y": player.y_coord,
-                    "map_id": player.map_id,
-                    "current_hp": player.current_hp,
-                    "role": player.role,
-                    "is_banned": player.is_banned,
-                }
-            return None
-
-    async def username_exists(self, username: str) -> bool:
-        """Check if a username already exists."""
-        if not self._session_factory:
-            return False
-
-        from server.src.models.player import Player
-
-        async with self._db_session() as db:
-            result = await db.execute(
-                select(Player.id).where(Player.username == username)
-            )
-            return result.scalar_one_or_none() is not None
-
-    async def update_player_record_field(
-        self, player_id: int, field: str, value: Any
-    ) -> bool:
-        """Update a specific field in the player record."""
-        if not self._session_factory:
-            return False
-
-        from server.src.models.player import Player
-
-        async with self._db_session() as db:
-            result = await db.execute(select(Player).where(Player.id == player_id))
-            player = result.scalar_one_or_none()
-
-            if player and hasattr(player, field):
-                setattr(player, field, value)
-                await self._commit_if_not_test_session(db)
-                return True
-            return False
-
-    async def delete_player_record(self, player_id: int) -> bool:
-        """Delete a player record from the database."""
-        if not self._session_factory:
-            return False
-
-        from server.src.models.player import Player
-
-        async with self._db_session() as db:
-            result = await db.execute(select(Player).where(Player.id == player_id))
-            player = result.scalar_one_or_none()
-
-            if player:
-                await db.delete(player)
-                await self._commit_if_not_test_session(db)
-                return True
-            return False
+        return data
 
 
 # Singleton instance
 _player_state_manager: Optional[PlayerStateManager] = None
 
 
-def init_player_state_manager(
-    valkey_client: Optional[GlideClient] = None,
-    session_factory: Optional[sessionmaker] = None,
-) -> PlayerStateManager:
+def init_player_state_manager(session_factory=None, valkey=None) -> PlayerStateManager:
+    """Initialize the player state manager."""
     global _player_state_manager
-    _player_state_manager = PlayerStateManager(valkey_client, session_factory)
+    _player_state_manager = PlayerStateManager(session_factory, valkey)
     return _player_state_manager
 
 
 def get_player_state_manager() -> PlayerStateManager:
+    """Get the player state manager singleton."""
     if _player_state_manager is None:
         raise RuntimeError("PlayerStateManager not initialized")
     return _player_state_manager
 
 
 def reset_player_state_manager() -> None:
+    """Reset the player state manager singleton."""
     global _player_state_manager
     _player_state_manager = None

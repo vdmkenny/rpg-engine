@@ -403,9 +403,16 @@ class MovementService:
                 max_hp = current_state.get("max_hp", 100)
 
             # Update complete state with new position
-            await player_mgr.set_player_full_state(
-                player_id, x, y, map_id, int(current_hp), int(max_hp), update_movement_time
-            )
+            from time import time
+            state = {
+                "x": x,
+                "y": y,
+                "map_id": map_id,
+                "current_hp": int(current_hp),
+                "max_hp": int(max_hp),
+                "last_move_time": time() if update_movement_time else 0
+            }
+            await player_mgr.set_player_full_state(player_id, state)
             
             logger.debug(
                 "Player position updated successfully",
@@ -418,6 +425,8 @@ class MovementService:
             return True
             
         except Exception as e:
+            print(f"[SET POSITION ERROR] {type(e).__name__}: {e}")
+            print(traceback.format_exc())
             logger.error(
                 "Error setting player position",
                 extra={

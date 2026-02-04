@@ -6,7 +6,7 @@ Replaces: PlayerInDB, PlayerPublic, PlayerData, etc.
 """
 
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
+from typing import Optional, List, Any
 from enum import Enum
 
 
@@ -59,6 +59,7 @@ class PlayerData(BaseModel):
     facing_direction: Direction = Direction.SOUTH
     animation_state: AnimationState = AnimationState.IDLE
     total_level: int = 0
+    timeout_until: Optional[Any] = None  # UTC datetime or None
 
 
 class PlayerPosition(BaseModel):

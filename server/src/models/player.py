@@ -30,8 +30,8 @@ class Player(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
 
     # Position (will also be in Valkey for hot access)
-    x_coord: Mapped[int] = mapped_column()
-    y_coord: Mapped[int] = mapped_column()
+    x: Mapped[int] = mapped_column()
+    y: Mapped[int] = mapped_column()
     map_id: Mapped[str] = mapped_column(String)
 
     # Hitpoints (current HP, persisted - max HP derived from Hitpoints skill + equipment)

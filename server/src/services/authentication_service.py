@@ -239,7 +239,7 @@ class AuthenticationService:
         
         try:
             # Register player as online and load state
-            await PlayerService.login_player(player_id, username)
+            await PlayerService.login_player(player_id)
 
             # Get initial position data
             position_data = await PlayerService.get_player_position(player_id)

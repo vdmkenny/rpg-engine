@@ -119,32 +119,42 @@ class WebSocketTestClient:
         await self.close()
         
     async def close(self):
-        """Clean up the test client"""
+        """Clean up the test client with proper cancellation"""
         self.running = False
-        self._process_task.cancel()
-        try:
-            await self._process_task
-        except asyncio.CancelledError:
-            pass
+        
+        # Cancel the background processing task
+        if self._process_task and not self._process_task.done():
+            self._process_task.cancel()
+            try:
+                await asyncio.wait_for(self._process_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
                 
-        # Cancel pending operations
-        for response in self.pending_responses.values():
-            response.timeout_task.cancel()
+        # Cancel all pending operations to prevent hanging futures
+        for response in list(self.pending_responses.values()):
+            if response.timeout_task and not response.timeout_task.done():
+                response.timeout_task.cancel()
             if not response.future.done():
-                response.future.cancel()
+                response.future.set_exception(asyncio.CancelledError())
+        self.pending_responses.clear()
                 
-        for capture in self.event_captures:
-            capture.timeout_task.cancel()
+        for capture in list(self.event_captures):
+            if capture.timeout_task and not capture.timeout_task.done():
+                capture.timeout_task.cancel()
             if not capture.future.done():
-                capture.future.cancel()
+                capture.future.set_exception(asyncio.CancelledError())
+        self.event_captures.clear()
                 
     async def _process_messages(self):
-        """Process incoming WebSocket messages"""
+        """Process incoming WebSocket messages with timeout protection"""
         try:
             while self.running:
                 try:
-                    # httpx-ws async receive
-                    raw_message = await self.websocket.receive_bytes()
+                    # Add timeout to receive to prevent hanging
+                    raw_message = await asyncio.wait_for(
+                        self.websocket.receive_bytes(),
+                        timeout=30.0  # 30 second timeout for receives
+                    )
                     
                     message_data = msgpack.unpackb(raw_message, raw=False)
                     message = WSMessage(**message_data)
@@ -174,12 +184,18 @@ class WebSocketTestClient:
                             if not capture.future.done():
                                 capture.future.set_result(message)
                                 
+                except asyncio.TimeoutError:
+                    # Receive timeout - this is expected when no messages are coming
+                    # Continue the loop to check if we should still be running
+                    continue
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
-                    # Log error and break loop for serious issues
+                    # Log error but don't break - tests might be checking error conditions
                     print(f"Error processing WebSocket message: {e}")
-                    break
+                    # Only break on severe issues
+                    if not self.running:
+                        break
                     
         except asyncio.CancelledError:
             pass
@@ -411,25 +427,31 @@ class WebSocketTestClient:
         system: Optional[str] = None
     ) -> WSMessage:
         """Expect state update event with optional filtering"""
-        def filter_func(payload: Dict[str, Any]) -> bool:
-            if target and payload.get("target") != target:
-                return False
-            if system and system not in payload.get("systems", {}):
-                return False
-            return True
+        filter_func_to_use: Optional[Callable[[Dict[str, Any]], bool]] = None
+        
+        if target or system:
+            def filter_func(payload: Dict[str, Any]) -> bool:
+                if target and payload.get("target") != target:
+                    return False
+                if system and system not in payload.get("systems", {}):
+                    return False
+                return True
+            filter_func_to_use = filter_func
             
-        filter_func = filter_func if (target or system) else None
-        return await self.expect_event(MessageType.EVENT_STATE_UPDATE, filter_func=filter_func)
+        return await self.expect_event(MessageType.EVENT_STATE_UPDATE, filter_func=filter_func_to_use)
         
     async def expect_game_update(self, map_id: Optional[str] = None) -> WSMessage:
         """Expect game entity update"""
-        def filter_func(payload: Dict[str, Any]) -> bool:
-            if map_id and payload.get("map_id") != map_id:
-                return False
-            return True
+        filter_func_to_use: Optional[Callable[[Dict[str, Any]], bool]] = None
+        
+        if map_id:
+            def filter_func(payload: Dict[str, Any]) -> bool:
+                if map_id and payload.get("map_id") != map_id:
+                    return False
+                return True
+            filter_func_to_use = filter_func
             
-        filter_func = filter_func if map_id else None
-        return await self.expect_event(MessageType.EVENT_STATE_UPDATE, filter_func=filter_func)
+        return await self.expect_event(MessageType.EVENT_STATE_UPDATE, filter_func=filter_func_to_use)
         
     async def expect_chat_message(
         self, 
@@ -437,15 +459,18 @@ class WebSocketTestClient:
         channel: Optional[str] = None
     ) -> WSMessage:
         """Expect chat message with optional filtering"""
-        def filter_func(payload: Dict[str, Any]) -> bool:
-            if sender and payload.get("sender") != sender:
-                return False
-            if channel and payload.get("channel") != channel:
-                return False
-            return True
+        filter_func_to_use: Optional[Callable[[Dict[str, Any]], bool]] = None
+        
+        if sender or channel:
+            def filter_func(payload: Dict[str, Any]) -> bool:
+                if sender and payload.get("sender") != sender:
+                    return False
+                if channel and payload.get("channel") != channel:
+                    return False
+                return True
+            filter_func_to_use = filter_func
             
-        filter_func = filter_func if (sender or channel) else None
-        return await self.expect_event(MessageType.EVENT_CHAT_MESSAGE, filter_func=filter_func)
+        return await self.expect_event(MessageType.EVENT_CHAT_MESSAGE, filter_func=filter_func_to_use)
         
     # =========================================================================
     # Test Utilities

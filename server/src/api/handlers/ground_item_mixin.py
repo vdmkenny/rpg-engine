@@ -35,7 +35,7 @@ class GroundItemHandlerMixin:
             payload = ItemDropPayload(**message.payload)
             
             player_mgr = get_player_state_manager()
-            position = await player_mgr.get_position(self.player_id)
+            position = await player_mgr.get_player_position(self.player_id)
             
             if not position:
                 await self._send_error_response(
@@ -99,7 +99,7 @@ class GroundItemHandlerMixin:
             payload = ItemPickupPayload(**message.payload)
             
             player_mgr = get_player_state_manager()
-            position = await player_mgr.get_position(self.player_id)
+            position = await player_mgr.get_player_position(self.player_id)
             
             if not position:
                 await self._send_error_response(

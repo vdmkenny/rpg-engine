@@ -146,22 +146,9 @@ class PlayerService:
         if not player_record:
             return None
         
-        # Convert to Pydantic model
-        return PlayerData(
-            id=player_record["id"],
-            username=player_record["username"],
-            x=player_record.get("x", 10),
-            y=player_record.get("y", 10),
-            map_id=player_record.get("map_id", "samplemap"),
-            current_hp=player_record.get("current_hp", 100),
-            max_hp=player_record.get("max_hp", 100),
-            role=PlayerRole(player_record.get("role", "player")),
-            is_banned=player_record.get("is_banned", False),
-            is_online=player_mgr.is_online(player_record["id"]),
-            facing_direction=Direction.SOUTH,  # Default, will be updated by position
-            animation_state=AnimationState.IDLE,
-            total_level=0,  # Could be calculated from skills
-        )
+        # player_record is already a PlayerData Pydantic model, just return it
+        # Note: is_online status is fetched separately when needed
+        return player_record
 
     @staticmethod
     async def get_player_by_id(player_id: int) -> Optional[PlayerData]:
@@ -169,7 +156,7 @@ class PlayerService:
         Get player data by ID.
 
         Args:
-            player_id: Player database ID
+            player_id: Player ID
 
         Returns:
             PlayerData if found, None otherwise
@@ -180,22 +167,9 @@ class PlayerService:
         if not player_record:
             return None
         
-        # Convert to Pydantic model
-        return PlayerData(
-            id=player_record["id"],
-            username=player_record["username"],
-            x=player_record.get("x", 10),
-            y=player_record.get("y", 10),
-            map_id=player_record.get("map_id", "samplemap"),
-            current_hp=player_record.get("current_hp", 100),
-            max_hp=player_record.get("max_hp", 100),
-            role=PlayerRole(player_record.get("role", "player")),
-            is_banned=player_record.get("is_banned", False),
-            is_online=player_mgr.is_online(player_id),
-            facing_direction=Direction.SOUTH,
-            animation_state=AnimationState.IDLE,
-            total_level=0,
-        )
+        # player_record is already a PlayerData Pydantic model, just return it
+        # Note: is_online status is fetched separately when needed
+        return player_record
 
     @staticmethod
     async def get_player_position(player_id: int) -> Optional[PlayerPosition]:
@@ -211,7 +185,7 @@ class PlayerService:
         player_mgr = get_player_state_manager()
         
         # Check if online first
-        if not player_mgr.is_online(player_id):
+        if not await player_mgr.is_online(player_id):
             return None
         
         position_data = await player_mgr.get_player_position(player_id)
@@ -253,7 +227,7 @@ class PlayerService:
         my_map = my_position.get("map_id", "")
         
         nearby = []
-        online_players = player_mgr.get_all_online_player_ids()
+        online_players = await player_mgr.get_all_online_player_ids()
         
         for other_id in online_players:
             if other_id == player_id:
@@ -274,7 +248,7 @@ class PlayerService:
             distance = max(abs(other_x - my_x), abs(other_y - my_y))
             if distance <= radius:
                 # Get username from manager's registry
-                username = player_mgr.get_username_for_player(other_id) or f"Player_{other_id}"
+                username = await player_mgr.get_username_for_player(other_id) or f"Player_{other_id}"
                 
                 nearby.append(NearbyPlayer(
                     player_id=other_id,
@@ -288,16 +262,18 @@ class PlayerService:
         return nearby
 
     @staticmethod
-    async def login_player(player_id: int, username: str) -> None:
+    async def login_player(player_id: int) -> None:
         """
         Mark player as online and load their state.
         
         Args:
             player_id: Player database ID
-            username: Player username
         """
         player_mgr = get_player_state_manager()
-        player_mgr.register_online_player(player_id, username)
+        await player_mgr.register_online_player(player_id)
+        
+        # Get username for logging
+        username = await player_mgr.get_username_for_player(player_id)
         logger.info("Player logged in", extra={"player_id": player_id, "username": username})
 
     @staticmethod
@@ -313,7 +289,7 @@ class PlayerService:
         logger.info("Player logged out", extra={"player_id": player_id})
 
     @staticmethod
-    def is_player_online(player_id: int) -> bool:
+    async def is_player_online(player_id: int) -> bool:
         """
         Check if player is currently online.
         
@@ -324,7 +300,7 @@ class PlayerService:
             True if online, False otherwise
         """
         player_mgr = get_player_state_manager()
-        return player_mgr.is_online(player_id)
+        return await player_mgr.is_online(player_id)
 
     @staticmethod
     async def get_players_on_map(map_id: str) -> List[NearbyPlayer]:
@@ -338,7 +314,7 @@ class PlayerService:
             List of NearbyPlayer models on the map
         """
         player_mgr = get_player_state_manager()
-        online_players = player_mgr.get_all_online_player_ids()
+        online_players = await player_mgr.get_all_online_player_ids()
         
         players_on_map = []
         for player_id in online_players:
@@ -347,7 +323,7 @@ class PlayerService:
                 continue
             
             if position.get("map_id") == map_id:
-                username = player_mgr.get_username_for_player(player_id) or f"Player_{player_id}"
+                username = await player_mgr.get_username_for_player(player_id) or f"Player_{player_id}"
                 players_on_map.append(NearbyPlayer(
                     player_id=player_id,
                     username=username,
@@ -373,7 +349,7 @@ class PlayerService:
         player_mgr = get_player_state_manager()
         
         # Ensure player is offline
-        if player_mgr.is_online(player_id):
+        if await player_mgr.is_online(player_id):
             await player_mgr.unregister_online_player(player_id)
         
         # Delete from database

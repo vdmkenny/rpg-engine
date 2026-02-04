@@ -18,14 +18,8 @@ from server.src.core.config import settings
 from server.src.core.items import EquipmentSlot, ItemCategory
 from server.src.core.logging_config import get_logger
 from server.src.schemas.item import (
-    AddItemResult,
-    RemoveItemResult,
-    MoveItemResult,
-    EquipItemResult,
-    UnequipItemResult,
-    DropItemResult,
-    PickupItemResult,
-    CanEquipResult,
+    OperationResult,
+    OperationType,
     ItemStats,
 )
 from server.src.services.game_state import get_inventory_manager, get_equipment_manager, get_player_state_manager
@@ -53,7 +47,7 @@ class IItemManager(ABC):
         item_id: int,
         quantity: int = 1,
         durability: Optional[int] = None,
-    ) -> AddItemResult:
+    ) -> OperationResult:
         """Add an item to player's inventory."""
         pass
 
@@ -63,7 +57,7 @@ class IItemManager(ABC):
         player_id: int,
         slot: int,
         quantity: int = 1,
-    ) -> RemoveItemResult:
+    ) -> OperationResult:
         """Remove items from a specific inventory slot."""
         pass
 
@@ -73,7 +67,7 @@ class IItemManager(ABC):
         player_id: int,
         from_slot: int,
         to_slot: int,
-    ) -> MoveItemResult:
+    ) -> OperationResult:
         """Move or swap items between inventory slots."""
         pass
 
@@ -83,7 +77,7 @@ class IItemManager(ABC):
         self,
         player_id: int,
         inventory_slot: int,
-    ) -> EquipItemResult:
+    ) -> OperationResult:
         """Equip an item from inventory (atomic: inventory → equipment + HP)."""
         pass
 
@@ -95,7 +89,7 @@ class IItemManager(ABC):
         map_id: Optional[str] = None,
         player_x: Optional[int] = None,
         player_y: Optional[int] = None,
-    ) -> UnequipItemResult:
+    ) -> OperationResult:
         """Unequip item to inventory or ground (atomic: equipment → inventory/ground + HP)."""
         pass
 
@@ -109,7 +103,7 @@ class IItemManager(ABC):
         x: int,
         y: int,
         quantity: Optional[int] = None,
-    ) -> DropItemResult:
+    ) -> OperationResult:
         """Drop item from inventory to ground (atomic: inventory → ground)."""
         pass
 
@@ -121,7 +115,7 @@ class IItemManager(ABC):
         player_x: int,
         player_y: int,
         player_map_id: str,
-    ) -> PickupItemResult:
+    ) -> OperationResult:
         """Pick up ground item to inventory (atomic: ground → inventory)."""
         pass
 
@@ -144,7 +138,7 @@ class IItemManager(ABC):
         pass
 
     @abstractmethod
-    async def can_equip_item(self, player_id: int, item_data: Dict[str, Any]) -> CanEquipResult:
+    async def can_equip_item(self, player_id: int, item_data: Dict[str, Any]) -> OperationResult:
         """Check if player can equip an item (requirements, conflicts)."""
         pass
 
@@ -174,7 +168,7 @@ class ItemManager(IItemManager):
         item_id: int,
         quantity: int = 1,
         durability: Optional[int] = None,
-    ) -> AddItemResult:
+    ) -> OperationResult:
         """
         Add an item to player's inventory with stacking support.
         
@@ -197,7 +191,7 @@ class ItemManager(IItemManager):
         player_id: int,
         slot: int,
         quantity: int = 1,
-    ) -> RemoveItemResult:
+    ) -> OperationResult:
         """Remove items from a specific inventory slot."""
         from server.src.services.inventory_service import InventoryService
         
@@ -212,7 +206,7 @@ class ItemManager(IItemManager):
         player_id: int,
         from_slot: int,
         to_slot: int,
-    ) -> MoveItemResult:
+    ) -> OperationResult:
         """Move or swap items between inventory slots."""
         from server.src.services.inventory_service import InventoryService
         
@@ -226,7 +220,7 @@ class ItemManager(IItemManager):
         self,
         player_id: int,
         inventory_slot: int,
-    ) -> EquipItemResult:
+    ) -> OperationResult:
         """
         Equip an item from inventory with atomic transaction support.
         
@@ -253,7 +247,7 @@ class ItemManager(IItemManager):
         map_id: Optional[str] = None,
         player_x: Optional[int] = None,
         player_y: Optional[int] = None,
-    ) -> UnequipItemResult:
+    ) -> OperationResult:
         """
         Unequip item to inventory or ground with atomic transaction support.
         
@@ -282,7 +276,7 @@ class ItemManager(IItemManager):
         x: int,
         y: int,
         quantity: Optional[int] = None,
-    ) -> DropItemResult:
+    ) -> OperationResult:
         """
         Drop item from inventory to ground atomically.
         
@@ -308,7 +302,7 @@ class ItemManager(IItemManager):
         player_x: int,
         player_y: int,
         player_map_id: str,
-    ) -> PickupItemResult:
+    ) -> OperationResult:
         """
         Pick up ground item to inventory atomically.
         
@@ -361,7 +355,7 @@ class ItemManager(IItemManager):
         
         return await EquipmentService.get_total_stats(player_id)
 
-    async def can_equip_item(self, player_id: int, item_data: Dict[str, Any]) -> CanEquipResult:
+    async def can_equip_item(self, player_id: int, item_data: Dict[str, Any]) -> OperationResult:
         """Check if player can equip an item."""
         from server.src.services.equipment_service import EquipmentService
         

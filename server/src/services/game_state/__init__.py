@@ -106,7 +106,7 @@ def init_all_managers(
     global _skills_manager, _ground_item_manager, _entity_manager
     global _reference_data_manager, _batch_sync_coordinator
 
-    _player_state_manager = init_player_state_manager(valkey_client, session_factory)
+    _player_state_manager = init_player_state_manager(session_factory, valkey_client)
     _inventory_manager = init_inventory_manager(valkey_client, session_factory)
     _equipment_manager = init_equipment_manager(valkey_client, session_factory)
     _skills_manager = init_skills_manager(valkey_client, session_factory)

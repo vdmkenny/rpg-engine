@@ -52,6 +52,7 @@ async def receive_auth_message(websocket) -> WSMessage:
         return auth_message
         
     except (msgpack.exceptions.UnpackException, ValueError) as e:
+        logger.error("Invalid authentication message", extra={"error": str(e)})
         raise WebSocketDisconnect(
             code=status.WS_1008_POLICY_VIOLATION,
             reason=f"Invalid authentication message: {str(e)}"
@@ -101,13 +102,13 @@ async def authenticate_player(auth_message: WSMessage) -> Tuple[str, int]:
                 reason="Player not found"
             )
         
-        if player.get("is_banned", False):
+        if player.is_banned:
             raise WebSocketDisconnect(
                 code=status.WS_1008_POLICY_VIOLATION,
                 reason="Account is banned"
             )
         
-        timeout_until = player.get("timeout_until")
+        timeout_until = player.timeout_until
         if timeout_until:
             if timeout_until.tzinfo is None:
                 timeout_until = timeout_until.replace(tzinfo=timezone.utc)
@@ -117,14 +118,17 @@ async def authenticate_player(auth_message: WSMessage) -> Tuple[str, int]:
                     reason=f"Account is timed out until {timeout_until.isoformat()}"
                 )
         
-        return username, player["id"]
+        logger.info("Player authenticated via WebSocket", extra={"username": username, "player_id": player.id})
+        return username, player.id
         
-    except ValidationError:
+    except ValidationError as e:
+        logger.error("Authentication validation error", extra={"error": str(e), "errors": e.errors()})
         raise WebSocketDisconnect(
             code=status.WS_1008_POLICY_VIOLATION,
             reason="Invalid authentication payload"
         )
-    except JWTError:
+    except JWTError as e:
+        logger.error("JWT authentication error", extra={"error": str(e)})
         raise WebSocketDisconnect(
             code=status.WS_1008_POLICY_VIOLATION,
             reason="Invalid authentication token"

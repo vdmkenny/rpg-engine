@@ -124,7 +124,18 @@ class BaseManager:
         if not raw:
             return None
 
-        return {self._decode_bytes(k): self._decode_bytes(v) for k, v in raw.items()}
+        result = {}
+        for k, v in raw.items():
+            decoded_key = self._decode_bytes(k)
+            decoded_value = self._decode_bytes(v)
+            # Try to parse JSON strings back into dicts/lists
+            if isinstance(decoded_value, str):
+                try:
+                    decoded_value = json.loads(decoded_value)
+                except json.JSONDecodeError:
+                    pass  # Keep as string if not valid JSON
+            result[decoded_key] = decoded_value
+        return result
 
     async def _delete_from_valkey(self, key: str) -> None:
         if self._valkey:
