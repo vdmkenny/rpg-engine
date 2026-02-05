@@ -402,7 +402,8 @@ class PlayerStateManager:
                 is_online=False,  # Runtime state, set by connection service
                 facing_direction=Direction.SOUTH,  # Default, overridden by hot data
                 animation_state=AnimationState.IDLE,  # Default, overridden by hot data
-                total_level=0  # TODO: Calculate from skills when needed
+                total_level=0,  # TODO: Calculate from skills when needed
+                appearance=player.appearance
             )
 
     async def delete_player_record(self, player_id: int) -> bool:
@@ -578,6 +579,71 @@ class PlayerStateManager:
 
         key = PLAYER_COMBAT_STATE_KEY.format(player_id=player_id)
         await self._valkey.delete(key)
+
+    # =========================================================================
+    # Appearance
+    # =========================================================================
+
+    async def get_player_appearance(self, player_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get player appearance from database.
+        
+        Args:
+            player_id: Player ID
+            
+        Returns:
+            Appearance dict if found, None otherwise
+        """
+        if not self._session_factory:
+            return None
+
+        from server.src.models.player import Player
+
+        async with self._db_session() as db:
+            result = await db.execute(
+                select(Player.appearance).where(Player.id == player_id)
+            )
+            return result.scalar_one_or_none()
+
+    async def update_player_appearance(
+        self, player_id: int, appearance_dict: Dict[str, Any]
+    ) -> bool:
+        """
+        Update player appearance in database.
+        
+        Args:
+            player_id: Player ID
+            appearance_dict: Appearance data to save
+            
+        Returns:
+            True if updated successfully, False otherwise
+        """
+        if not self._session_factory:
+            return False
+
+        from server.src.models.player import Player
+
+        async with self._db_session() as db:
+            result = await db.execute(
+                select(Player).where(Player.id == player_id)
+            )
+            player = result.scalar_one_or_none()
+
+            if player is None:
+                logger.warning(
+                    "Cannot update appearance - player not found",
+                    extra={"player_id": player_id}
+                )
+                return False
+
+            player.appearance = appearance_dict
+            await self._commit_if_not_test_session(db)
+
+            logger.info(
+                "Player appearance updated",
+                extra={"player_id": player_id}
+            )
+            return True
 
     # =========================================================================
     # Cleanup

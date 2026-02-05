@@ -91,11 +91,8 @@ class AppearanceHandlerMixin:
             if payload.shoes_color is not None:
                 appearance_changes["shoes_color"] = payload.shoes_color
 
-            # Create updated appearance
-            new_appearance = current_appearance.with_changes(**appearance_changes)
-
-            # Validate the appearance
-            validation_result = self._validate_appearance(new_appearance)
+            # Validate the appearance changes before applying
+            validation_result = self._validate_appearance_changes(appearance_changes)
             if not validation_result["valid"]:
                 await self._send_error_response(
                     message.id,
@@ -104,6 +101,9 @@ class AppearanceHandlerMixin:
                     validation_result["error"]
                 )
                 return
+
+            # Create updated appearance
+            new_appearance = current_appearance.with_changes(**appearance_changes)
 
             # Save to database
             await PlayerService.update_player_appearance(
@@ -152,23 +152,49 @@ class AppearanceHandlerMixin:
                 "Failed to update appearance - please try again"
             )
 
-    def _validate_appearance(self, appearance: AppearanceData) -> dict:
+    def _validate_appearance_changes(self, changes: dict) -> dict:
         """
-        Validate appearance data.
-
+        Validate raw appearance change values before applying them.
+        
+        Args:
+            changes: Dictionary of field changes from the payload
+            
         Returns:
             Dict with "valid" (bool) and optional "error" (str)
         """
-        try:
-            # Check that all enums are valid by attempting to serialize
-            _ = appearance.to_dict()
-
-            # Additional business rules can be added here
-            # e.g., certain body types can't have certain hair styles, etc.
-
-            return {"valid": True}
-        except Exception as e:
-            return {"valid": False, "error": f"Invalid appearance value: {str(e)}"}
+        from common.src.sprites import BodyType, SkinTone, HeadType, HairStyle, HairColor, EyeColor
+        from common.src.sprites.enums import FacialHairStyle, ClothingStyle, PantsStyle, ShoesStyle, ClothingColor
+        
+        # Mapping of field names to their enum classes
+        enum_fields = {
+            "body_type": BodyType,
+            "skin_tone": SkinTone,
+            "head_type": HeadType,
+            "hair_style": HairStyle,
+            "hair_color": HairColor,
+            "eye_color": EyeColor,
+            "facial_hair_style": FacialHairStyle,
+            "facial_hair_color": HairColor,
+            "shirt_style": ClothingStyle,
+            "shirt_color": ClothingColor,
+            "pants_style": PantsStyle,
+            "pants_color": ClothingColor,
+            "shoes_style": ShoesStyle,
+            "shoes_color": ClothingColor,
+        }
+        
+        for field_name, value in changes.items():
+            if field_name in enum_fields:
+                enum_cls = enum_fields[field_name]
+                try:
+                    enum_cls(value)
+                except (ValueError, KeyError):
+                    return {
+                        "valid": False,
+                        "error": f"Invalid value for {field_name}: '{value}'. Must be one of: {[e.value for e in enum_cls]}"
+                    }
+        
+        return {"valid": True}
 
     async def _broadcast_appearance_update(self, appearance: AppearanceData) -> None:
         """

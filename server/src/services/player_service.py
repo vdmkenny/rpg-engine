@@ -371,17 +371,9 @@ class PlayerService:
         Returns:
             Appearance dict if found, None otherwise
         """
-        from sqlalchemy import select
-        from server.src.models.player import Player
-        from server.src.core.database import AsyncSessionLocal
-        
         try:
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    select(Player.appearance).where(Player.id == player_id)
-                )
-                appearance = result.scalar_one_or_none()
-                return appearance
+            psm = get_player_state_manager()
+            return await psm.get_player_appearance(player_id)
         except Exception as e:
             logger.error(
                 "Error getting player appearance",
@@ -401,32 +393,9 @@ class PlayerService:
         Returns:
             True if updated successfully, False otherwise
         """
-        from sqlalchemy import select
-        from server.src.models.player import Player
-        from server.src.core.database import AsyncSessionLocal
-        
         try:
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    select(Player).where(Player.id == player_id)
-                )
-                player = result.scalar_one_or_none()
-                
-                if player is None:
-                    logger.warning(
-                        "Cannot update appearance - player not found",
-                        extra={"player_id": player_id}
-                    )
-                    return False
-                
-                player.appearance = appearance_dict
-                await db.commit()
-                
-                logger.info(
-                    "Player appearance updated",
-                    extra={"player_id": player_id}
-                )
-                return True
+            psm = get_player_state_manager()
+            return await psm.update_player_appearance(player_id, appearance_dict)
         except Exception as e:
             logger.error(
                 "Error updating player appearance",

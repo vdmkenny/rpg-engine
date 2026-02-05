@@ -289,6 +289,7 @@ rate_limit_configs = {
     MessageType.CMD_CHAT_SEND: RateLimit(1, 1.0, 1.0),  # Different for channels
     MessageType.CMD_ATTACK: RateLimit(1, 0.5, 0.5),
     MessageType.CMD_TOGGLE_AUTO_RETALIATE: RateLimit(1, 0.5, 0.5),
+    MessageType.CMD_UPDATE_APPEARANCE: RateLimit(1, 2.0, 2.0),  # 2 second cooldown for appearance updates
 }
 
 

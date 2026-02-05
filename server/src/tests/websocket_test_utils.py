@@ -64,6 +64,7 @@ class ErrorResponseError(WebSocketTestError):
         self.error_code = error_payload.get("error_code", "UNKNOWN")
         self.error_message = error_payload.get("message", "Unknown error")
         self.error_details = error_payload.get("details", {})
+        self.error_category = error_payload.get("category", "system")
         super().__init__(f"{self.error_code}: {self.error_message}")
 
 
@@ -118,9 +119,20 @@ class WebSocketTestClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
         
-    async def close(self):
-        """Clean up the test client with proper cancellation"""
+    async def disconnect(self):
+        """Disconnect the WebSocket connection gracefully.
+        
+        Closes the websocket connection, stops the background processing task,
+        clears pending responses, and sets running to False.
+        """
         self.running = False
+        
+        # Close the websocket connection gracefully
+        if self.websocket:
+            try:
+                await self.websocket.close()
+            except Exception:
+                pass
         
         # Cancel the background processing task
         if self._process_task and not self._process_task.done():
@@ -130,7 +142,7 @@ class WebSocketTestClient:
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
                 
-        # Cancel all pending operations to prevent hanging futures
+        # Clear pending responses
         for response in list(self.pending_responses.values()):
             if response.timeout_task and not response.timeout_task.done():
                 response.timeout_task.cancel()
@@ -144,6 +156,16 @@ class WebSocketTestClient:
             if not capture.future.done():
                 capture.future.set_exception(asyncio.CancelledError())
         self.event_captures.clear()
+        
+        # Clear message log
+        self.message_log.clear()
+        
+    async def close(self):
+        """Clean up the test client with proper cancellation.
+        
+        This is an alias for disconnect() for compatibility with async context managers.
+        """
+        await self.disconnect()
                 
     async def _process_messages(self):
         """Process incoming WebSocket messages with timeout protection"""
