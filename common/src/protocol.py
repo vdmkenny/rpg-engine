@@ -177,6 +177,127 @@ class MessageType(str, Enum):
 
 
 # =============================================================================
+# Message Type Collections
+# =============================================================================
+
+COMMAND_TYPES = {
+    MessageType.CMD_AUTHENTICATE,
+    MessageType.CMD_MOVE,
+    MessageType.CMD_CHAT_SEND,
+    MessageType.CMD_INVENTORY_MOVE,
+    MessageType.CMD_INVENTORY_SORT,
+    MessageType.CMD_ITEM_DROP,
+    MessageType.CMD_ITEM_PICKUP,
+    MessageType.CMD_ITEM_EQUIP,
+    MessageType.CMD_ITEM_UNEQUIP,
+    MessageType.CMD_ATTACK,
+    MessageType.CMD_TOGGLE_AUTO_RETALIATE,
+    MessageType.CMD_UPDATE_APPEARANCE,
+}
+
+QUERY_TYPES = {
+    MessageType.QUERY_INVENTORY,
+    MessageType.QUERY_EQUIPMENT,
+    MessageType.QUERY_STATS,
+    MessageType.QUERY_MAP_CHUNKS,
+}
+
+RESPONSE_TYPES = {
+    MessageType.RESP_SUCCESS,
+    MessageType.RESP_ERROR,
+    MessageType.RESP_DATA,
+}
+
+EVENT_TYPES = {
+    MessageType.EVENT_WELCOME,
+    MessageType.EVENT_CHUNK_UPDATE,
+    MessageType.EVENT_STATE_UPDATE,
+    MessageType.EVENT_GAME_UPDATE,
+    MessageType.EVENT_CHAT_MESSAGE,
+    MessageType.EVENT_PLAYER_JOINED,
+    MessageType.EVENT_PLAYER_LEFT,
+    MessageType.EVENT_PLAYER_DIED,
+    MessageType.EVENT_PLAYER_RESPAWN,
+    MessageType.EVENT_SERVER_SHUTDOWN,
+    MessageType.EVENT_COMBAT_ACTION,
+}
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def requires_correlation_id(message_type: MessageType) -> bool:
+    """Check if message type requires correlation ID."""
+    return message_type in COMMAND_TYPES or message_type in QUERY_TYPES
+
+
+def get_expected_response_type(message_type: MessageType) -> Optional[MessageType]:
+    """Get expected response type for command or query."""
+    if message_type in COMMAND_TYPES:
+        return MessageType.RESP_SUCCESS
+    elif message_type in QUERY_TYPES:
+        return MessageType.RESP_DATA
+    return None
+
+
+def create_success_response(correlation_id: str, data: Dict[str, Any]) -> WSMessage:
+    """Create a success response message."""
+    return WSMessage(
+        id=correlation_id,
+        type=MessageType.RESP_SUCCESS,
+        payload={"data": data}
+    )
+
+
+def create_error_response(
+    correlation_id: str,
+    error_code: str,
+    message: str,
+    error_category: ErrorCategory = ErrorCategory.SYSTEM,
+    details: Optional[Dict[str, Any]] = None,
+    retry_after: Optional[float] = None,
+    suggested_action: Optional[str] = None
+) -> WSMessage:
+    """Create an error response message."""
+    payload: Dict[str, Any] = {
+        "error": message,
+        "code": error_code,
+        "category": error_category.value
+    }
+    if details:
+        payload["details"] = details
+    if retry_after is not None:
+        payload["retry_after"] = retry_after
+    if suggested_action:
+        payload["suggested_action"] = suggested_action
+    
+    return WSMessage(
+        id=correlation_id,
+        type=MessageType.RESP_ERROR,
+        payload=payload
+    )
+
+
+def create_data_response(correlation_id: str, data: Dict[str, Any]) -> WSMessage:
+    """Create a data response message for query responses."""
+    return WSMessage(
+        id=correlation_id,
+        type=MessageType.RESP_DATA,
+        payload={"data": data}
+    )
+
+
+def create_event(event_type: MessageType, payload: Dict[str, Any]) -> WSMessage:
+    """Create an event message (broadcasts/notifications)."""
+    return WSMessage(
+        id=None,
+        type=event_type,
+        payload=payload
+    )
+
+
+# =============================================================================
 # Core Message Structure
 # =============================================================================
 

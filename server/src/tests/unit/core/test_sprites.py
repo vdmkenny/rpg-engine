@@ -90,8 +90,8 @@ def sample_equipment() -> EquippedVisuals:
         head="iron_helmet",
         body="chainmail",
         legs="iron_greaves",
-        main_hand="longsword",
-        off_hand="wooden_shield",
+        weapon="longsword",
+        shield="wooden_shield",
     )
 
 
@@ -184,8 +184,8 @@ class TestEquipmentSlot:
     
     def test_all_slots_exist(self):
         """All equipment slots should be available."""
-        expected_slots = ["head", "body", "legs", "feet", "hands", 
-                         "main_hand", "off_hand", "back", "belt"]
+        expected_slots = ["head", "body", "legs", "boots", "gloves", 
+                         "weapon", "shield", "cape", "amulet", "ring", "ammo"]
         for slot_name in expected_slots:
             found = False
             for slot in EquipmentSlot:
@@ -321,14 +321,14 @@ class TestEquippedVisuals:
         equipment = EquippedVisuals()
         assert equipment.head is None
         assert equipment.body is None
-        assert equipment.main_hand is None
+        assert equipment.weapon is None
         assert equipment.is_empty()
     
     def test_partial_construction(self, sample_equipment):
         """Should allow partial equipment."""
         assert sample_equipment.head == "iron_helmet"
         assert sample_equipment.body == "chainmail"
-        assert sample_equipment.feet is None  # Not equipped
+        assert sample_equipment.boots is None  # Not equipped
         assert not sample_equipment.is_empty()
     
     def test_immutability(self, sample_equipment):
@@ -341,15 +341,15 @@ class TestEquippedVisuals:
         data = sample_equipment.to_dict()
         assert "head" in data
         assert "body" in data
-        assert "feet" not in data  # None values excluded
-        assert "hands" not in data
+        assert "boots" not in data  # None values excluded
+        assert "gloves" not in data
     
     def test_from_dict(self):
         """from_dict should deserialize correctly."""
-        data = {"head": "leather_cap", "main_hand": "dagger"}
+        data = {"head": "leather_cap", "weapon": "dagger"}
         equipment = EquippedVisuals.from_dict(data)
         assert equipment.head == "leather_cap"
-        assert equipment.main_hand == "dagger"
+        assert equipment.weapon == "dagger"
         assert equipment.body is None
     
     def test_from_dict_with_none(self):
@@ -361,7 +361,7 @@ class TestEquippedVisuals:
         """get_slot should return correct sprite ID."""
         assert sample_equipment.get_slot(EquipmentSlot.HEAD) == "iron_helmet"
         assert sample_equipment.get_slot(EquipmentSlot.BODY) == "chainmail"
-        assert sample_equipment.get_slot(EquipmentSlot.FEET) is None
+        assert sample_equipment.get_slot(EquipmentSlot.BOOTS) is None
 
 
 # =============================================================================
@@ -395,11 +395,11 @@ class TestVisualState:
         """from_dict should deserialize correctly."""
         data = {
             "appearance": {"body_type": "male", "skin_tone": "dark"},
-            "equipment": {"main_hand": "axe"},
+            "equipment": {"weapon": "axe"},
         }
         state = VisualState.from_dict(data)
         assert state.appearance.body_type == BodyType.MALE
-        assert state.equipment.main_hand == "axe"
+        assert state.equipment.weapon == "axe"
     
     def test_hash_includes_both_components(self, sample_appearance, sample_equipment):
         """Hash should change when either appearance or equipment changes."""
@@ -436,9 +436,9 @@ class TestVisualState:
     
     def test_with_equipment(self, sample_visual_state):
         """with_equipment should create new state with different equipment."""
-        new_equipment = EquippedVisuals(main_hand="staff")
+        new_equipment = EquippedVisuals(weapon="staff")
         modified = sample_visual_state.with_equipment(new_equipment)
-        assert modified.equipment.main_hand == "staff"
+        assert modified.equipment.weapon == "staff"
         assert modified.appearance == sample_visual_state.appearance
 
 
@@ -731,7 +731,7 @@ class TestGameLoopHelpers:
         }
         equipped_items = {
             "body": "leather_armor",
-            "main_hand": "dagger",
+            "weapon": "dagger",
         }
         
         visual_state = _build_visual_state(appearance_dict, equipped_items)
@@ -739,7 +739,7 @@ class TestGameLoopHelpers:
         assert visual_state.appearance.body_type == BodyType.FEMALE
         assert visual_state.appearance.hair_color == HairColor.RED
         assert visual_state.equipment.body == "leather_armor"
-        assert visual_state.equipment.main_hand == "dagger"
+        assert visual_state.equipment.weapon == "dagger"
     
     def test_build_visual_state_with_none(self):
         """_build_visual_state should handle None inputs."""
@@ -755,7 +755,7 @@ class TestGameLoopHelpers:
         from server.src.game.game_loop import _build_visual_state
         
         appearance = {"body_type": "male", "skin_tone": "light"}
-        equipment = {"main_hand": "sword"}
+        equipment = {"weapon": "sword"}
         
         state1 = _build_visual_state(appearance, equipment)
         state2 = _build_visual_state(appearance, equipment)

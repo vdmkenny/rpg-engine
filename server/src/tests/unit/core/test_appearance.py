@@ -42,7 +42,7 @@ class TestAppearanceData:
         """Appearance should serialize to dict correctly."""
         appearance = AppearanceData(
             body_type=BodyType.FEMALE,
-            skin_tone=SkinTone.DARK,
+            skin_tone=SkinTone.BLACK,
             hair_style=HairStyle.LONG,
             hair_color=HairColor.BLONDE,
             shirt_style=ClothingStyle.BLOUSE,
@@ -52,7 +52,7 @@ class TestAppearanceData:
         data = appearance.to_dict()
         
         assert data["body_type"] == "female"
-        assert data["skin_tone"] == "dark"
+        assert data["skin_tone"] == "black"
         assert data["hair_style"] == "long"
         assert data["hair_color"] == "blonde"
         assert data["shirt_style"] == "blouse"

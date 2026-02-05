@@ -317,3 +317,7 @@ def reset_visual_registry() -> None:
     """
     global _visual_registry
     _visual_registry = None
+
+
+# Module-level singleton instance for convenient imports
+visual_registry = get_visual_registry()

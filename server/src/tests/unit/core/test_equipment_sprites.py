@@ -221,25 +221,25 @@ class TestEquippedVisualsWithTints:
     def test_to_dict_includes_tints(self):
         """to_dict should include tint fields when present."""
         visuals = EquippedVisuals(
-            main_hand="equip_copper_dagger",
-            main_hand_tint="#B87333",
+            weapon="equip_copper_dagger",
+            weapon_tint="#B87333",
         )
         data = visuals.to_dict()
         
-        assert "main_hand" in data
-        assert "main_hand_tint" in data
-        assert data["main_hand_tint"] == "#B87333"
+        assert "weapon" in data
+        assert "weapon_tint" in data
+        assert data["weapon_tint"] == "#B87333"
     
     def test_to_dict_excludes_none_tints(self):
         """to_dict should exclude None tint values."""
         visuals = EquippedVisuals(
-            main_hand="equip_copper_shortsword",
-            main_hand_tint=None,
+            weapon="equip_copper_shortsword",
+            weapon_tint=None,
         )
         data = visuals.to_dict()
         
-        assert "main_hand" in data
-        assert "main_hand_tint" not in data
+        assert "weapon" in data
+        assert "weapon_tint" not in data
     
     def test_from_dict_with_tints(self):
         """from_dict should restore tint fields."""
@@ -259,16 +259,16 @@ class TestEquippedVisualsWithTints:
         """from_equipment_map should look up tints from mapping."""
         # Simulate equipment map with items that have sprite IDs
         equipment = {
-            "main_hand": {"sprite_id": "equip_copper_dagger"},
+            "weapon": {"sprite_id": "equip_copper_dagger"},
             "head": {"sprite_id": "equip_copper_helmet"},
         }
         visuals = EquippedVisuals.from_equipment_map(equipment)
         
-        assert visuals.main_hand == "equip_copper_dagger"
+        assert visuals.weapon == "equip_copper_dagger"
         assert visuals.head == "equip_copper_helmet"
         
         # Dagger should have tint (no native variant)
-        assert visuals.main_hand_tint is not None
+        assert visuals.weapon_tint is not None
         
         # Helmet should NOT have tint (native variant exists)
         assert visuals.head_tint is None
@@ -278,11 +278,11 @@ class TestEquippedVisualsWithTints:
         from common.src.sprites.enums import EquipmentSlot
         
         visuals = EquippedVisuals(
-            main_hand="equip_copper_dagger",
-            main_hand_tint="#B87333",
+            weapon="equip_copper_dagger",
+            weapon_tint="#B87333",
         )
         
-        assert visuals.get_slot_tint(EquipmentSlot.MAIN_HAND) == "#B87333"
+        assert visuals.get_slot_tint(EquipmentSlot.WEAPON) == "#B87333"
         assert visuals.get_slot_tint(EquipmentSlot.HEAD) is None
 
 
