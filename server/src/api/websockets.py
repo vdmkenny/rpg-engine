@@ -157,23 +157,23 @@ class WebSocketHandler(
         """
         # Track correlation ID
         if message.id:
-            correlation_manager.track_request(message.id, message.type)
+            correlation_manager.register_request(message.id, message.type, self.player_id)
         
         # Check rate limits
-        rate_limit_key = f"{self.player_id}:{message.type}"
-        if not rate_limiter.check_rate_limit(rate_limit_key, message.type):
+        retry_after = rate_limiter.check_rate_limit(self.player_id, message.type)
+        if retry_after is not None:
             await self._send_error_response(
                 message.id,
                 ErrorCodes.MOVE_RATE_LIMITED,
                 ErrorCategory.RATE_LIMIT,
                 "Rate limit exceeded - please slow down",
-                retry_after=rate_limiter.get_retry_after(rate_limit_key, message.type)
+                retry_after=retry_after
             )
             return
         
         # Route message to handler
         try:
-            handler = self.router.get_handler(message.type)
+            handler = self.router.handlers.get(message.type)
             if handler:
                 await handler(message)
             else:
