@@ -256,7 +256,7 @@ async def websocket_endpoint(
         players_online.inc()
         
         # Send welcome message
-        await send_welcome_message(websocket, player_id, username, init_result["position"])
+        await send_welcome_message(websocket, username, player_id)
         
         # Broadcast player join to others
         await handle_player_join_broadcast(player_id, username, init_result["position"])
