@@ -127,7 +127,7 @@ class WebSocketHandler(
     def _setup_message_handlers(self):
         """Register all message type handlers."""
         # Command handlers (state-changing operations)
-        self.router.register_handler(MessageType.CMD_AUTHENTICATE, self._handle_cmd_authenticate)
+        # Note: CMD_AUTHENTICATE is handled separately in websocket_endpoint before handler is created
         self.router.register_handler(MessageType.CMD_MOVE, self._handle_cmd_move)
         self.router.register_handler(MessageType.CMD_CHAT_SEND, self._handle_cmd_chat_send)
         self.router.register_handler(MessageType.CMD_INVENTORY_MOVE, self._handle_cmd_inventory_move)
