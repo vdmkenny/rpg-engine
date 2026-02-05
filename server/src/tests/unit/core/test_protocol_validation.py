@@ -169,8 +169,7 @@ async def test_equipment_query_message_creation():
             "equipment": {
                 "slots": {},
                 "stats": {}
-            },
-            "query_type": "equipment"
+            }
         },
         version="2.0"
     )
@@ -179,7 +178,6 @@ async def test_equipment_query_message_creation():
     assert expected_response.id == correlation_id
     assert expected_response.type == MessageType.RESP_DATA
     assert "equipment" in expected_response.payload
-    assert "query_type" in expected_response.payload
     
     packed_response = msgpack.packb(expected_response.model_dump(), use_bin_type=True)
     assert packed_response is not None

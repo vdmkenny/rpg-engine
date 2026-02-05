@@ -649,7 +649,7 @@ async def create_engine_with_retry(database_url: str, max_retries: int = 3):
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
-async def setup_test_db():
+async def setup_test_db(setup_worker_database):
     """Set up async database engine and session factory for worker database."""
     global test_engine, TestingSessionLocal
 
@@ -748,7 +748,7 @@ async def fake_valkey() -> FakeValkey:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def game_state_managers(fake_valkey: FakeValkey) -> AsyncGenerator[None, None]:
+async def game_state_managers(fake_valkey: FakeValkey, setup_test_db) -> AsyncGenerator[None, None]:
     """
     Initialize all game state managers for testing.
     
