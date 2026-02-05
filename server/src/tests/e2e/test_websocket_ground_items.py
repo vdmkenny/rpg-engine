@@ -79,11 +79,6 @@ class TestGroundItemsInGameStateUpdate:
     message for consistency with the visibility/diff-based broadcasting system.
     """
 
-    def test_game_state_update_message_type_exists(self):
-        """EVENT_GAME_STATE_UPDATE message type should be defined in protocol."""
-        assert hasattr(MessageType, "EVENT_GAME_STATE_UPDATE")
-        assert MessageType.EVENT_GAME_STATE_UPDATE.value == "event_game_state_update"
-
     @pytest.mark.asyncio
     async def test_drop_item_creates_ground_item(self, session, gsm):
         """

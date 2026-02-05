@@ -1,5 +1,9 @@
 # WebSocket Protocol Quick Reference
 
+> **For full specification, see [WEBSOCKET_PROTOCOL.md](WEBSOCKET_PROTOCOL.md)**
+
+---
+
 ## Message Types Summary
 
 | Type | Direction | Description | Correlation ID |
@@ -13,6 +17,8 @@
 | `cmd_item_pickup` | Client → Server | Pickup ground item | Required |
 | `cmd_item_equip` | Client → Server | Equip item | Required |
 | `cmd_item_unequip` | Client → Server | Unequip item | Required |
+| `cmd_attack` | Client → Server | Attack target | Required |
+| `cmd_toggle_auto_retaliate` | Client → Server | Toggle auto-retaliation | Required |
 | `query_inventory` | Client → Server | Get inventory data | Required |
 | `query_equipment` | Client → Server | Get equipment data | Required |
 | `query_stats` | Client → Server | Get player stats | Required |
@@ -21,12 +27,18 @@
 | `resp_error` | Server → Client | Command/query error | Matches request |
 | `resp_data` | Server → Client | Query response | Matches request |
 | `event_welcome` | Server → Client | Welcome message | None |
+| `event_chunk_update` | Server → Client | Map chunk data | None |
 | `event_state_update` | Server → Client | State changes | None |
 | `event_game_update` | Server → Client | Game entity updates | None |
 | `event_chat_message` | Server → Client | Chat broadcast | None |
 | `event_player_joined` | Server → Client | Player joined | None |
 | `event_player_left` | Server → Client | Player left | None |
+| `event_player_died` | Server → Client | Player died | None |
+| `event_player_respawn` | Server → Client | Player respawned | None |
 | `event_server_shutdown` | Server → Client | Server shutdown | None |
+| `event_combat_action` | Server → Client | Combat event | None |
+
+---
 
 ## Chat Channel Limits
 
@@ -35,6 +47,8 @@
 | `local` | 280 chars | All players |
 | `global` | 200 chars | Admin only |
 | `dm` | 500 chars | All players |
+
+---
 
 ## Error Codes Reference
 
@@ -58,7 +72,7 @@
 - `CHAT_RECIPIENT_NOT_FOUND` - DM target not found
 
 ### Inventory
-- `INV_INVALID_SLOT` - Invalid slot number
+- `INV_INVALID_SLOT` - Invalid slot number (0-27)
 - `INV_SLOT_EMPTY` - Slot is empty
 - `INV_INVENTORY_FULL` - No free slots
 - `INV_CANNOT_STACK` - Items can't stack
@@ -77,7 +91,7 @@
 
 ### Map
 - `MAP_INVALID_COORDS` - Invalid coordinates
-- `MAP_CHUNK_LIMIT_EXCEEDED` - Too many chunks requested
+- `MAP_CHUNK_LIMIT_EXCEEDED` - Too many chunks requested (>5 radius)
 - `MAP_NOT_FOUND` - Map doesn't exist
 
 ### System
@@ -85,26 +99,37 @@
 - `SYS_SERVICE_UNAVAILABLE` - Service unavailable
 - `SYS_INTERNAL_ERROR` - Internal server error
 
+---
+
 ## Rate Limits
 
 | Operation | Cooldown |
 |-----------|----------|
 | Movement | 0.5 seconds |
-| Local chat | 1.0 seconds |
-| Global chat | 3.0 seconds |
-| Inventory ops | 0.1 seconds |
-| Equipment ops | 0.1 seconds |
+| Chat (local) | 1.0 seconds |
+| Chat (global) | 3.0 seconds |
+| Inventory ops | 0.5 seconds |
+| Equipment ops | 0.5 seconds |
+| Item drop/pickup | 0.2 seconds |
+| Attack | 0.5 seconds |
+| Auto-retaliate toggle | 0.5 seconds |
+
+---
 
 ## Equipment Slots
 
 Valid equipment slot names:
-- `weapon`
-- `armor`
-- `helmet`
-- `boots`
-- `gloves`
-- `ring`
-- `amulet`
+- `head` - Helmet/headgear
+- `body` - Chest armor
+- `legs` - Leg armor
+- `feet` - Boots
+- `hands` - Gloves
+- `main_hand` - Primary weapon
+- `off_hand` - Shield or secondary weapon
+- `back` - Cape/cloak
+- `belt` - Belt/accessories
+
+---
 
 ## Movement Directions
 
@@ -113,6 +138,8 @@ Valid movement directions:
 - `DOWN`
 - `LEFT`
 - `RIGHT`
+
+---
 
 ## Protocol Implementation
 
@@ -163,6 +190,8 @@ if message.get("id") == correlation_id:
     future.set_result(message)
 ```
 
+---
+
 ## Common Patterns
 
 ### Request-Response
@@ -187,6 +216,8 @@ if message.get("id") == correlation_id:
 2. Client updates local game state
 3. UI reflects new state immediately
 
+---
+
 ## Testing
 
 Run WebSocket protocol tests:
@@ -195,4 +226,7 @@ cd docker && docker-compose -f docker-compose.test.yml up -d
 docker exec docker-server-1 bash -c "RUN_INTEGRATION_TESTS=1 pytest server/src/tests/test_websocket_chat.py -v"
 ```
 
-Expected: 16/16 tests passing (100% pass rate)
+---
+
+**Document Version**: 2.0.1  
+**Last Updated**: February 2026

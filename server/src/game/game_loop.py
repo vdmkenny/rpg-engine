@@ -603,9 +603,7 @@ async def send_chunk_update_if_needed(
                     type=MessageType.EVENT_CHUNK_UPDATE,
                     payload={
                         "map_id": map_id,
-                        "chunks": chunk_data_list,
-                        "player_x": x,
-                        "player_y": y
+                        "chunks": chunk_data_list
                     },
                     version=PROTOCOL_VERSION
                 )

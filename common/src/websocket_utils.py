@@ -281,12 +281,14 @@ class RateLimit:
 rate_limit_configs = {
     MessageType.CMD_MOVE: RateLimit(1, 0.5, 0.5),
     MessageType.CMD_INVENTORY_MOVE: RateLimit(1, 0.5, 0.5),
-    MessageType.CMD_INVENTORY_SORT: RateLimit(1, 0.5, 0.5), 
+    MessageType.CMD_INVENTORY_SORT: RateLimit(1, 0.5, 0.5),
     MessageType.CMD_ITEM_EQUIP: RateLimit(1, 0.5, 0.5),
     MessageType.CMD_ITEM_UNEQUIP: RateLimit(1, 0.5, 0.5),
     MessageType.CMD_ITEM_DROP: RateLimit(1, 0.2, 0.2),
     MessageType.CMD_ITEM_PICKUP: RateLimit(1, 0.2, 0.2),
     MessageType.CMD_CHAT_SEND: RateLimit(1, 1.0, 1.0),  # Different for channels
+    MessageType.CMD_ATTACK: RateLimit(1, 0.5, 0.5),
+    MessageType.CMD_TOGGLE_AUTO_RETALIATE: RateLimit(1, 0.5, 0.5),
 }
 
 
@@ -685,34 +687,34 @@ class BroadcastManager:
             update_msg = StateUpdateManager.create_global_update(systems, update_type)
         else:
             raise ValueError(f"Unknown broadcast target: {target}")
-            
-            # Send via appropriate broadcast method
-            if target == BroadcastTarget.NEARBY:
-                if not origin_player:
-                    raise ValueError("origin_player required for nearby broadcasts")
-                return await self.broadcast_to_nearby(
-                    origin_player, 
-                    MessageType.EVENT_STATE_UPDATE, 
-                    update_msg.payload,
-                    include_origin=False
-                )
-            elif target == BroadcastTarget.MAP:
-                if not map_id:
-                    raise ValueError("map_id required for map broadcasts")
-                return await self.broadcast_to_map(
-                    map_id,
-                    MessageType.EVENT_STATE_UPDATE,
-                    update_msg.payload,
-                    exclude_players=exclude_players
-                )
-            elif target == BroadcastTarget.GLOBAL:
-                return await self.broadcast_globally(
-                    MessageType.EVENT_STATE_UPDATE,
-                    update_msg.payload,
-                    exclude_players=exclude_players
-                )
-            else:
-                return []  # Should never reach here due to earlier validation
+        
+        # Send via appropriate broadcast method
+        if target == BroadcastTarget.NEARBY:
+            if not origin_player:
+                raise ValueError("origin_player required for nearby broadcasts")
+            return await self.broadcast_to_nearby(
+                origin_player, 
+                MessageType.EVENT_STATE_UPDATE, 
+                update_msg.payload,
+                include_origin=False
+            )
+        elif target == BroadcastTarget.MAP:
+            if not map_id:
+                raise ValueError("map_id required for map broadcasts")
+            return await self.broadcast_to_map(
+                map_id,
+                MessageType.EVENT_STATE_UPDATE,
+                update_msg.payload,
+                exclude_players=exclude_players
+            )
+        elif target == BroadcastTarget.GLOBAL:
+            return await self.broadcast_globally(
+                MessageType.EVENT_STATE_UPDATE,
+                update_msg.payload,
+                exclude_players=exclude_players
+            )
+        else:
+            return []  # Should never reach here due to earlier validation
             
     async def broadcast_chat_message(
         self,

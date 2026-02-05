@@ -37,8 +37,7 @@ class QueryHandlerMixin:
             await self._send_data_response(
                 message.id,
                 {
-                    "inventory": inventory_data.model_dump(),
-                    "query_type": "inventory"
+                    "inventory": inventory_data.model_dump()
                 }
             )
             
@@ -67,8 +66,7 @@ class QueryHandlerMixin:
             await self._send_data_response(
                 message.id,
                 {
-                    "equipment": equipment_data.model_dump(),
-                    "query_type": "equipment"
+                    "equipment": equipment_data.model_dump()
                 }
             )
             
@@ -115,8 +113,7 @@ class QueryHandlerMixin:
                 {
                     "stats": stats_data.model_dump(),
                     "skills": skills_list,
-                    "total_level": total_level,
-                    "query_type": "stats"
+                    "total_level": total_level
                 }
             )
             
@@ -178,8 +175,7 @@ class QueryHandlerMixin:
                     "chunks": chunk_data or [],
                     "map_id": payload.map_id,
                     "center": {"x": payload.center_x, "y": payload.center_y},
-                    "radius": payload.radius,
-                    "query_type": "map_chunks"
+                    "radius": payload.radius
                 }
             )
             

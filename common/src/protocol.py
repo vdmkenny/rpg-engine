@@ -120,7 +120,6 @@ class MessageType(str, Enum):
     EVENT_PLAYER_LEFT = "event_player_left"
     EVENT_PLAYER_DIED = "event_player_died"
     EVENT_PLAYER_RESPAWN = "event_player_respawn"
-    EVENT_GAME_STATE_UPDATE = "event_game_state_update"
     EVENT_SERVER_SHUTDOWN = "event_server_shutdown"
     EVENT_COMBAT_ACTION = "event_combat_action"
     
@@ -299,8 +298,6 @@ class ChunkUpdateEventPayload(BaseModel):
     """Payload for EVENT_CHUNK_UPDATE - map chunk data on boundary crossing"""
     map_id: str = Field(..., description="Map identifier")
     chunks: List[Dict[str, Any]] = Field(..., description="Chunk data list")
-    player_x: int = Field(..., description="Player X position")
-    player_y: int = Field(..., description="Player Y position")
 
 
 class GameUpdateEventPayload(BaseModel):
@@ -483,7 +480,8 @@ COMMAND_TYPES = {
     MessageType.CMD_ITEM_PICKUP,
     MessageType.CMD_ITEM_EQUIP,
     MessageType.CMD_ITEM_UNEQUIP,
-    MessageType.CMD_ATTACK
+    MessageType.CMD_ATTACK,
+    MessageType.CMD_TOGGLE_AUTO_RETALIATE
 }
 
 # Queries that expect RESP_DATA responses  
@@ -503,6 +501,8 @@ EVENT_TYPES = {
     MessageType.EVENT_CHAT_MESSAGE,
     MessageType.EVENT_PLAYER_JOINED,
     MessageType.EVENT_PLAYER_LEFT,
+    MessageType.EVENT_PLAYER_DIED,
+    MessageType.EVENT_PLAYER_RESPAWN,
     MessageType.EVENT_SERVER_SHUTDOWN,
     MessageType.EVENT_COMBAT_ACTION
 }
