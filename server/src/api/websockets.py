@@ -325,7 +325,6 @@ async def websocket_endpoint(
         # Cleanup
         if player_id:
             # Get player position for the disconnect broadcast
-            from server.src.services.player_service import PlayerService
             position = await PlayerService.get_player_position(player_id)
             player_map = position.map_id if position else None
             
