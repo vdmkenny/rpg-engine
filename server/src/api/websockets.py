@@ -251,7 +251,11 @@ async def websocket_endpoint(
         
         # Create handler
         handler = WebSocketHandler(websocket, username, player_id, valkey)
-        await manager.connect(websocket, player_id)
+        
+        # Get player position for connection manager
+        position = await PlayerService.get_player_position(player_id)
+        player_map = position.map_id if position else "default"
+        await manager.connect(websocket, player_id, player_map)
         players_online.inc()
         
         # Send welcome message
