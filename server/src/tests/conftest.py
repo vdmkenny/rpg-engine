@@ -105,12 +105,21 @@ class FakeValkeyTransaction:
 # Worker Detection and Database URL Generation
 def get_worker_id() -> str:
     """
-    Get pytest-xdist worker ID or 'main' for single-threaded execution.
+    Get pytest-xdist worker ID or generate unique ID for single-threaded execution.
     
     Returns:
-        Worker ID like 'gw0', 'gw1', etc. or 'main' for non-parallel execution
+        Worker ID like 'gw0', 'gw1', etc. or unique 'main_<timestamp>' for non-parallel execution
     """
-    return os.getenv("PYTEST_XDIST_WORKER", "main")
+    worker = os.getenv("PYTEST_XDIST_WORKER")
+    if worker:
+        return worker
+    
+    # Generate unique ID for non-parallel runs to avoid database conflicts
+    # Use timestamp + process ID for uniqueness
+    import time
+    timestamp = int(time.time())
+    pid = os.getpid()
+    return f"main_{timestamp}_{pid}"
 
 
 def get_worker_database_url(worker_id: str) -> str:
