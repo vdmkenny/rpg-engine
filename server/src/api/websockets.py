@@ -272,16 +272,16 @@ async def websocket_endpoint(
             try:
                 # Receive and parse message
                 raw_data = await websocket.receive_bytes()
-                message_data = msgpack.unpackb(raw_data, raw=False)
                 
-                # Validate message structure
-                validation = message_validator.validate_message(message_data)
-                if not validation["valid"]:
+                # Validate message structure (this also unpacks the data)
+                try:
+                    message_data = message_validator.validate_message_structure(raw_data)
+                except ValueError as e:
                     await handler._send_error_response(
-                        message_data.get("id"),
+                        None,
                         ErrorCodes.SYS_INVALID_MESSAGE,
                         ErrorCategory.VALIDATION,
-                        validation["error"]
+                        str(e)
                     )
                     continue
                 
@@ -309,9 +309,6 @@ async def websocket_endpoint(
             extra={"player_id": player_id, "username": username}
         )
     except Exception as e:
-        import sys
-        print(f"WEBSOCKET ERROR: {e}", file=sys.stderr)
-        print(traceback.format_exc(), file=sys.stderr)
         logger.error(
             "WebSocket error",
             extra={
