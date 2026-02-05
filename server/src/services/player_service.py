@@ -373,10 +373,10 @@ class PlayerService:
         """
         from sqlalchemy import select
         from server.src.models.player import Player
-        from server.src.core.database import get_db_session
+        from server.src.core.database import AsyncSessionLocal
         
         try:
-            async with get_db_session() as db:
+            async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(Player.appearance).where(Player.id == player_id)
                 )
@@ -403,10 +403,10 @@ class PlayerService:
         """
         from sqlalchemy import select
         from server.src.models.player import Player
-        from server.src.core.database import get_db_session
+        from server.src.core.database import AsyncSessionLocal
         
         try:
-            async with get_db_session() as db:
+            async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(Player).where(Player.id == player_id)
                 )
