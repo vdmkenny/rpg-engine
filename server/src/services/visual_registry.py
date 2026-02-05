@@ -264,6 +264,25 @@ class VisualRegistry:
         async with self._lock:
             self._entity_hashes.pop(entity_id, None)
     
+    async def invalidate_player(self, player_id: int) -> None:
+        """
+        Invalidate a player's visual state to force re-render.
+        
+        Removes the player's entity hash from tracking, causing the next
+        visual state request to be treated as new/changed.
+        
+        Args:
+            player_id: The player's database ID.
+        """
+        entity_id = f"player_{player_id}"
+        async with self._lock:
+            self._entity_hashes.pop(entity_id, None)
+        
+        logger.debug(
+            "Player visual state invalidated",
+            extra={"player_id": player_id, "entity_id": entity_id}
+        )
+    
     async def get_stats(self) -> dict:
         """
         Get statistics about the registry for monitoring.

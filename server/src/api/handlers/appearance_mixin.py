@@ -180,7 +180,7 @@ class AppearanceHandlerMixin:
             from server.src.services.broadcast_service import broadcast_service
 
             # Get visual state for hash
-            visual_state = await VisualStateService.build_visual_state_for_player(self.player_id)
+            visual_state = await VisualStateService.get_player_visual_state(self.player_id)
             visual_hash = visual_state.compute_hash() if visual_state else None
 
             # Broadcast to nearby players

@@ -359,3 +359,77 @@ class PlayerService:
             logger.info("Player deleted", extra={"player_id": player_id})
         
         return success
+
+    @staticmethod
+    async def get_player_appearance(player_id: int) -> Optional[dict]:
+        """
+        Get player's appearance data from database.
+        
+        Args:
+            player_id: Player ID
+            
+        Returns:
+            Appearance dict if found, None otherwise
+        """
+        from sqlalchemy import select
+        from server.src.models.player import Player
+        from server.src.core.database import get_db_session
+        
+        try:
+            async with get_db_session() as db:
+                result = await db.execute(
+                    select(Player.appearance).where(Player.id == player_id)
+                )
+                appearance = result.scalar_one_or_none()
+                return appearance
+        except Exception as e:
+            logger.error(
+                "Error getting player appearance",
+                extra={"player_id": player_id, "error": str(e)}
+            )
+            return None
+
+    @staticmethod
+    async def update_player_appearance(player_id: int, appearance_dict: dict) -> bool:
+        """
+        Update player's appearance data in database.
+        
+        Args:
+            player_id: Player ID
+            appearance_dict: Appearance data dict to save
+            
+        Returns:
+            True if updated successfully, False otherwise
+        """
+        from sqlalchemy import select
+        from server.src.models.player import Player
+        from server.src.core.database import get_db_session
+        
+        try:
+            async with get_db_session() as db:
+                result = await db.execute(
+                    select(Player).where(Player.id == player_id)
+                )
+                player = result.scalar_one_or_none()
+                
+                if player is None:
+                    logger.warning(
+                        "Cannot update appearance - player not found",
+                        extra={"player_id": player_id}
+                    )
+                    return False
+                
+                player.appearance = appearance_dict
+                await db.commit()
+                
+                logger.info(
+                    "Player appearance updated",
+                    extra={"player_id": player_id}
+                )
+                return True
+        except Exception as e:
+            logger.error(
+                "Error updating player appearance",
+                extra={"player_id": player_id, "error": str(e)}
+            )
+            return False
