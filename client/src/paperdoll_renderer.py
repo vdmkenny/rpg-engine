@@ -30,6 +30,10 @@ from common.src.sprites.enums import (
     EyeAgeGroup,
     SpriteLayer,
     AnimationType,
+    ClothingStyle,
+    PantsStyle,
+    ShoesStyle,
+    ClothingColor,
     get_eye_age_group,
     get_fallback_animation,
 )
@@ -53,16 +57,23 @@ from sprite_manager import SpriteManager, FRAME_SIZE
 DEFAULT_RENDER_SIZE = 32
 
 # Equipment slot to sprite layer mapping
+# Updated to match server/src/schemas/item.py EquipmentSlot enum
 SLOT_TO_LAYER: Dict[str, SpriteLayer] = {
     "head": SpriteLayer.ARMOR_HEAD,
+    "cape": SpriteLayer.CAPE_BEHIND,  # Cape renders behind body
+    "weapon": SpriteLayer.WEAPON_FRONT,
     "body": SpriteLayer.ARMOR_BODY,
+    "shield": SpriteLayer.SHIELD,
     "legs": SpriteLayer.ARMOR_LEGS,
-    "feet": SpriteLayer.ARMOR_FEET,
-    "hands": SpriteLayer.ARMOR_HANDS,
+    "gloves": SpriteLayer.ARMOR_HANDS,
+    "boots": SpriteLayer.ARMOR_FEET,
+    "ammo": SpriteLayer.BACK,  # Quiver renders on back
+    # Legacy aliases for backward compatibility
     "main_hand": SpriteLayer.WEAPON_FRONT,
     "off_hand": SpriteLayer.SHIELD,
     "back": SpriteLayer.BACK,
-    "belt": SpriteLayer.ARMOR_BODY,  # Belt renders with body
+    "hands": SpriteLayer.ARMOR_HANDS,
+    "feet": SpriteLayer.ARMOR_FEET,
 }
 
 
@@ -374,26 +385,83 @@ class PaperdollRenderer:
             eye_color = EyeColor(eye_color_str)
         except ValueError:
             eye_color = EyeColor.BROWN
-        
+
+        # Parse clothing data
+        shirt_style_str = appearance.get("shirt_style", "longsleeve2")
+        shirt_color_str = appearance.get("shirt_color", "white")
+        pants_style_str = appearance.get("pants_style", "pants")
+        pants_color_str = appearance.get("pants_color", "brown")
+        shoes_style_str = appearance.get("shoes_style", "shoes/basic")
+        shoes_color_str = appearance.get("shoes_color", "brown")
+
+        try:
+            shirt_style = ClothingStyle(shirt_style_str)
+        except ValueError:
+            shirt_style = ClothingStyle.LONGSLEEVE
+
+        try:
+            shirt_color = ClothingColor(shirt_color_str)
+        except ValueError:
+            shirt_color = ClothingColor.WHITE
+
+        try:
+            pants_style = PantsStyle(pants_style_str)
+        except ValueError:
+            pants_style = PantsStyle.PANTS
+
+        try:
+            pants_color = ClothingColor(pants_color_str)
+        except ValueError:
+            pants_color = ClothingColor.BROWN
+
+        try:
+            shoes_style = ShoesStyle(shoes_style_str)
+        except ValueError:
+            shoes_style = ShoesStyle.SHOES
+
+        try:
+            shoes_color = ClothingColor(shoes_color_str)
+        except ValueError:
+            shoes_color = ClothingColor.BROWN
+
         # Body layer
         body_path = SpritePaths.body(body_type, skin_tone, animation=anim_name)
         layers.append(RenderLayer(SpriteLayer.BODY, body_path))
-        
+
         # Head layer
         head_path = SpritePaths.head(head_type, skin_tone, animation=anim_name)
         layers.append(RenderLayer(SpriteLayer.HEAD, head_path))
-        
+
         # Eyes layer
         eye_age = get_eye_age_group(body_type, head_type)
         eyes_path = SpritePaths.eyes(eye_color, eye_age, expression="default", animation=anim_name)
         layers.append(RenderLayer(SpriteLayer.EYES, eyes_path))
-        
+
         # Hair layer (skip if bald)
         if hair_style != HairStyle.BALD:
             hair_path = SpritePaths.hair(hair_style, hair_color, age_group="adult", animation=anim_name)
             if hair_path:
                 layers.append(RenderLayer(SpriteLayer.HAIR, hair_path))
-        
+
+        # Clothing layers (under armor)
+        # Pants (rendered before shirt for proper layering)
+        if pants_style != PantsStyle.NONE:
+            pants_path = SpritePaths.clothing_pants(pants_style, pants_color, body_type, animation=anim_name)
+            if pants_path:
+                layers.append(RenderLayer(SpriteLayer.CLOTHING_PANTS, pants_path))
+
+        # Shoes (rendered before body equipment)
+        if shoes_style != ShoesStyle.NONE:
+            shoes_path = SpritePaths.clothing_shoes(shoes_style, shoes_color, body_type, animation=anim_name)
+            if shoes_path:
+                layers.append(RenderLayer(SpriteLayer.CLOTHING_SHOES, shoes_path))
+
+        # Shirt (rendered after pants, before body armor)
+        if shirt_style != ClothingStyle.NONE:
+            shirt_path = SpritePaths.clothing_shirt(shirt_style, shirt_color, body_type, animation=anim_name)
+            if shirt_path:
+                layers.append(RenderLayer(SpriteLayer.CLOTHING_SHIRT, shirt_path))
+
         # Equipment layers
         for slot, equip_data in equipment.items():
             if equip_data is None:
@@ -410,8 +478,8 @@ class PaperdollRenderer:
             if equip_sprite is None:
                 continue
             
-            # Get the sprite path (use walk animation as default)
-            sprite_path = equip_sprite.get_path(animation="walk")
+            # Get the sprite path using current animation
+            sprite_path = equip_sprite.get_path(animation=anim_name)
             
             # Use tint from visual state, or from equipment mapping
             final_tint = tint or equip_sprite.tint

@@ -23,53 +23,117 @@ from .enums import EquipmentSlot
 class EquippedVisuals:
     """
     Visual representation of equipped items.
-    
+
     Maps equipment slots to sprite sheet identifiers.
     Only contains the visual information needed for rendering,
     not the full item data.
-    
+
     This class is immutable (frozen=True) to ensure hash stability.
-    
+
     Attributes:
         head: Helmet/hat sprite ID
+        cape: Cape/cloak sprite ID
+        weapon: Primary weapon sprite ID
         body: Chest armor/robe sprite ID
+        shield: Shield/offhand weapon sprite ID
         legs: Leg armor/pants sprite ID
-        feet: Boots/shoes sprite ID
-        hands: Gloves/gauntlets sprite ID
-        main_hand: Primary weapon sprite ID
-        off_hand: Shield/offhand weapon sprite ID
-        back: Cape/backpack/quiver sprite ID
-        belt: Belt accessory sprite ID
-        
+        gloves: Gloves/gauntlets sprite ID
+        boots: Boots/shoes sprite ID
+        ammo: Ammunition (quiver) sprite ID
+
         *_tint: Optional hex color for client-side tinting.
                 Used when LPC doesn't provide native color variants.
+
+    Note: AMULET and RING slots are not visible on paperdoll.
     """
-    # Sprite IDs
+    # Sprite IDs (must match EquipmentSlot enum values)
     head: Optional[str] = None
+    cape: Optional[str] = None
+    weapon: Optional[str] = None
     body: Optional[str] = None
+    shield: Optional[str] = None
     legs: Optional[str] = None
-    feet: Optional[str] = None
-    hands: Optional[str] = None
-    main_hand: Optional[str] = None
-    off_hand: Optional[str] = None
-    back: Optional[str] = None
-    belt: Optional[str] = None
-    
+    gloves: Optional[str] = None
+    boots: Optional[str] = None
+    ammo: Optional[str] = None
+
     # Tint colors (for client-side recoloring)
     head_tint: Optional[str] = None
+    cape_tint: Optional[str] = None
+    weapon_tint: Optional[str] = None
     body_tint: Optional[str] = None
+    shield_tint: Optional[str] = None
     legs_tint: Optional[str] = None
-    feet_tint: Optional[str] = None
-    hands_tint: Optional[str] = None
-    main_hand_tint: Optional[str] = None
-    off_hand_tint: Optional[str] = None
-    back_tint: Optional[str] = None
-    belt_tint: Optional[str] = None
-    
+    gloves_tint: Optional[str] = None
+    boots_tint: Optional[str] = None
+    ammo_tint: Optional[str] = None
+
+    # Legacy field aliases for backward compatibility during migration
+    @property
+    def main_hand(self) -> Optional[str]:
+        """Alias for weapon slot."""
+        return self.weapon
+
+    @property
+    def off_hand(self) -> Optional[str]:
+        """Alias for shield slot."""
+        return self.shield
+
+    @property
+    def back(self) -> Optional[str]:
+        """Alias for cape slot."""
+        return self.cape
+
+    @property
+    def hands(self) -> Optional[str]:
+        """Alias for gloves slot."""
+        return self.gloves
+
+    @property
+    def feet(self) -> Optional[str]:
+        """Alias for boots slot."""
+        return self.boots
+
+    @property
+    def belt(self) -> Optional[str]:
+        """Legacy belt slot - maps to body."""
+        return None
+
+    # Tint property aliases for backward compatibility
+    @property
+    def main_hand_tint(self) -> Optional[str]:
+        """Alias for weapon_tint."""
+        return self.weapon_tint
+
+    @property
+    def off_hand_tint(self) -> Optional[str]:
+        """Alias for shield_tint."""
+        return self.shield_tint
+
+    @property
+    def back_tint(self) -> Optional[str]:
+        """Alias for cape_tint."""
+        return self.cape_tint
+
+    @property
+    def hands_tint(self) -> Optional[str]:
+        """Alias for gloves_tint."""
+        return self.gloves_tint
+
+    @property
+    def feet_tint(self) -> Optional[str]:
+        """Alias for boots_tint."""
+        return self.boots_tint
+
+    @property
+    def belt_tint(self) -> Optional[str]:
+        """Legacy belt tint slot - returns None."""
+        return None
+
     def to_dict(self) -> dict:
         """
         Convert to dictionary, excluding None values.
-        
+
         Returns:
             Dictionary with only the equipped slots (non-None values).
             Includes tint fields when present.
@@ -77,60 +141,72 @@ class EquippedVisuals:
         return {
             k: v for k, v in {
                 "head": self.head,
+                "cape": self.cape,
+                "weapon": self.weapon,
                 "body": self.body,
+                "shield": self.shield,
                 "legs": self.legs,
-                "feet": self.feet,
-                "hands": self.hands,
-                "main_hand": self.main_hand,
-                "off_hand": self.off_hand,
-                "back": self.back,
-                "belt": self.belt,
+                "gloves": self.gloves,
+                "boots": self.boots,
+                "ammo": self.ammo,
                 "head_tint": self.head_tint,
+                "cape_tint": self.cape_tint,
+                "weapon_tint": self.weapon_tint,
                 "body_tint": self.body_tint,
+                "shield_tint": self.shield_tint,
                 "legs_tint": self.legs_tint,
-                "feet_tint": self.feet_tint,
-                "hands_tint": self.hands_tint,
-                "main_hand_tint": self.main_hand_tint,
-                "off_hand_tint": self.off_hand_tint,
-                "back_tint": self.back_tint,
-                "belt_tint": self.belt_tint,
+                "gloves_tint": self.gloves_tint,
+                "boots_tint": self.boots_tint,
+                "ammo_tint": self.ammo_tint,
             }.items() if v is not None
         }
-    
+
     @classmethod
     def from_dict(cls, data: Optional[dict]) -> "EquippedVisuals":
         """
         Create EquippedVisuals from a dictionary.
-        
+
+        Handles backward compatibility with old slot names:
+        - main_hand -> weapon
+        - off_hand -> shield
+        - back -> cape
+        - hands -> gloves
+        - feet -> boots
+
         Args:
             data: Dictionary with equipment slot -> sprite ID mappings.
                   May also include *_tint fields for tint colors.
-            
+
         Returns:
             EquippedVisuals instance.
         """
         if data is None:
             return cls()
-        
+
+        # Handle backward compatibility for slot names
+        def get_slot_value(old_key: str, new_key: str) -> Optional[str]:
+            """Get value with old key as fallback."""
+            return data.get(new_key) or data.get(old_key)
+
         return cls(
             head=data.get("head"),
+            cape=get_slot_value("back", "cape"),
+            weapon=get_slot_value("main_hand", "weapon"),
             body=data.get("body"),
+            shield=get_slot_value("off_hand", "shield"),
             legs=data.get("legs"),
-            feet=data.get("feet"),
-            hands=data.get("hands"),
-            main_hand=data.get("main_hand"),
-            off_hand=data.get("off_hand"),
-            back=data.get("back"),
-            belt=data.get("belt"),
+            gloves=get_slot_value("hands", "gloves"),
+            boots=get_slot_value("feet", "boots"),
+            ammo=data.get("ammo"),
             head_tint=data.get("head_tint"),
+            cape_tint=get_slot_value("back_tint", "cape_tint"),
+            weapon_tint=get_slot_value("main_hand_tint", "weapon_tint"),
             body_tint=data.get("body_tint"),
+            shield_tint=get_slot_value("off_hand_tint", "shield_tint"),
             legs_tint=data.get("legs_tint"),
-            feet_tint=data.get("feet_tint"),
-            hands_tint=data.get("hands_tint"),
-            main_hand_tint=data.get("main_hand_tint"),
-            off_hand_tint=data.get("off_hand_tint"),
-            back_tint=data.get("back_tint"),
-            belt_tint=data.get("belt_tint"),
+            gloves_tint=get_slot_value("hands_tint", "gloves_tint"),
+            boots_tint=get_slot_value("feet_tint", "boots_tint"),
+            ammo_tint=data.get("ammo_tint"),
         )
     
     @classmethod
@@ -174,75 +250,75 @@ class EquippedVisuals:
         
         return cls(
             head=get_sprite_id("head"),
+            cape=get_sprite_id("cape") or get_sprite_id("back"),
+            weapon=get_sprite_id("weapon") or get_sprite_id("main_hand"),
             body=get_sprite_id("body"),
+            shield=get_sprite_id("shield") or get_sprite_id("off_hand"),
             legs=get_sprite_id("legs"),
-            feet=get_sprite_id("feet"),
-            hands=get_sprite_id("hands"),
-            main_hand=get_sprite_id("main_hand"),
-            off_hand=get_sprite_id("off_hand"),
-            back=get_sprite_id("back"),
-            belt=get_sprite_id("belt"),
+            gloves=get_sprite_id("gloves") or get_sprite_id("hands"),
+            boots=get_sprite_id("boots") or get_sprite_id("feet"),
+            ammo=get_sprite_id("ammo"),
             head_tint=get_tint("head"),
+            cape_tint=get_tint("cape") or get_tint("back"),
+            weapon_tint=get_tint("weapon") or get_tint("main_hand"),
             body_tint=get_tint("body"),
+            shield_tint=get_tint("shield") or get_tint("off_hand"),
             legs_tint=get_tint("legs"),
-            feet_tint=get_tint("feet"),
-            hands_tint=get_tint("hands"),
-            main_hand_tint=get_tint("main_hand"),
-            off_hand_tint=get_tint("off_hand"),
-            back_tint=get_tint("back"),
-            belt_tint=get_tint("belt"),
+            gloves_tint=get_tint("gloves") or get_tint("hands"),
+            boots_tint=get_tint("boots") or get_tint("feet"),
+            ammo_tint=get_tint("ammo"),
         )
-    
+
     def is_empty(self) -> bool:
         """Check if no equipment is equipped."""
         return all(v is None for v in [
-            self.head, self.body, self.legs, self.feet,
-            self.hands, self.main_hand, self.off_hand, self.back, self.belt
+            self.head, self.cape, self.weapon, self.body, self.shield,
+            self.legs, self.gloves, self.boots, self.ammo
         ])
-    
+
     def get_slot(self, slot: EquipmentSlot) -> Optional[str]:
         """
         Get the sprite ID for a specific slot.
-        
+
         Args:
             slot: The equipment slot to query.
-            
+
         Returns:
             Sprite ID or None if slot is empty.
         """
         slot_map = {
             EquipmentSlot.HEAD: self.head,
+            EquipmentSlot.CAPE: self.cape,
+            EquipmentSlot.WEAPON: self.weapon,
             EquipmentSlot.BODY: self.body,
+            EquipmentSlot.SHIELD: self.shield,
             EquipmentSlot.LEGS: self.legs,
-            EquipmentSlot.FEET: self.feet,
-            EquipmentSlot.HANDS: self.hands,
-            EquipmentSlot.MAIN_HAND: self.main_hand,
-            EquipmentSlot.OFF_HAND: self.off_hand,
-            EquipmentSlot.BACK: self.back,
-            EquipmentSlot.BELT: self.belt,
+            EquipmentSlot.GLOVES: self.gloves,
+            EquipmentSlot.BOOTS: self.boots,
+            EquipmentSlot.AMMO: self.ammo,
         }
         return slot_map.get(slot)
-    
+
     def get_slot_tint(self, slot: EquipmentSlot) -> Optional[str]:
         """
         Get the tint color for a specific slot.
-        
+
         Args:
             slot: The equipment slot to query.
-            
+
         Returns:
             Hex color string or None if no tint.
         """
         tint_map = {
             EquipmentSlot.HEAD: self.head_tint,
+            EquipmentSlot.CAPE: self.cape_tint,
+            EquipmentSlot.WEAPON: self.weapon_tint,
             EquipmentSlot.BODY: self.body_tint,
+            EquipmentSlot.SHIELD: self.shield_tint,
             EquipmentSlot.LEGS: self.legs_tint,
-            EquipmentSlot.FEET: self.feet_tint,
-            EquipmentSlot.HANDS: self.hands_tint,
-            EquipmentSlot.MAIN_HAND: self.main_hand_tint,
-            EquipmentSlot.OFF_HAND: self.off_hand_tint,
-            EquipmentSlot.BACK: self.back_tint,
-            EquipmentSlot.BELT: self.belt_tint,
+            EquipmentSlot.GLOVES: self.gloves_tint,
+            EquipmentSlot.BOOTS: self.boots_tint,
+            EquipmentSlot.AMMO: self.ammo_tint,
         }
         return tint_map.get(slot)
 

@@ -52,38 +52,39 @@ class VisualStateService:
     
     @staticmethod
     def _build_visual_state(
-        appearance: Optional[Dict], 
+        appearance: Optional[Dict],
         equipped_items: Optional[Dict[str, str]],
     ) -> VisualState:
         """
         Build a VisualState from appearance dict and equipped items map.
-        
+
         Args:
             appearance: Appearance dictionary from player state
             equipped_items: Dict mapping slot names to item names/sprite IDs
-            
+
         Returns:
             VisualState instance for hash computation and serialization
         """
         # Build AppearanceData from dict
         appearance_data = AppearanceData.from_dict(appearance)
-        
+
         # Build EquippedVisuals from equipped items
+        # Updated to use unified slot names: weapon, shield, cape, gloves, boots
         if equipped_items:
             equipped_visuals = EquippedVisuals(
                 head=equipped_items.get("head"),
+                cape=equipped_items.get("cape") or equipped_items.get("back"),
+                weapon=equipped_items.get("weapon") or equipped_items.get("main_hand"),
                 body=equipped_items.get("body"),
+                shield=equipped_items.get("shield") or equipped_items.get("off_hand"),
                 legs=equipped_items.get("legs"),
-                feet=equipped_items.get("feet"),
-                hands=equipped_items.get("hands"),
-                main_hand=equipped_items.get("main_hand"),
-                off_hand=equipped_items.get("off_hand"),
-                back=equipped_items.get("back"),
-                belt=equipped_items.get("belt"),
+                gloves=equipped_items.get("gloves") or equipped_items.get("hands"),
+                boots=equipped_items.get("boots") or equipped_items.get("feet"),
+                ammo=equipped_items.get("ammo"),
             )
         else:
             equipped_visuals = EquippedVisuals()
-        
+
         return VisualState(appearance=appearance_data, equipment=equipped_visuals)
     
     @staticmethod

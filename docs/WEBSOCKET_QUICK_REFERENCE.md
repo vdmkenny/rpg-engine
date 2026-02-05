@@ -19,6 +19,7 @@
 | `cmd_item_unequip` | Client → Server | Unequip item | Required |
 | `cmd_attack` | Client → Server | Attack target | Required |
 | `cmd_toggle_auto_retaliate` | Client → Server | Toggle auto-retaliation | Required |
+| `cmd_update_appearance` | Client → Server | Update appearance | Required |
 | `query_inventory` | Client → Server | Get inventory data | Required |
 | `query_equipment` | Client → Server | Get equipment data | Required |
 | `query_stats` | Client → Server | Get player stats | Required |
@@ -37,6 +38,7 @@
 | `event_player_respawn` | Server → Client | Player respawned | None |
 | `event_server_shutdown` | Server → Client | Server shutdown | None |
 | `event_combat_action` | Server → Client | Combat event | None |
+| `event_appearance_update` | Server → Client | Appearance updated | None |
 
 ---
 
@@ -94,6 +96,10 @@
 - `MAP_CHUNK_LIMIT_EXCEEDED` - Too many chunks requested (>5 radius)
 - `MAP_NOT_FOUND` - Map doesn't exist
 
+### Appearance
+- `APPEARANCE_INVALID_VALUE` - Invalid appearance field value
+- `APPEARANCE_UPDATE_FAILED` - Failed to update appearance
+
 ### System
 - `SYS_DATABASE_ERROR` - Database error
 - `SYS_SERVICE_UNAVAILABLE` - Service unavailable
@@ -113,6 +119,33 @@
 | Item drop/pickup | 0.2 seconds |
 | Attack | 0.5 seconds |
 | Auto-retaliate toggle | 0.5 seconds |
+| Appearance update | 5.0 seconds |
+
+---
+
+## Appearance Fields
+
+Valid appearance customization fields:
+
+### Core
+- `body_type` - Player body type (e.g., `TYPE_A`, `TYPE_B`, `TYPE_C`)
+- `skin_tone` - Skin color (e.g., `TONE_1` through `TONE_8`)
+- `head_type` - Head shape (e.g., `HEAD_1` through `HEAD_6`)
+- `hair_style` - Hair style (e.g., `STYLE_BALD`, `STYLE_SHORT`, `STYLE_LONG`, `STYLE_PONYTAIL`)
+- `hair_color` - Hair color (e.g., `BLACK`, `BROWN`, `BLONDE`, `RED`, `WHITE`)
+- `eye_color` - Eye color (e.g., `BROWN`, `BLUE`, `GREEN`, `GRAY`)
+
+### Facial Hair
+- `facial_hair_style` - Beard/mustache style (e.g., `NONE`, `GOATEE`, `BEARD_SHORT`, `BEARD_LONG`)
+- `facial_hair_color` - Facial hair color (e.g., `BLACK`, `BROWN`, `GRAY`)
+
+### Clothing
+- `shirt_style` - Shirt type (e.g., `PLAIN`, `STRIPED`, `VEST`)
+- `shirt_color` - Shirt color (e.g., `WHITE`, `BLUE`, `RED`, `GREEN`, `GRAY`)
+- `pants_style` - Pants type (e.g., `PLAIN`, `JEANS`)
+- `pants_color` - Pants color (e.g., `BLUE`, `BLACK`, `BROWN`, `GRAY`)
+- `shoes_style` - Shoe type (e.g., `BOOTS`, `SHOES`)
+- `shoes_color` - Shoe color (e.g., `BLACK`, `BROWN`)
 
 ---
 

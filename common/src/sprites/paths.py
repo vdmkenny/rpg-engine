@@ -19,6 +19,10 @@ from .enums import (
     EyeColor,
     EyeAgeGroup,
     EquipmentSlot,
+    ClothingStyle,
+    PantsStyle,
+    ShoesStyle,
+    ClothingColor,
     get_eye_age_group,
 )
 from .appearance import AppearanceData
@@ -109,7 +113,82 @@ class SpritePaths:
             return ""
         
         return f"hair/{hair_style.value}/{age_group}/{animation}/{hair_color.value}.png"
-    
+
+    @staticmethod
+    def clothing_shirt(
+        shirt_style: ClothingStyle,
+        shirt_color: ClothingColor,
+        body_type: BodyType = BodyType.MALE,
+        animation: str = "walk",
+    ) -> str:
+        """
+        Get the path for a clothing shirt/top sprite sheet.
+
+        Args:
+            shirt_style: Shirt style (longsleeve, shortsleeve, etc.)
+            shirt_color: Shirt color
+            body_type: Body type for body-specific sprites
+            animation: Animation type (walk, idle, slash, etc.)
+
+        Returns:
+            Path like "torso/clothes/longsleeve/longsleeve2/male/walk/white.png"
+        """
+        # Handle "none" specially - no sprite needed
+        if shirt_style == ClothingStyle.NONE:
+            return ""
+
+        return f"torso/clothes/{shirt_style.value}/{body_type.value}/{animation}/{shirt_color.value}.png"
+
+    @staticmethod
+    def clothing_pants(
+        pants_style: PantsStyle,
+        pants_color: ClothingColor,
+        body_type: BodyType = BodyType.MALE,
+        animation: str = "walk",
+    ) -> str:
+        """
+        Get the path for clothing pants/legs sprite sheet.
+
+        Args:
+            pants_style: Pants style (pants, shorts, leggings, etc.)
+            pants_color: Pants color
+            body_type: Body type for body-specific sprites
+            animation: Animation type (walk, idle, slash, etc.)
+
+        Returns:
+            Path like "legs/pants/male/walk/brown.png" or "legs/shorts/male/walk/blue.png"
+        """
+        # Handle "none" specially - no sprite needed
+        if pants_style == PantsStyle.NONE:
+            return ""
+
+        return f"legs/{pants_style.value}/{body_type.value}/{animation}/{pants_color.value}.png"
+
+    @staticmethod
+    def clothing_shoes(
+        shoes_style: ShoesStyle,
+        shoes_color: ClothingColor,
+        body_type: BodyType = BodyType.MALE,
+        animation: str = "walk",
+    ) -> str:
+        """
+        Get the path for clothing shoes/footwear sprite sheet.
+
+        Args:
+            shoes_style: Shoes style (shoes, sandals, etc.)
+            shoes_color: Shoes color
+            body_type: Body type for body-specific sprites
+            animation: Animation type (walk, idle, slash, etc.)
+
+        Returns:
+            Path like "feet/shoes/basic/male/walk/brown.png"
+        """
+        # Handle "none" specially - no sprite needed
+        if shoes_style == ShoesStyle.NONE:
+            return ""
+
+        return f"feet/{shoes_style.value}/{body_type.value}/{animation}/{shoes_color.value}.png"
+
     @staticmethod
     def equipment(
         slot: EquipmentSlot,
@@ -132,18 +211,18 @@ class SpritePaths:
             EquipmentSlot.HEAD: "head",
             EquipmentSlot.BODY: "torso",
             EquipmentSlot.LEGS: "legs",
-            EquipmentSlot.FEET: "feet",
-            EquipmentSlot.HANDS: "hands",
-            EquipmentSlot.MAIN_HAND: "weapons",
-            EquipmentSlot.OFF_HAND: "shield",
-            EquipmentSlot.BACK: "back",
-            EquipmentSlot.BELT: "belt",
+            EquipmentSlot.BOOTS: "feet",
+            EquipmentSlot.GLOVES: "hands",
+            EquipmentSlot.WEAPON: "weapons",
+            EquipmentSlot.SHIELD: "shield",
+            EquipmentSlot.CAPE: "back",
+            EquipmentSlot.AMMO: "back",  # Quiver renders on back
         }
-        
+
         slot_dir = slot_dirs.get(slot, "misc")
-        
+
         # Weapons don't typically have body type variants
-        if slot in {EquipmentSlot.MAIN_HAND, EquipmentSlot.OFF_HAND}:
+        if slot in {EquipmentSlot.WEAPON, EquipmentSlot.SHIELD}:
             return f"equipment/{slot_dir}/{sprite_id}.png"
         
         # Body equipment has body type variants
@@ -161,22 +240,49 @@ class SpritePaths:
             List of sprite paths (excluding empty paths like bald hair).
         """
         paths = []
-        
+
         # Body sprite
         paths.append(cls.body(appearance.body_type, appearance.skin_tone))
-        
+
         # Head sprite
         paths.append(cls.head(appearance.head_type, appearance.skin_tone))
-        
+
         # Eyes sprite
         eye_age = get_eye_age_group(appearance.body_type, appearance.head_type)
         paths.append(cls.eyes(appearance.eye_color, eye_age))
-        
+
         # Hair sprite (skip if bald)
         hair_path = cls.hair(appearance.hair_style, appearance.hair_color)
         if hair_path:
             paths.append(hair_path)
-        
+
+        # Clothing - pants (under armor)
+        pants_path = cls.clothing_pants(
+            appearance.pants_style,
+            appearance.pants_color,
+            appearance.body_type,
+        )
+        if pants_path:
+            paths.append(pants_path)
+
+        # Clothing - shoes (under boots)
+        shoes_path = cls.clothing_shoes(
+            appearance.shoes_style,
+            appearance.shoes_color,
+            appearance.body_type,
+        )
+        if shoes_path:
+            paths.append(shoes_path)
+
+        # Clothing - shirt (under body armor)
+        shirt_path = cls.clothing_shirt(
+            appearance.shirt_style,
+            appearance.shirt_color,
+            appearance.body_type,
+        )
+        if shirt_path:
+            paths.append(shirt_path)
+
         return paths
     
     @classmethod
@@ -256,26 +362,62 @@ def resolve_equipment_sprite(
 ) -> tuple[str, str | None]:
     """
     Resolve an equipment sprite ID to an LPC path and optional tint.
-    
+
     This uses the equipment mapping to convert game item sprite IDs
     to actual LPC sprite paths, with tint colors for items that
     don't have native metal variants.
-    
+
     Args:
         sprite_id: The equipped_sprite_id from ItemDefinition
         animation: Animation name (walk, slash, hurt, etc.)
-        
+
     Returns:
         Tuple of (full_sprite_path, tint_color_or_none)
         If sprite_id is not found in mapping, returns (fallback_path, None)
     """
     from .equipment_mapping import get_equipment_sprite
-    
+
     sprite_info = get_equipment_sprite(sprite_id)
     if sprite_info is None:
         # Fallback: use the sprite_id as a simple path
         fallback_path = f"equipment/unknown/{sprite_id}.png"
         return (SpritePaths.get_full_path(fallback_path), None)
-    
+
     path = sprite_info.get_path(animation=animation)
     return (SpritePaths.get_full_path(path), sprite_info.tint)
+
+
+def get_clothing_shirt_path(
+    shirt_style: ClothingStyle,
+    shirt_color: ClothingColor,
+    body_type: BodyType = BodyType.MALE,
+    animation: str = "walk",
+) -> str:
+    """Get full path for a clothing shirt sprite."""
+    return SpritePaths.get_full_path(
+        SpritePaths.clothing_shirt(shirt_style, shirt_color, body_type, animation)
+    )
+
+
+def get_clothing_pants_path(
+    pants_style: PantsStyle,
+    pants_color: ClothingColor,
+    body_type: BodyType = BodyType.MALE,
+    animation: str = "walk",
+) -> str:
+    """Get full path for clothing pants sprite."""
+    return SpritePaths.get_full_path(
+        SpritePaths.clothing_pants(pants_style, pants_color, body_type, animation)
+    )
+
+
+def get_clothing_shoes_path(
+    shoes_style: ShoesStyle,
+    shoes_color: ClothingColor,
+    body_type: BodyType = BodyType.MALE,
+    animation: str = "walk",
+) -> str:
+    """Get full path for clothing shoes sprite."""
+    return SpritePaths.get_full_path(
+        SpritePaths.clothing_shoes(shoes_style, shoes_color, body_type, animation)
+    )

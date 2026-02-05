@@ -41,9 +41,9 @@ from common.src.protocol import (
     MessageType,
     ErrorCodes,
     ErrorCategory,
+    ErrorResponsePayload,
     PROTOCOL_VERSION,
     AuthenticatePayload,
-    ErrorPayload,
 )
 
 from common.src.websocket_utils import (
@@ -67,6 +67,7 @@ from server.src.api.handlers import (
     EquipmentHandlerMixin,
     CombatHandlerMixin,
     QueryHandlerMixin,
+    AppearanceHandlerMixin,
 )
 
 from server.src.api.helpers import (
@@ -98,6 +99,7 @@ class WebSocketHandler(
     EquipmentHandlerMixin,
     CombatHandlerMixin,
     QueryHandlerMixin,
+    AppearanceHandlerMixin,
     BaseHandlerMixin,
 ):
     """
@@ -136,6 +138,7 @@ class WebSocketHandler(
         self.router.register_handler(MessageType.CMD_ITEM_UNEQUIP, self._handle_cmd_item_unequip)
         self.router.register_handler(MessageType.CMD_ATTACK, self._handle_cmd_attack)
         self.router.register_handler(MessageType.CMD_TOGGLE_AUTO_RETALIATE, self._handle_cmd_toggle_auto_retaliate)
+        self.router.register_handler(MessageType.CMD_UPDATE_APPEARANCE, self._handle_cmd_update_appearance)
         
         # Query handlers (data retrieval operations)
         self.router.register_handler(MessageType.QUERY_INVENTORY, self._handle_query_inventory)
@@ -148,20 +151,49 @@ class WebSocketHandler(
         Process incoming WebSocket message using the unified router.
         
         Handles correlation ID tracking, rate limiting, and error responses.
+        
+        Args:
+            message: Parsed WebSocket message
         """
+        # Track correlation ID
+        if message.id:
+            correlation_manager.track_request(message.id, message.type)
+        
+        # Check rate limits
+        rate_limit_key = f"{self.player_id}:{message.type}"
+        if not rate_limiter.check_rate_limit(rate_limit_key, message.type):
+            await self._send_error_response(
+                message.id,
+                ErrorCodes.MOVE_RATE_LIMITED,
+                ErrorCategory.RATE_LIMIT,
+                "Rate limit exceeded - please slow down",
+                retry_after=rate_limiter.get_retry_after(rate_limit_key, message.type)
+            )
+            return
+        
+        # Route message to handler
         try:
-            raw_message = msgpack.packb(message.model_dump(), use_bin_type=True)
-            await self.router.route_message(self.websocket, raw_message, self.player_id)
-            
+            handler = self.router.get_handler(message.type)
+            if handler:
+                await handler(message)
+            else:
+                logger.warning(
+                    "No handler registered for message type",
+                    extra={"type": message.type, "player_id": self.player_id}
+                )
+                await self._send_error_response(
+                    message.id,
+                    ErrorCodes.SYS_INVALID_MESSAGE,
+                    ErrorCategory.SYSTEM,
+                    f"Unknown message type: {message.type}"
+                )
         except Exception as e:
             logger.error(
-                "Error processing WebSocket message",
+                "Error processing message",
                 extra={
-                    "username": self.username,
-                    "message_type": message.type,
-                    "correlation_id": message.id,
+                    "type": message.type,
+                    "player_id": self.player_id,
                     "error": str(e),
-                    "error_type": type(e).__name__,
                     "traceback": traceback.format_exc()
                 }
             )
@@ -169,185 +201,138 @@ class WebSocketHandler(
                 message.id,
                 ErrorCodes.SYS_INTERNAL_ERROR,
                 ErrorCategory.SYSTEM,
-                "Internal server error occurred",
-                suggested_action="Please retry the operation"
+                "Internal server error"
             )
-    
-    async def _handle_cmd_authenticate(self, message: WSMessage) -> None:
-        """Handle CMD_AUTHENTICATE - should not be called after initial auth."""
-        await self._send_error_response(
-            message.id,
-            ErrorCodes.AUTH_PLAYER_NOT_FOUND,
-            ErrorCategory.PERMISSION,
-            "Already authenticated"
-        )
 
 
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    valkey: GlideClient = Depends(get_valkey),
+    valkey: GlideClient = Depends(get_valkey)
 ):
     """
-    WebSocket handler implementing structured message patterns.
+    WebSocket endpoint for real-time game communication.
     
-    Provides comprehensive request/response handling with correlation IDs,
-    structured error responses, and enhanced broadcasting capabilities.
+    Handles:
+    - Authentication and session management
+    - Message routing and processing
+    - Connection lifecycle management
+    - Graceful disconnection handling
     """
+    await websocket.accept()
+    
+    handler: Optional[WebSocketHandler] = None
     username: Optional[str] = None
     player_id: Optional[int] = None
-    connection_start_time = None
-    handler: Optional[WebSocketHandler] = None
+    
+    start_time = time.time()
+    websocket_connections_active.inc()
     
     try:
-        await websocket.accept()
-        metrics.track_websocket_connection("accepted")
-        connection_start_time = time.time()
+        # Receive and validate authentication message
+        auth_data = await receive_auth_message(websocket)
+        if not auth_data:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
         
-        # Wait for authentication message
-        auth_message = await receive_auth_message(websocket)
+        # Authenticate player
+        auth_result = await authenticate_player(auth_data)
+        if not auth_result["success"]:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
         
-        username, player_id = await authenticate_player(auth_message)
+        username = auth_result["username"]
+        player_id = auth_result["player_id"]
         
-        # Initialize player connection and load into GSM
-        await initialize_player_connection(username, player_id, valkey)
+        # Initialize connection
+        init_result = await initialize_player_connection(player_id, username)
+        if not init_result["success"]:
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+            return
         
-        # Create handler instance for this connection
+        # Create handler
         handler = WebSocketHandler(websocket, username, player_id, valkey)
+        await manager.connect(websocket, player_id)
+        players_online.inc()
         
         # Send welcome message
-        await send_welcome_message(websocket, username, player_id)
+        await send_welcome_message(websocket, player_id, username, init_result["position"])
         
-        # Handle player join broadcasting
-        await handle_player_join_broadcast(websocket, username, player_id, manager)
+        # Broadcast player join to others
+        await handle_player_join_broadcast(player_id, username, init_result["position"])
         
-        # Register connection with manager
-        player_mgr = get_player_state_manager()
-        position = await player_mgr.get_player_position(player_id)
-        if not position:
-            raise WebSocketDisconnect(
-                code=status.WS_1011_INTERNAL_ERROR,
-                reason="Could not get player position"
-            )
-        await manager.connect(websocket, player_id, position["map_id"])
-        
-        # Register for game loop
+        # Register with game loop
         await register_player_login(player_id)
         
-        # Update metrics
-        _update_connection_metrics()
-        
-        logger.info(
-            "Player connected",
-            extra={
-                "username": username,
-                "player_id": player_id,
-            }
-        )
-        
-        # Main message processing loop
+        # Message processing loop
         while True:
             try:
-                data = await websocket.receive_bytes()
-                await handler.router.route_message(websocket, data, player_id)
+                # Receive and parse message
+                raw_data = await websocket.receive_bytes()
+                message_data = msgpack.unpackb(raw_data, raw=False)
+                
+                # Validate message structure
+                validation = message_validator.validate_message(message_data)
+                if not validation["valid"]:
+                    await handler._send_error_response(
+                        message_data.get("id"),
+                        ErrorCodes.SYS_INVALID_MESSAGE,
+                        ErrorCategory.VALIDATION,
+                        validation["error"]
+                    )
+                    continue
+                
+                # Create message object
+                message = WSMessage(**message_data)
+                
+                # Process message
+                await handler.process_message(message)
                 
             except WebSocketDisconnect:
-                break
+                raise
             except Exception as e:
                 logger.error(
-                    "Error in message processing loop",
+                    "Error in message loop",
                     extra={
-                        "username": username,
+                        "player_id": player_id,
                         "error": str(e),
-                        "error_type": type(e).__name__,
                         "traceback": traceback.format_exc()
                     }
                 )
-                continue
                 
-    except WebSocketDisconnect as e:
-        logger.debug(
-            "Player disconnected",
-            extra={"username": username, "reason": e.reason or "Normal disconnect"}
+    except WebSocketDisconnect:
+        logger.info(
+            "Client disconnected",
+            extra={"player_id": player_id, "username": username}
         )
-        metrics.track_websocket_connection("disconnected")
-        
-    except JWTError:
-        logger.warning("JWT validation failed")
-        metrics.track_websocket_connection("auth_failed")
-        try:
-            await websocket.close(
-                code=status.WS_1008_POLICY_VIOLATION, 
-                reason="Invalid token"
-            )
-        except Exception:
-            pass
-            
     except Exception as e:
         logger.error(
             "WebSocket error",
             extra={
+                "player_id": player_id,
                 "username": username,
                 "error": str(e),
-                "error_type": type(e).__name__,
-                "traceback": traceback.format_exc(),
+                "traceback": traceback.format_exc()
             }
         )
-        metrics.track_websocket_connection("error")
-        try:
-            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
-        except Exception:
-            pass
-            
     finally:
-        if connection_start_time:
-            duration = time.time() - connection_start_time
-            websocket_connection_duration_seconds.observe(duration)
-        
-        if username:
-            await _handle_player_disconnect(username, player_id)
-            _update_connection_metrics()
-
-
-async def _handle_player_disconnect(username: str, player_id: Optional[int]) -> None:
-    """Handle player disconnection cleanup."""
-    try:
-        # Get map from player_id (not username)
-        player_map = manager.player_to_map.get(player_id) if player_id else None
-        
-        await ConnectionService.handle_player_disconnect(
-            username, player_map, manager, rate_limiter
-        )
-        
-        # Disconnect from connection manager using player_id
+        # Cleanup
         if player_id:
             await manager.disconnect(player_id)
+            players_online.dec()
+            await broadcast_player_left(player_id)
+            
+            if handler:
+                await ConnectionService.disconnect(player_id)
         
-        if player_map:
-            await broadcast_player_left(username, player_id, player_map, manager)
-        
-        logger.debug(
-            "Player disconnection handled",
-            extra={"username": username, "player_id": player_id}
-        )
-        
-    except Exception as e:
-        logger.error(
-            "Error handling player disconnect",
-            extra={
-                "username": username,
-                "player_id": player_id,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "traceback": traceback.format_exc(),
-            }
-        )
+        # Record metrics
+        duration = time.time() - start_time
+        websocket_connection_duration_seconds.observe(duration)
+        websocket_connections_active.dec()
 
 
-def _update_connection_metrics() -> None:
-    """Update connection metrics after connect/disconnect."""
-    total_connections = sum(
-        len(conns) for conns in manager.connections_by_map.values()
-    )
-    websocket_connections_active.set(total_connections)
-    players_online.set(total_connections)
+@router.on_event("shutdown")
+async def shutdown_event():
+    """Graceful shutdown - disconnect all players."""
+    logger.info("Shutting down WebSocket connections")
+    await manager.disconnect_all()

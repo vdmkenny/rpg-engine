@@ -225,12 +225,33 @@ class EyeColor(str, Enum):
 class EyeAgeGroup(str, Enum):
     """
     Age groups for eye sprites.
-    
+
     Different eye sprites exist for different age groups.
     """
     ADULT = "adult"
     CHILD = "child"
     ELDERLY = "elderly"
+
+
+class FacialHairStyle(str, Enum):
+    """
+    Facial hair styles (beards, mustaches).
+
+    Available in LPC face/beard/ spritesheets.
+    Can be used by any body type, defaults to none for female bodies.
+    """
+    NONE = "none"
+    STUBBLE = "stubble"
+    BEARD_BLACK = "beard_black"  # Full black beard
+    BEARD_BLONDE = "beard_blonde"  # Full blonde beard
+    BEARD_BROWN = "beard_brown"  # Full brown beard
+    BEARD_GRAY = "beard_gray"  # Gray beard (for elders)
+    MUSTACHE_BLACK = "mustache_black"
+    MUSTACHE_BLONDE = "mustache_blonde"
+    MUSTACHE_BROWN = "mustache_brown"
+    GOATEE_BLACK = "goatee_black"
+    GOATEE_BLONDE = "goatee_blonde"
+    GOATEE_BROWN = "goatee_brown"
 
 
 class AnimationType(str, Enum):
@@ -264,10 +285,99 @@ class AnimationType(str, Enum):
     EMOTE = "emote"
 
 
+class ClothingStyle(str, Enum):
+    """
+    Base clothing styles for characters.
+
+    These are worn under armor and determine the visual base layer.
+    LPC assets have both style and color variations.
+    """
+    # Shirts/Tops
+    NONE = "none"
+    LONGSLEEVE = "longsleeve2"
+    SHORTSLEEVE = "shortsleeve"
+    SLEEVELESS = "sleeveless"
+    TUNIC = "tunic"
+    VEST = "vest"
+    BLOUSE = "blouse"
+    CORSET = "corset"
+    ROBE = "robe"
+
+
+class PantsStyle(str, Enum):
+    """
+    Base pants/leg styles for characters.
+
+    Worn under leg armor.
+    """
+    NONE = "none"
+    PANTS = "pants"
+    SHORTS = "shorts"
+    LEGGINGS = "leggings"
+    PANTALOONS = "pantaloons"
+    SKIRT = "skirts"
+
+
+class ShoesStyle(str, Enum):
+    """
+    Base footwear styles for characters.
+
+    Worn under boots/armor.
+    """
+    NONE = "none"
+    SHOES = "shoes/basic"
+    BOOTS = "boots"  # Basic boots
+    SANDALS = "sandals"
+    SLIPPERS = "slippers"
+
+
+class ClothingColor(str, Enum):
+    """
+    Colors for base clothing items.
+
+    Available in LPC clothing spritesheets.
+    """
+    # Neutrals
+    WHITE = "white"
+    BLACK = "black"
+    GRAY = "gray"
+    CHARCOAL = "charcoal"
+    SLATE = "slate"
+
+    # Browns
+    BROWN = "brown"
+    TAN = "tan"
+    LEATHER = "leather"
+    WALNUT = "walnut"
+
+    # Blues
+    BLUE = "blue"
+    NAVY = "navy"
+    SKY = "sky"
+    BLUEGRAY = "bluegray"
+    TEAL = "teal"
+
+    # Greens
+    GREEN = "green"
+    FOREST = "forest"
+
+    # Reds/Pinks
+    RED = "red"
+    MAROON = "maroon"
+    PINK = "pink"
+    ROSE = "rose"
+    ORANGE = "orange"
+
+    # Other
+    PURPLE = "purple"
+    LAVENDER = "lavender"
+    YELLOW = "yellow"
+
+
 class SpriteLayer(int, Enum):
     """
     Rendering order for paperdoll sprite compositing.
-    
+
     Lower values are rendered first (behind).
     Higher values are rendered on top.
     """
@@ -275,27 +385,32 @@ class SpriteLayer(int, Enum):
     BODY = 0
     HEAD = 1
     EYES = 2
-    
+
     # Facial features
     FACIAL_HAIR = 3
     HAIR = 4
-    
+
+    # Base clothing (new layers between body and armor)
+    CLOTHING_PANTS = 7
+    CLOTHING_SHOES = 8
+    CLOTHING_SHIRT = 9
+
     # Equipment - body
     ARMOR_BODY = 10
     ARMOR_FEET = 11
     ARMOR_LEGS = 12
     ARMOR_HANDS = 13
     ARMOR_HEAD = 14
-    
+
     # Equipment - accessories
     CAPE_BEHIND = 18
     BACK = 19  # Backpacks, quivers
-    
+
     # Equipment - weapons
     WEAPON_BEHIND = 20
     SHIELD = 22
     WEAPON_FRONT = 25
-    
+
     # Overlay effects
     CAPE_FRONT = 30
 
@@ -303,18 +418,21 @@ class SpriteLayer(int, Enum):
 class EquipmentSlot(str, Enum):
     """
     Equipment slots for character paperdoll.
-    
+
+    Matches server/src/schemas/item.py EquipmentSlot for consistency.
     Maps to visual rendering layers.
     """
     HEAD = "head"           # Helmets, hats
+    CAPE = "cape"           # Capes and cloaks
+    AMULET = "amulet"       # Neck slot (not visible)
+    WEAPON = "weapon"       # Primary weapon
     BODY = "body"           # Chest armor, robes
+    SHIELD = "shield"       # Shield, offhand weapon
     LEGS = "legs"           # Leg armor, pants
-    FEET = "feet"           # Boots, shoes
-    HANDS = "hands"         # Gloves, gauntlets
-    MAIN_HAND = "main_hand" # Primary weapon
-    OFF_HAND = "off_hand"   # Shield, offhand weapon
-    BACK = "back"           # Cape, backpack, quiver
-    BELT = "belt"           # Belt accessories
+    GLOVES = "gloves"       # Gloves, gauntlets (renamed from HANDS)
+    BOOTS = "boots"         # Boots, shoes (renamed from FEET)
+    RING = "ring"           # Ring slot (not visible)
+    AMMO = "ammo"           # Ammunition (arrows, bolts, etc.)
 
 
 # =============================================================================

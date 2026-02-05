@@ -17,7 +17,7 @@ from server.src.services.equipment_service import EquipmentService
 from common.src.protocol import (
     WSMessage,
     MessageType,
-    ErrorPayload,
+    ErrorResponsePayload,
     ErrorCategory,
     PROTOCOL_VERSION,
 )
@@ -64,13 +64,10 @@ class BaseHandlerMixin:
         suggested_action: Optional[str] = None
     ) -> None:
         """Send RESP_ERROR with structured error information."""
-        error_payload = ErrorPayload(
-            error_code=error_code,
-            error_category=error_category,
-            message=message,
-            details=details,
-            retry_after=retry_after,
-            suggested_action=suggested_action
+        error_payload = ErrorResponsePayload(
+            error=message,
+            category=error_category,
+            details=details
         )
         
         response = WSMessage(
@@ -108,8 +105,9 @@ class BaseHandlerMixin:
                         "Attempted to send on closed WebSocket",
                         extra={"username": self.username, "message_type": message.type}
                     )
-                    from server.src.api.websockets import manager
-                    manager.disconnect(self.username)
+                    from server.src.api.connection_manager import ConnectionManager
+                    manager = ConnectionManager()
+                    await manager.disconnect(self.player_id)
                     raise ConnectionError("WebSocket connection is closed")
                 elif self.websocket.client_state == 2:  # CLOSING
                     logger.warning(

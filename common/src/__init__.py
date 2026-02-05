@@ -4,6 +4,11 @@ from .protocol import (
     # Core message structure
     WSMessage,
     MessageType,
+    # Enums
+    ErrorCodes,
+    ErrorCategory,
+    Direction,
+    ChatChannel,
     # Command payloads
     AuthenticatePayload,
     MovePayload,
@@ -14,15 +19,18 @@ from .protocol import (
     ItemPickupPayload,
     ItemEquipPayload,
     ItemUnequipPayload,
+    AttackPayload,
+    ToggleAutoRetaliatePayload,
+    AppearanceUpdatePayload,
     # Query payloads
     InventoryQueryPayload,
     EquipmentQueryPayload,
     StatsQueryPayload,
     MapChunksQueryPayload,
     # Response payloads
-    SuccessPayload,
-    ErrorPayload,
-    DataPayload,
+    SuccessResponsePayload,
+    ErrorResponsePayload,
+    DataResponsePayload,
     # Event payloads
     WelcomeEventPayload,
     StateUpdateEventPayload,
@@ -31,8 +39,8 @@ from .protocol import (
     PlayerJoinedEventPayload,
     PlayerLeftEventPayload,
     ServerShutdownEventPayload,
-    # Error codes
-    ErrorCodes,
+    CombatActionEventPayload,
+    AppearanceUpdateEventPayload,
 )
 
 from .constants import (

@@ -401,6 +401,57 @@ Commands change game state and always receive a response.
 
 ---
 
+#### CMD_UPDATE_APPEARANCE
+
+**Purpose**: Update player appearance (paperdoll customization)
+
+**Payload**:
+```python
+{
+    "body_type": int,            # 0-3 (slim, normal, athletic, heavy)
+    "skin_tone": int,            # 0-9 (skin color palette index)
+    "hair_style": int,           # 0-15 (hair style index, -1 for bald)
+    "hair_color": int,           # 0-15 (hair color palette index)
+    "eye_color": int,            # 0-7 (eye color palette index)
+    "facial_hair_style": int,    # 0-7 (beard/mustache style, -1 for none)
+    "facial_hair_color": int,    # 0-15 (facial hair color, -1 if no facial hair)
+    "shirt_style": int,          # 0-9 (shirt style index)
+    "shirt_color": int,          # 0-15 (shirt color palette index)
+    "pants_style": int,          # 0-7 (pants style index)
+    "pants_color": int,          # 0-15 (pants color palette index)
+    "shoes_style": int,          # 0-5 (shoes style index)
+    "shoes_color": int           # 0-15 (shoes color palette index)
+}
+```
+
+**Success Response**:
+```python
+{
+    "appearance": {
+        "body_type": int,
+        "skin_tone": int,
+        "hair_style": int,
+        "hair_color": int,
+        "eye_color": int,
+        "facial_hair_style": int,
+        "facial_hair_color": int,
+        "shirt_style": int,
+        "shirt_color": int,
+        "pants_style": int,
+        "pants_color": int,
+        "shoes_style": int,
+        "shoes_color": int
+    },
+    "visual_hash": str  # Cache key for sprite lookup
+}
+```
+
+**Error Codes**: `APPEARANCE_INVALID_VALUE`, `APPEARANCE_UPDATE_FAILED`
+
+**Rate Limit**: 5.0 seconds
+
+---
+
 ### Queries (Client → Server)
 
 Queries request data and always receive a `resp_data` response.
@@ -435,15 +486,15 @@ Queries request data and always receive a `resp_data` response.
 ```python
 {
     "equipment": {
-        "head": EquipmentSlot | null,
-        "body": EquipmentSlot | null,
-        "legs": EquipmentSlot | null,
-        "feet": EquipmentSlot | null,
-        "hands": EquipmentSlot | null,
-        "main_hand": EquipmentSlot | null,
-        "off_hand": EquipmentSlot | null,
-        "back": EquipmentSlot | null,
-        "belt": EquipmentSlot | null
+        "head": EquipmentSlot | null,    # Helmet/headgear
+        "cape": EquipmentSlot | null,    # Cape/cloak
+        "weapon": EquipmentSlot | null,  # Primary weapon
+        "body": EquipmentSlot | null,    # Chest armor
+        "shield": EquipmentSlot | null, # Off-hand shield
+        "legs": EquipmentSlot | null,    # Leg armor
+        "gloves": EquipmentSlot | null,  # Hand/glove armor
+        "boots": EquipmentSlot | null,   # Footwear
+        "ammo": EquipmentSlot | null     # Ammunition/quiver
     }
 }
 ```
@@ -908,6 +959,41 @@ Real-time combat event (damage dealt, hits, misses).
 
 ---
 
+#### EVENT_APPEARANCE_UPDATE
+
+Broadcast when a player changes their appearance. Sent to nearby players only.
+
+```python
+{
+    "id": null,
+    "type": "event_appearance_update",
+    "payload": {
+        "player_id": int,
+        "username": str,
+        "appearance": {
+            "body_type": int,
+            "skin_tone": int,
+            "hair_style": int,
+            "hair_color": int,
+            "eye_color": int,
+            "facial_hair_style": int,
+            "facial_hair_color": int,
+            "shirt_style": int,
+            "shirt_color": int,
+            "pants_style": int,
+            "pants_color": int,
+            "shoes_style": int,
+            "shoes_color": int
+        },
+        "visual_hash": str  # Cache key for sprite lookup
+    },
+    "timestamp": int,
+    "version": "2.0"
+}
+```
+
+---
+
 ## Error Handling
 
 ### Error Response Structure
@@ -983,6 +1069,13 @@ All error responses follow this structure:
 | `EQ_INVALID_SLOT` | Invalid equipment slot name |
 | `EQ_CANNOT_UNEQUIP_FULL_INV` | Cannot unequip (inventory full) |
 
+#### Appearance Errors (`APPEARANCE_*`)
+
+| Code | Description |
+|------|-------------|
+| `APPEARANCE_INVALID_VALUE` | Appearance value out of valid range |
+| `APPEARANCE_UPDATE_FAILED` | Server error during appearance update |
+
 #### Ground Items Errors (`GROUND_*`)
 
 | Code | Description |
@@ -1025,6 +1118,7 @@ All error responses follow this structure:
 | `cmd_item_pickup` | 1 | 0.2s | 0.2s |
 | `cmd_attack` | 1 | 0.5s | 0.5s |
 | `cmd_toggle_auto_retaliate` | 1 | 0.5s | 0.5s |
+| `cmd_update_appearance` | 1 | 5.0s | 5.0s |
 
 ### Rate Limit Error Response
 
@@ -1348,14 +1442,14 @@ NAME = "name"
 
 Valid equipment slot names:
 - `head` - Helmet/headgear
+- `cape` - Cape/cloak
+- `weapon` - Primary weapon
 - `body` - Chest armor
+- `shield` - Off-hand shield
 - `legs` - Leg armor
-- `feet` - Boots
-- `hands` - Gloves
-- `main_hand` - Primary weapon
-- `off_hand` - Shield or secondary weapon
-- `back` - Cape/cloak
-- `belt` - Belt/accessories
+- `gloves` - Hand/glove armor
+- `boots` - Footwear
+- `ammo` - Ammunition/quiver
 
 ### Complete Message Type List
 
@@ -1372,6 +1466,7 @@ Valid equipment slot names:
 | CMD_ITEM_UNEQUIP | `cmd_item_unequip` | Command |
 | CMD_ATTACK | `cmd_attack` | Command |
 | CMD_TOGGLE_AUTO_RETALIATE | `cmd_toggle_auto_retaliate` | Command |
+| CMD_UPDATE_APPEARANCE | `cmd_update_appearance` | Command |
 | QUERY_INVENTORY | `query_inventory` | Query |
 | QUERY_EQUIPMENT | `query_equipment` | Query |
 | QUERY_STATS | `query_stats` | Query |
@@ -1390,6 +1485,7 @@ Valid equipment slot names:
 | EVENT_PLAYER_RESPAWN | `event_player_respawn` | Event |
 | EVENT_SERVER_SHUTDOWN | `event_server_shutdown` | Event |
 | EVENT_COMBAT_ACTION | `event_combat_action` | Event |
+| EVENT_APPEARANCE_UPDATE | `event_appearance_update` | Event |
 
 ---
 

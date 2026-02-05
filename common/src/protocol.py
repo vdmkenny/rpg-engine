@@ -57,6 +57,55 @@ class ErrorCategory(str, Enum):
     RATE_LIMIT = "rate_limit"
 
 
+class ErrorCodes(str, Enum):
+    """Error codes for response messages"""
+    # System errors
+    SYS_INTERNAL_ERROR = "sys_internal_error"
+    SYS_SERVICE_UNAVAILABLE = "sys_service_unavailable"
+    SYS_INVALID_MESSAGE = "sys_invalid_message"
+
+    # Authentication errors
+    AUTH_TOKEN_INVALID = "auth_token_invalid"
+    AUTH_TOKEN_EXPIRED = "auth_token_expired"
+    AUTH_PLAYER_NOT_FOUND = "auth_player_not_found"
+
+    # Movement errors
+    MOVE_RATE_LIMITED = "move_rate_limited"
+    MOVE_COLLISION_DETECTED = "move_collision_detected"
+    MOVE_INVALID_DIRECTION = "move_invalid_direction"
+    MOVE_OUT_OF_BOUNDS = "move_out_of_bounds"
+
+    # Inventory errors
+    INV_SLOT_EMPTY = "inv_slot_empty"
+    INV_SLOT_OCCUPIED = "inv_slot_occupied"
+    INV_INVALID_SLOT = "inv_invalid_slot"
+    INV_INVENTORY_FULL = "inv_inventory_full"
+    INV_INSUFFICIENT_QUANTITY = "inv_insufficient_quantity"
+    INV_CANNOT_STACK = "inv_cannot_stack"
+
+    # Equipment errors
+    EQ_ITEM_NOT_EQUIPABLE = "eq_item_not_equipable"
+    EQ_REQUIREMENTS_NOT_MET = "eq_requirements_not_met"
+    EQ_INVALID_SLOT = "eq_invalid_slot"
+    EQ_CANNOT_UNEQUIP_FULL_INV = "eq_cannot_unequip_full_inv"
+
+    # Ground item errors
+    GROUND_ITEM_NOT_FOUND = "ground_item_not_found"
+    GROUND_ITEM_TOO_FAR = "ground_item_too_far"
+
+    # Map errors
+    MAP_INVALID_COORDS = "map_invalid_coords"
+    MAP_NOT_FOUND = "map_not_found"
+
+    # Chat errors
+    CHAT_MESSAGE_TOO_LONG = "chat_message_too_long"
+    CHAT_PERMISSION_DENIED = "chat_permission_denied"
+
+    # Appearance errors
+    APPEARANCE_INVALID_VALUE = "appearance_invalid_value"
+    APPEARANCE_UPDATE_FAILED = "appearance_update_failed"
+
+
 class UpdateType(str, Enum):
     """State update types"""
     FULL = "full"
@@ -98,7 +147,8 @@ class MessageType(str, Enum):
     CMD_ITEM_UNEQUIP = "cmd_item_unequip"
     CMD_ATTACK = "cmd_attack"
     CMD_TOGGLE_AUTO_RETALIATE = "cmd_toggle_auto_retaliate"
-    
+    CMD_UPDATE_APPEARANCE = "cmd_update_appearance"
+
     # Client → Server: Queries (Data Retrieval)
     QUERY_INVENTORY = "query_inventory"
     QUERY_EQUIPMENT = "query_equipment"
@@ -214,6 +264,29 @@ class ToggleAutoRetaliatePayload(BaseModel):
     enabled: bool = Field(..., description="Enable or disable auto-retaliation")
 
 
+class AppearanceUpdatePayload(BaseModel):
+    """Payload for CMD_UPDATE_APPEARANCE - Update player appearance (paperdoll)"""
+    # Core appearance
+    body_type: Optional[str] = Field(None, description="Body type (male, female, child, teen, skeleton, zombie)")
+    skin_tone: Optional[str] = Field(None, description="Skin tone (light, dark, brown, etc.)")
+    head_type: Optional[str] = Field(None, description="Head type (human/male, human/female, orc, etc.)")
+    hair_style: Optional[str] = Field(None, description="Hair style (short, long, bald, etc.)")
+    hair_color: Optional[str] = Field(None, description="Hair color (brown, blonde, black, etc.)")
+    eye_color: Optional[str] = Field(None, description="Eye color (brown, blue, green, etc.)")
+    
+    # Facial hair
+    facial_hair_style: Optional[str] = Field(None, description="Facial hair style (none, beard_black, mustache_brown, etc.)")
+    facial_hair_color: Optional[str] = Field(None, description="Facial hair color")
+    
+    # Clothing
+    shirt_style: Optional[str] = Field(None, description="Shirt style (longsleeve2, shortsleeve, tunic, etc.)")
+    shirt_color: Optional[str] = Field(None, description="Shirt color")
+    pants_style: Optional[str] = Field(None, description="Pants style (pants, shorts, leggings, etc.)")
+    pants_color: Optional[str] = Field(None, description="Pants color")
+    shoes_style: Optional[str] = Field(None, description="Shoes style (shoes/basic, boots, sandals, etc.)")
+    shoes_color: Optional[str] = Field(None, description="Shoes color")
+
+
 # =============================================================================
 # Query Payloads (Client → Server)
 # =============================================================================
@@ -235,36 +308,34 @@ class StatsQueryPayload(BaseModel):
 
 class MapChunksQueryPayload(BaseModel):
     """Payload for QUERY_MAP_CHUNKS"""
-    map_id: str = Field(..., description="Map identifier")
-    center_x: int = Field(..., description="Center tile X coordinate")
-    center_y: int = Field(..., description="Center tile Y coordinate")
-    radius: int = Field(1, ge=1, le=5, description="Chunk radius (max 5)")
+    center_x: int = Field(..., description="Center X coordinate")
+    center_y: int = Field(..., description="Center Y coordinate")
+    radius: int = Field(2, ge=1, le=5, description="Chunk radius from center")
 
 
 # =============================================================================
 # Response Payloads (Server → Client)
 # =============================================================================
 
-class SuccessPayload(BaseModel):
-    """Payload for RESP_SUCCESS - flexible success response"""
-    # Dynamic payload - can contain any success data
-    pass
+class SuccessResponsePayload(BaseModel):
+    """Payload for RESP_SUCCESS"""
+    message: Optional[str] = Field(None, description="Success message")
+    data: Optional[Dict[str, Any]] = Field(None, description="Additional response data")
 
 
-class ErrorPayload(BaseModel):
-    """Payload for RESP_ERROR - structured error information"""
-    error_code: str = Field(..., description="Structured error code (e.g., CHAT_MESSAGE_TOO_LONG)")
-    error_category: ErrorCategory = Field(..., description="Error category")
-    message: str = Field(..., description="Human-readable error message")
-    details: Optional[Dict[str, Any]] = Field(None, description="Additional error context")
-    retry_after: Optional[float] = Field(None, description="Seconds to wait before retry (rate limiting)")
-    suggested_action: Optional[str] = Field(None, description="Suggested client action")
+class ErrorResponsePayload(BaseModel):
+    """Payload for RESP_ERROR"""
+    model_config = ConfigDict(use_enum_values=True)
+
+    error: str = Field(..., description="Error message")
+    category: ErrorCategory = Field(ErrorCategory.SYSTEM, description="Error category")
+    details: Optional[Dict[str, Any]] = Field(None, description="Additional error details")
 
 
-class DataPayload(BaseModel):
-    """Payload for RESP_DATA - query response data"""
-    # Dynamic payload - can contain any query result data
-    pass
+class DataResponsePayload(BaseModel):
+    """Payload for RESP_DATA"""
+    data_type: str = Field(..., description="Type of data being returned")
+    data: Dict[str, Any] = Field(..., description="The actual data")
 
 
 # =============================================================================
@@ -273,258 +344,197 @@ class DataPayload(BaseModel):
 
 class WelcomeEventPayload(BaseModel):
     """Payload for EVENT_WELCOME"""
-    message: str = Field(..., description="Welcome message")
-    motd: Optional[str] = Field(None, description="Message of the day")
-
-
-class StateUpdateEventPayload(BaseModel):
-    """Payload for EVENT_STATE_UPDATE - consolidated state changes"""
-    model_config = ConfigDict(use_enum_values=True)
-
-    update_type: UpdateType = Field(UpdateType.FULL, description="Full state or changes only")
-    target: UpdateScope = Field(UpdateScope.PERSONAL, description="Update distribution scope")
-    systems: Dict[str, Any] = Field(..., description="Updated game systems")
-    
-    class SystemData(BaseModel):
-        """Nested data structures for different game systems"""
-        player: Optional[Dict[str, Any]] = None      # Position, HP, basic info
-        inventory: Optional[Dict[str, Any]] = None   # Items, capacity  
-        equipment: Optional[Dict[str, Any]] = None   # Equipped items
-        stats: Optional[Dict[str, Any]] = None       # Aggregated stats
-        entities: Optional[Dict[str, Any]] = None    # Visible game entities
+    player_id: int = Field(..., description="Player's unique ID")
+    username: str = Field(..., description="Player's username")
+    position: Dict[str, int] = Field(..., description="Player's position {x, y}")
+    map_id: str = Field(..., description="Current map ID")
 
 
 class ChunkUpdateEventPayload(BaseModel):
-    """Payload for EVENT_CHUNK_UPDATE - map chunk data on boundary crossing"""
-    map_id: str = Field(..., description="Map identifier")
-    chunks: List[Dict[str, Any]] = Field(..., description="Chunk data list")
+    """Payload for EVENT_CHUNK_UPDATE - Sent when player crosses chunk boundary"""
+    chunks: List[Dict[str, Any]] = Field(..., description="List of chunk data")
+    player_position: Dict[str, int] = Field(..., description="Player's new position {x, y}")
 
 
 class GameUpdateEventPayload(BaseModel):
-    """Payload for EVENT_GAME_UPDATE - real-time game entity updates"""
-    entities: List[Dict[str, Any]] = Field(..., description="Visible game entities")
-    removed_entities: List[str] = Field(default_factory=list, description="Removed entity IDs")
-    map_id: str = Field(..., description="Map identifier")
+    """Payload for EVENT_GAME_UPDATE - High-frequency game state updates (20 TPS)"""
+    model_config = ConfigDict(use_enum_values=True)
+
+    update_type: UpdateType = Field(UpdateType.DELTA, description="Update type (full or delta)")
+    scope: UpdateScope = Field(UpdateScope.PERSONAL, description="Update distribution scope")
+    sequence: int = Field(..., description="Update sequence number")
+    timestamp: int = Field(..., description="Server timestamp in milliseconds")
+    entities: List[Dict[str, Any]] = Field(default_factory=list, description="Visible entity updates")
+    player: Optional[Dict[str, Any]] = Field(None, description="Player-specific updates (if changed)")
 
 
 class ChatMessageEventPayload(BaseModel):
     """Payload for EVENT_CHAT_MESSAGE"""
     model_config = ConfigDict(use_enum_values=True)
 
-    sender: str = Field(..., description="Sender username")
-    message: str = Field(..., description="Chat message content")
-    channel: ChatChannel = Field(..., description="Chat channel")
-    sender_position: Optional[Dict[str, Any]] = Field(None, description="Sender position data")
+    channel: ChatChannel = Field(..., description="Chat channel type")
+    sender: str = Field(..., description="Sender's username")
+    message: str = Field(..., max_length=500, description="Message content")
+    timestamp: int = Field(..., description="Message timestamp in milliseconds")
 
 
 class PlayerJoinedEventPayload(BaseModel):
     """Payload for EVENT_PLAYER_JOINED"""
-    player: Dict[str, Any] = Field(..., description="Joined player data")
-    
+    player_id: int = Field(..., description="Player's unique ID")
+    username: str = Field(..., description="Player's username")
+    position: Dict[str, int] = Field(..., description="Player's position {x, y}")
+
 
 class PlayerLeftEventPayload(BaseModel):
     """Payload for EVENT_PLAYER_LEFT"""
-    username: str = Field(..., description="Username of player who left")
-    reason: Optional[str] = Field(None, description="Disconnect reason")
+    player_id: int = Field(..., description="Player's unique ID")
+    username: str = Field(..., description="Player's username")
+
+
+class PlayerDiedEventPayload(BaseModel):
+    """Payload for EVENT_PLAYER_DIED"""
+    player_id: int = Field(..., description="Player's unique ID")
+    username: str = Field(..., description="Player's username")
+    killed_by: Optional[str] = Field(None, description="Name of killer (entity or player)")
+
+
+class PlayerRespawnEventPayload(BaseModel):
+    """Payload for EVENT_PLAYER_RESPAWN"""
+    player_id: int = Field(..., description="Player's unique ID")
+    username: str = Field(..., description="Player's username")
+    position: Dict[str, int] = Field(..., description="New respawn position {x, y}")
 
 
 class ServerShutdownEventPayload(BaseModel):
     """Payload for EVENT_SERVER_SHUTDOWN"""
-    message: str = Field(..., description="Shutdown message")
-    countdown_seconds: Optional[int] = Field(None, description="Seconds until shutdown")
+    reason: str = Field("Server maintenance", description="Shutdown reason")
+    countdown_seconds: int = Field(60, ge=0, description="Seconds until shutdown")
+
+
+class CombatActionEventPayload(BaseModel):
+    """Payload for EVENT_COMBAT_ACTION"""
+    model_config = ConfigDict(use_enum_values=True)
+
+    action_type: str = Field(..., description="Type of combat action (attack, damage, death, etc.)")
+    attacker: Optional[Dict[str, Any]] = Field(None, description="Attacker details")
+    target: Optional[Dict[str, Any]] = Field(None, description="Target details")
+    damage: Optional[int] = Field(None, ge=0, description="Damage amount")
+    skill_xp: Optional[Dict[str, int]] = Field(None, description="Skill XP gains {skill_name: xp}")
+    drops: Optional[List[Dict[str, Any]]] = Field(None, description="Items dropped")
+
+
+class AppearanceUpdateEventPayload(BaseModel):
+    """Payload for EVENT_APPEARANCE_UPDATE - Broadcast when player changes appearance"""
+    player_id: int = Field(..., description="Player's unique ID")
+    username: str = Field(..., description="Player's username")
+    appearance: Dict[str, Any] = Field(..., description="Full appearance data")
+    visual_hash: str = Field(..., description="Visual state hash for efficient caching")
 
 
 # =============================================================================
-# Error Codes
+# State Update Payloads (High-Frequency Updates)
 # =============================================================================
 
-class ErrorCodes:
-    """Structured error codes for all game systems"""
-    
-    # Authentication errors
-    AUTH_INVALID_TOKEN = "AUTH_INVALID_TOKEN"
-    AUTH_EXPIRED_TOKEN = "AUTH_EXPIRED_TOKEN" 
-    AUTH_PLAYER_NOT_FOUND = "AUTH_PLAYER_NOT_FOUND"
-    AUTH_PLAYER_BANNED = "AUTH_PLAYER_BANNED"
-    AUTH_PLAYER_TIMEOUT = "AUTH_PLAYER_TIMEOUT"
-    
-    # Movement errors
-    MOVE_INVALID_DIRECTION = "MOVE_INVALID_DIRECTION"
-    MOVE_COLLISION_DETECTED = "MOVE_COLLISION_DETECTED"
-    MOVE_RATE_LIMITED = "MOVE_RATE_LIMITED"
-    MOVE_INVALID_POSITION = "MOVE_INVALID_POSITION"
-    
-    # Chat errors
-    CHAT_MESSAGE_TOO_LONG = "CHAT_MESSAGE_TOO_LONG"
-    CHAT_PERMISSION_DENIED = "CHAT_PERMISSION_DENIED"
-    CHAT_RATE_LIMITED = "CHAT_RATE_LIMITED"
-    CHAT_RECIPIENT_NOT_FOUND = "CHAT_RECIPIENT_NOT_FOUND"
-    
-    # Inventory errors
-    INV_INVALID_SLOT = "INV_INVALID_SLOT"
-    INV_SLOT_EMPTY = "INV_SLOT_EMPTY" 
-    INV_INVENTORY_FULL = "INV_INVENTORY_FULL"
-    INV_CANNOT_STACK = "INV_CANNOT_STACK"
-    INV_INSUFFICIENT_QUANTITY = "INV_INSUFFICIENT_QUANTITY"
-    
-    # Equipment errors
-    EQ_ITEM_NOT_EQUIPABLE = "EQ_ITEM_NOT_EQUIPABLE"
-    EQ_REQUIREMENTS_NOT_MET = "EQ_REQUIREMENTS_NOT_MET"
-    EQ_INVALID_SLOT = "EQ_INVALID_SLOT"
-    EQ_CANNOT_UNEQUIP_FULL_INV = "EQ_CANNOT_UNEQUIP_FULL_INV"
-    
-    # Ground Items errors
-    GROUND_TOO_FAR = "GROUND_TOO_FAR"
-    GROUND_PROTECTED_LOOT = "GROUND_PROTECTED_LOOT"
-    GROUND_ITEM_NOT_FOUND = "GROUND_ITEM_NOT_FOUND"
-    
-    # Map errors
-    MAP_INVALID_COORDS = "MAP_INVALID_COORDS"
-    MAP_CHUNK_LIMIT_EXCEEDED = "MAP_CHUNK_LIMIT_EXCEEDED"
-    MAP_NOT_FOUND = "MAP_NOT_FOUND"
-    
-    # System errors
-    SYS_DATABASE_ERROR = "SYS_DATABASE_ERROR"
-    SYS_SERVICE_UNAVAILABLE = "SYS_SERVICE_UNAVAILABLE"
-    SYS_INTERNAL_ERROR = "SYS_INTERNAL_ERROR"
+class EntityState(BaseModel):
+    """Entity state within a state update"""
+    id: Union[int, str] = Field(..., description="Entity ID")
+    type: str = Field(..., description="Entity type")
+    x: int = Field(..., description="X coordinate")
+    y: int = Field(..., description="Y coordinate")
+    direction: Optional[str] = Field(None, description="Facing direction")
+    animation: Optional[str] = Field(None, description="Current animation state")
+    visual_hash: Optional[str] = Field(None, description="Visual appearance hash")
+    hp_percent: Optional[float] = Field(None, ge=0, le=100, description="HP percentage")
+
+
+class PlayerStateUpdate(BaseModel):
+    """Player-specific state update"""
+    position: Optional[Dict[str, int]] = Field(None, description="Position {x, y}")
+    current_hp: Optional[int] = Field(None, ge=0, description="Current HP")
+    max_hp: Optional[int] = Field(None, ge=1, description="Maximum HP")
+    visual_hash: Optional[str] = Field(None, description="Visual state hash")
+    equipment_hash: Optional[str] = Field(None, description="Equipment state hash")
+
+
+class StateUpdateEventPayload(BaseModel):
+    """Payload for EVENT_STATE_UPDATE - Mid-frequency state updates (5 TPS)"""
+    timestamp: int = Field(..., description="Server timestamp in milliseconds")
+    sequence: int = Field(..., description="Update sequence number")
+    entities: List[EntityState] = Field(default_factory=list, description="Entity state updates")
+    player: Optional[PlayerStateUpdate] = Field(None, description="Player-specific updates")
 
 
 # =============================================================================
-# Protocol Utilities
+# Inventory System Payloads
 # =============================================================================
 
-def create_message(
-    message_type: MessageType,
-    payload: Dict[str, Any],
-    correlation_id: Optional[str] = None
-) -> WSMessage:
-    """Create a properly formatted WebSocket message"""
-    return WSMessage(
-        id=correlation_id,
-        type=message_type,
-        payload=payload
-    )
+class InventoryItemData(BaseModel):
+    """Item data for inventory responses"""
+    slot: int = Field(..., ge=0, description="Inventory slot index")
+    item_id: str = Field(..., description="Item type ID")
+    name: str = Field(..., description="Item display name")
+    quantity: int = Field(1, ge=1, description="Stack quantity")
+    category: str = Field(..., description="Item category")
+    rarity: str = Field(..., description="Item rarity")
+    is_stackable: bool = Field(False, description="Whether item can stack")
+    is_equippable: bool = Field(False, description="Whether item can be equipped")
+    icon_sprite: Optional[str] = Field(None, description="Icon sprite ID")
+    equipped_sprite: Optional[str] = Field(None, description="Equipped sprite ID for paperdoll")
+    description: Optional[str] = Field(None, description="Item description")
 
 
-def create_success_response(
-    correlation_id: str,
-    data: Dict[str, Any]
-) -> WSMessage:
-    """Create a success response message"""
-    return WSMessage(
-        id=correlation_id,
-        type=MessageType.RESP_SUCCESS,
-        payload=data
-    )
+class InventoryDataPayload(BaseModel):
+    """Payload for inventory data responses"""
+    items: List[InventoryItemData] = Field(default_factory=list, description="List of inventory items")
+    gold: int = Field(0, ge=0, description="Player's gold amount")
+    capacity: int = Field(28, description="Inventory capacity")
 
 
-def create_error_response(
-    correlation_id: str,
-    error_code: str,
-    message: str,
-    error_category: ErrorCategory = ErrorCategory.SYSTEM,
-    details: Optional[Dict[str, Any]] = None,
-    retry_after: Optional[float] = None,
-    suggested_action: Optional[str] = None
-) -> WSMessage:
-    """Create an error response message"""
-    return WSMessage(
-        id=correlation_id,
-        type=MessageType.RESP_ERROR,
-        payload={
-            "error_code": error_code,
-            "error_category": error_category.value if isinstance(error_category, ErrorCategory) else error_category,
-            "message": message,
-            "details": details,
-            "retry_after": retry_after,
-            "suggested_action": suggested_action
-        }
-    )
+class EquipmentSlotData(BaseModel):
+    """Equipment slot data"""
+    slot: str = Field(..., description="Equipment slot name")
+    item: Optional[InventoryItemData] = Field(None, description="Equipped item, or None if empty")
 
 
-def create_data_response(
-    correlation_id: str,
-    data: Dict[str, Any]
-) -> WSMessage:
-    """Create a data response message for queries"""
-    return WSMessage(
-        id=correlation_id,
-        type=MessageType.RESP_DATA,
-        payload=data
-    )
-
-
-def create_event(
-    event_type: MessageType,
-    payload: Dict[str, Any]
-) -> WSMessage:
-    """Create an event message (no correlation ID)"""
-    return WSMessage(
-        type=event_type,
-        payload=payload
-    )
+class EquipmentDataPayload(BaseModel):
+    """Payload for equipment data responses"""
+    slots: List[EquipmentSlotData] = Field(default_factory=list, description="List of equipment slots")
 
 
 # =============================================================================
-# Request/Response Pattern Mapping
+# Stats System Payloads
 # =============================================================================
 
-# Commands that expect RESP_SUCCESS responses
-COMMAND_TYPES = {
-    MessageType.CMD_AUTHENTICATE,
-    MessageType.CMD_MOVE,
-    MessageType.CMD_CHAT_SEND,
-    MessageType.CMD_INVENTORY_MOVE,
-    MessageType.CMD_INVENTORY_SORT,
-    MessageType.CMD_ITEM_DROP,
-    MessageType.CMD_ITEM_PICKUP,
-    MessageType.CMD_ITEM_EQUIP,
-    MessageType.CMD_ITEM_UNEQUIP,
-    MessageType.CMD_ATTACK,
-    MessageType.CMD_TOGGLE_AUTO_RETALIATE
-}
-
-# Queries that expect RESP_DATA responses  
-QUERY_TYPES = {
-    MessageType.QUERY_INVENTORY,
-    MessageType.QUERY_EQUIPMENT,
-    MessageType.QUERY_STATS,
-    MessageType.QUERY_MAP_CHUNKS
-}
-
-# Events (no correlation ID required)
-EVENT_TYPES = {
-    MessageType.EVENT_WELCOME,
-    MessageType.EVENT_CHUNK_UPDATE,
-    MessageType.EVENT_STATE_UPDATE,
-    MessageType.EVENT_GAME_UPDATE,
-    MessageType.EVENT_CHAT_MESSAGE,
-    MessageType.EVENT_PLAYER_JOINED,
-    MessageType.EVENT_PLAYER_LEFT,
-    MessageType.EVENT_PLAYER_DIED,
-    MessageType.EVENT_PLAYER_RESPAWN,
-    MessageType.EVENT_SERVER_SHUTDOWN,
-    MessageType.EVENT_COMBAT_ACTION
-}
-
-# Response types (server only)
-RESPONSE_TYPES = {
-    MessageType.RESP_SUCCESS,
-    MessageType.RESP_ERROR,
-    MessageType.RESP_DATA
-}
+class SkillData(BaseModel):
+    """Skill data for stats"""
+    name: str = Field(..., description="Skill name")
+    level: int = Field(..., ge=1, description="Current level")
+    xp: int = Field(..., ge=0, description="Current XP")
+    xp_to_next: int = Field(..., ge=0, description="XP needed for next level")
 
 
-def get_expected_response_type(message_type: MessageType) -> MessageType:
-    """Get the expected response type for a client message"""
-    if message_type in COMMAND_TYPES:
-        return MessageType.RESP_SUCCESS
-    elif message_type in QUERY_TYPES:
-        return MessageType.RESP_DATA
-    else:
-        raise ValueError(f"No expected response for message type: {message_type}")
+class StatsDataPayload(BaseModel):
+    """Payload for stats data responses"""
+    combat_level: int = Field(..., ge=1, description="Combat level")
+    total_level: int = Field(..., ge=1, description="Total skill levels")
+    total_xp: int = Field(..., ge=0, description="Total XP across all skills")
+    skills: List[SkillData] = Field(default_factory=list, description="List of skills")
+    max_hp: int = Field(..., ge=1, description="Maximum hitpoints")
 
 
-def requires_correlation_id(message_type: MessageType) -> bool:
-    """Check if a message type requires a correlation ID"""
-    return message_type in (COMMAND_TYPES | QUERY_TYPES)
+# =============================================================================
+# Map System Payloads
+# =============================================================================
+
+class MapChunkData(BaseModel):
+    """Map chunk data"""
+    chunk_x: int = Field(..., description="Chunk X coordinate")
+    chunk_y: int = Field(..., description="Chunk Y coordinate")
+    tiles: List[List[int]] = Field(..., description="2D array of tile IDs")
+
+
+class MapChunksDataPayload(BaseModel):
+    """Payload for map chunk data responses"""
+    chunks: List[MapChunkData] = Field(default_factory=list, description="List of chunk data")
+    player_chunk_x: int = Field(..., description="Player's chunk X coordinate")
+    player_chunk_y: int = Field(..., description="Player's chunk Y coordinate")
