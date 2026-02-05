@@ -141,6 +141,36 @@ class BaseManager:
         if self._valkey:
             await self._valkey.delete([key])
 
+    async def _scan_keys(self, pattern: str) -> List[str]:
+        """
+        Scan for keys matching pattern using GlideClient-compatible scan method.
+
+        GlideClient does not support the .keys() method, so we use .scan() instead.
+        GlideClient.scan() returns List[Union[bytes, List[bytes]]] in format [cursor, keys],
+        and the cursor parameter must be a string (e.g., "0"), not an integer.
+
+        Args:
+            pattern: Key pattern to match (e.g., "map_entities:*")
+
+        Returns:
+            List of matching key strings
+        """
+        if not self._valkey:
+            return []
+
+        keys: List[str] = []
+        cursor = "0"
+
+        while True:
+            result = await self._valkey.scan(cursor, match=pattern, count=100)
+            cursor = result[0]  # bytes cursor
+            found = result[1]   # list of key bytes
+            keys.extend(self._decode_bytes(k) for k in found)
+            if cursor == b"0":
+                break
+
+        return keys
+
     async def auto_load_with_ttl(
         self,
         key: str,

@@ -104,7 +104,7 @@ class BatchSyncCoordinator:
         stats = {"players": 0}
 
         try:
-            online_players = self._player.get_all_online_player_ids()
+            online_players = await self._player.get_all_online_player_ids()
 
             async with self._session_factory() as db:
                 for player_id in online_players:
@@ -132,11 +132,14 @@ class BatchSyncCoordinator:
 
 
 # Singleton instance
-_batch_sync_coordinator: Optional[BatchSyncCoordinator] = None
-
-
 def get_batch_sync_coordinator() -> BatchSyncCoordinator:
-    """Get the batch sync coordinator instance."""
+    """Get the batch sync coordinator instance.
+    
+    The coordinator is initialized by init_all_managers() in the parent module.
+    This function imports from the parent module to get the actual instance.
+    """
+    # Import here to avoid circular imports
+    from server.src.services.game_state import _batch_sync_coordinator
     if _batch_sync_coordinator is None:
-        raise RuntimeError("BatchSyncCoordinator not initialized")
+        raise RuntimeError("BatchSyncCoordinator not initialized - call init_all_managers() first")
     return _batch_sync_coordinator

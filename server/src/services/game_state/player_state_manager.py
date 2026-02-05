@@ -20,6 +20,9 @@ PLAYER_KEY = "player:{player_id}"
 PLAYER_SETTINGS_KEY = "player_settings:{player_id}"
 PLAYER_COMBAT_STATE_KEY = "player_combat:{player_id}"
 
+# Dirty tracking for batch sync
+DIRTY_POSITIONS_KEY = "dirty:positions"
+
 # TTL tiers
 TIER1_TTL = 300  # 5 minutes - frequently accessed
 TIER2_TTL = 600  # 10 minutes
@@ -143,7 +146,7 @@ class PlayerStateManager:
         if not self._valkey or not settings.USE_VALKEY:
             return False
         key = PLAYER_KEY.format(player_id=player_id)
-        exists = await self._valkey.exists(key)
+        exists = await self._valkey.exists([key])
         return bool(exists)
 
     async def get_all_online_player_ids(self) -> List[int]:
@@ -152,11 +155,13 @@ class PlayerStateManager:
             return []
 
         player_ids = []
-        cursor = 0
+        cursor = "0"
         pattern = PLAYER_KEY.format(player_id="*")
 
         while True:
-            cursor, keys = await self._valkey.scan(cursor, pattern, count=100)
+            result = await self._valkey.scan(cursor, match=pattern, count=100)
+            cursor = result[0]  # bytes cursor
+            keys = result[1]   # list of key bytes
             for key in keys:
                 key_str = self._decode_bytes(key)
                 # Extract player_id from key pattern "player:{player_id}"
@@ -166,7 +171,7 @@ class PlayerStateManager:
                         player_ids.append(player_id)
                     except (ValueError, IndexError):
                         continue
-            if cursor == 0:
+            if cursor == b"0":
                 break
 
         return player_ids
@@ -487,13 +492,70 @@ class PlayerStateManager:
     async def set_player_position(
         self, player_id: int, x: int, y: int, map_id: str
     ) -> None:
-        """Set player position in cache."""
+        """Set player position in cache and mark as dirty for batch sync."""
         key = PLAYER_KEY.format(player_id=player_id)
         data = await self._get_from_valkey(key) or {}
         data["x"] = x
         data["y"] = y
         data["map_id"] = map_id
         await self._cache_in_valkey(key, data, TIER1_TTL)
+
+        # Mark as dirty for batch sync
+        if self._valkey and settings.USE_VALKEY:
+            await self._valkey.sadd(DIRTY_POSITIONS_KEY, [str(player_id)])
+
+    # =========================================================================
+    # Batch Sync Support
+    # =========================================================================
+
+    async def get_dirty_positions(self) -> List[int]:
+        """Get list of player IDs with dirty positions needing sync to database."""
+        if not self._valkey or not settings.USE_VALKEY:
+            return []
+
+        dirty = await self._valkey.smembers(DIRTY_POSITIONS_KEY)
+        return [int(self._decode_bytes(d)) for d in dirty]
+
+    async def clear_dirty_position(self, player_id: int) -> None:
+        """Clear dirty flag for a player position after successful sync."""
+        if self._valkey:
+            await self._valkey.srem(DIRTY_POSITIONS_KEY, [str(player_id)])
+
+    async def sync_player_position_to_db(self, player_id: int, db) -> None:
+        """Sync player position from Valkey to database."""
+        if not self._valkey:
+            return
+
+        from server.src.models.player import Player
+
+        # Get position from Valkey
+        position = await self.get_player_position(player_id)
+        if not position:
+            return
+
+        # Update database
+        result = await db.execute(
+            select(Player).where(Player.id == player_id)
+        )
+        player = result.scalar_one_or_none()
+
+        if player:
+            player.x = position.get("x", player.x)
+            player.y = position.get("y", player.y)
+            player.map_id = position.get("map_id", player.map_id)
+            player.last_move_time = datetime.fromtimestamp(
+                position.get("last_movement_time", self._utc_timestamp()),
+                tz=timezone.utc
+            )
+            logger.debug(
+                "Synced player position to database",
+                extra={
+                    "player_id": player_id,
+                    "x": player.x,
+                    "y": player.y,
+                    "map_id": player.map_id,
+                }
+            )
 
     # =========================================================================
     # Full State Management

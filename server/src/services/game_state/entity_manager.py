@@ -8,7 +8,7 @@ Entity definitions are reference data; instances are runtime-only.
 import traceback
 from typing import Any, Dict, List, Optional, Set
 
-from glide import GlideClient
+from glide import GlideClient, RangeByScore, ScoreBoundary
 from sqlalchemy.orm import sessionmaker
 
 from server.src.core.config import settings
@@ -284,8 +284,8 @@ class EntityManager(BaseManager):
         if not self._valkey or not settings.USE_VALKEY:
             return
 
-        # Get all map keys
-        map_keys = await self._valkey.keys("map_entities:*")
+        # Get all map keys using scan (GlideClient-compatible)
+        map_keys = await self._scan_keys("map_entities:*")
 
         # Get all instance IDs from all maps
         all_instance_ids: Set[str] = set()
@@ -312,8 +312,8 @@ class EntityManager(BaseManager):
         if not self._valkey or not settings.USE_VALKEY:
             return
 
-        # Get all map keys
-        map_keys = await self._valkey.keys("map_entities:*")
+        # Get all map keys using scan (GlideClient-compatible)
+        map_keys = await self._scan_keys("map_entities:*")
 
         for map_key in map_keys:
             instance_ids = await self._valkey.smembers(map_key)
@@ -331,7 +331,7 @@ class EntityManager(BaseManager):
             return []
 
         targeting: List[int] = []
-        map_keys = await self._valkey.keys("map_entities:*")
+        map_keys = await self._scan_keys("map_entities:*")
 
         for map_key in map_keys:
             instance_ids = await self._valkey.smembers(map_key)
@@ -351,8 +351,14 @@ class EntityManager(BaseManager):
             return []
 
         # Get entities with respawn_at <= current_tick
-        entities_to_respawn = await self._valkey.zrangebyscore(
-            ENTITY_RESPAWN_QUEUE_KEY, min_value=0, max_value=float(current_tick)
+        # GlideClient uses zrange with RangeByScore instead of zrangebyscore
+        score_query = RangeByScore(
+            start=ScoreBoundary(0, is_inclusive=True),
+            end=ScoreBoundary(float(current_tick), is_inclusive=True),
+        )
+        entities_to_respawn = await self._valkey.zrange(
+            ENTITY_RESPAWN_QUEUE_KEY,
+            score_query,
         )
 
         respawn_list = []

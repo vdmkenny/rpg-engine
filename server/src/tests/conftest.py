@@ -353,34 +353,30 @@ class FakeValkey:
         self._string_data[key] = str(value)
         return value
     
-    async def keys(self, pattern: str = "*") -> list:
-        """Get keys matching a pattern."""
-        import fnmatch
-        all_keys = list(self._data.keys()) + list(self._string_data.keys()) + list(self._set_data.keys())
-        if pattern == "*":
-            return [k.encode() for k in all_keys]
-        return [k.encode() for k in all_keys if fnmatch.fnmatch(k, pattern)]
-    
-    async def scan(self, cursor: int, pattern: str, count: int = 10) -> tuple[int, list]:
+    async def scan(self, cursor: str, match: str = None, count: int = 10) -> list:
         """
-        Iterate over keys matching a pattern (simplified for testing).
+        Iterate over keys matching a pattern (GlideClient-compatible).
+        
+        GlideClient returns List[Union[bytes, List[bytes]]] in format [cursor, keys].
+        The cursor is returned as bytes (e.g., b"0"), not an integer.
         
         Returns:
-            Tuple of (next_cursor, list_of_keys)
-            next_cursor is 0 when iteration is complete
+            List containing [cursor_bytes, list_of_key_bytes]
+            cursor is b"0" when iteration is complete
         """
         import fnmatch
         all_keys = list(self._data.keys()) + list(self._string_data.keys()) + list(self._set_data.keys())
         
         # Filter by pattern
+        pattern = match or "*"
         if pattern and pattern != "*":
             matching_keys = [k for k in all_keys if fnmatch.fnmatch(k, pattern)]
         else:
             matching_keys = all_keys
         
         # Return all matching keys at once (simplified, real Redis uses cursor pagination)
-        # For testing, we just return cursor 0 to indicate we're done
-        return (0, [k.encode() for k in matching_keys])
+        # Return list format: [cursor_bytes, [key_bytes, ...]] to match GlideClient
+        return [b"0", [k.encode() for k in matching_keys]]
     
     # Set operations
     async def sadd(self, key: str, members: list) -> int:

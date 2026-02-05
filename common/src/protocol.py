@@ -172,6 +172,7 @@ class MessageType(str, Enum):
     EVENT_PLAYER_RESPAWN = "event_player_respawn"
     EVENT_SERVER_SHUTDOWN = "event_server_shutdown"
     EVENT_COMBAT_ACTION = "event_combat_action"
+    EVENT_APPEARANCE_UPDATE = "event_appearance_update"
     
 
 
@@ -220,6 +221,7 @@ EVENT_TYPES = {
     MessageType.EVENT_PLAYER_RESPAWN,
     MessageType.EVENT_SERVER_SHUTDOWN,
     MessageType.EVENT_COMBAT_ACTION,
+    MessageType.EVENT_APPEARANCE_UPDATE,
 }
 
 
@@ -241,7 +243,7 @@ def get_expected_response_type(message_type: MessageType) -> Optional[MessageTyp
     return None
 
 
-def create_success_response(correlation_id: str, data: Dict[str, Any]) -> WSMessage:
+def create_success_response(correlation_id: str, data: Dict[str, Any]) -> "WSMessage":
     """Create a success response message."""
     return WSMessage(
         id=correlation_id,
@@ -258,7 +260,7 @@ def create_error_response(
     details: Optional[Dict[str, Any]] = None,
     retry_after: Optional[float] = None,
     suggested_action: Optional[str] = None
-) -> WSMessage:
+) -> "WSMessage":
     """Create an error response message."""
     payload: Dict[str, Any] = {
         "error": message,
@@ -279,7 +281,7 @@ def create_error_response(
     )
 
 
-def create_data_response(correlation_id: str, data: Dict[str, Any]) -> WSMessage:
+def create_data_response(correlation_id: str, data: Dict[str, Any]) -> "WSMessage":
     """Create a data response message for query responses."""
     return WSMessage(
         id=correlation_id,
@@ -288,7 +290,7 @@ def create_data_response(correlation_id: str, data: Dict[str, Any]) -> WSMessage
     )
 
 
-def create_event(event_type: MessageType, payload: Dict[str, Any]) -> WSMessage:
+def create_event(event_type: MessageType, payload: Dict[str, Any]) -> "WSMessage":
     """Create an event message (broadcasts/notifications)."""
     return WSMessage(
         id=None,

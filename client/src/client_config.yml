@@ -1,0 +1,47 @@
+# RPG Engine Client Configuration
+# This file contains all client settings
+
+# Server connection settings
+server:
+  host: localhost
+  port: 8000
+  websocket_path: /ws
+
+# Display and window settings  
+display:
+  width: 1024
+  height: 768
+  title: "RPG Engine"
+  fps: 60
+  vsync: true
+  fullscreen: false
+
+# Game-specific settings
+game:
+  tile_size: 32
+  chunk_size: 16
+  move_cooldown: 0.15
+  move_duration: 0.2
+  chunk_request_distance: 8
+
+# Keyboard shortcuts
+key_bindings:
+  move_up: ["w", "up"]
+  move_down: ["s", "down"]
+  move_left: ["a", "left"]
+  move_right: ["d", "right"]
+  open_inventory: "i"
+  open_equipment: "e"
+  open_stats: "s"
+  toggle_chat: "t"
+  hide_chat: "c"
+  help: "?"
+  escape: "escape"
+
+# Debug and development settings
+debug:
+  enabled: false
+  show_fps: true
+  show_hitboxes: false
+  show_chunks: false
+  log_level: "INFO"
