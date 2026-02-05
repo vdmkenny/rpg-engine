@@ -112,7 +112,7 @@ class AppearanceHandlerMixin:
             )
 
             # Invalidate visual cache to force re-render
-            visual_registry.invalidate_player(self.player_id)
+            await visual_registry.invalidate_player(self.player_id)
 
             # Broadcast appearance change to nearby players
             await self._broadcast_appearance_update(new_appearance)
