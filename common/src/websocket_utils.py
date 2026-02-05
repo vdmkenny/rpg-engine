@@ -15,7 +15,7 @@ from collections import defaultdict
 import logging
 
 from .protocol import (
-    WSMessage, MessageType, ErrorCodes, ErrorCategory,
+    WSMessage, MessageType, ErrorCodes, ErrorCategory, ChatChannel,
     COMMAND_TYPES, QUERY_TYPES, EVENT_TYPES, RESPONSE_TYPES,
     get_expected_response_type, requires_correlation_id,
     create_success_response, create_error_response, create_data_response, create_event
@@ -718,7 +718,7 @@ class BroadcastManager:
         self,
         sender: str,
         message: str,
-        channel: str,
+        channel: ChatChannel,
         sender_position: Optional[Dict[str, Any]] = None
     ) -> list:
         """Broadcast a chat message with appropriate targeting based on channel"""
@@ -726,11 +726,11 @@ class BroadcastManager:
         chat_payload = {
             "sender": sender,
             "message": message,
-            "channel": channel,
+            "channel": channel.value,
             "sender_position": sender_position
         }
         
-        if channel == "local":
+        if channel == ChatChannel.LOCAL:
             # Local chat broadcasts to nearby players
             return await self.broadcast_to_nearby(
                 sender,
@@ -738,17 +738,17 @@ class BroadcastManager:
                 chat_payload,
                 include_origin=True  # Sender sees their own message
             )
-        elif channel == "global":
+        elif channel == ChatChannel.GLOBAL:
             # Global chat broadcasts to everyone
             return await self.broadcast_globally(
                 MessageType.EVENT_CHAT_MESSAGE,
                 chat_payload
             )
-        elif channel == "dm":
+        elif channel == ChatChannel.DM:
             # DM should be handled separately by the chat service
             raise ValueError("DM messages should be handled directly, not broadcasted")
         else:
-            raise ValueError(f"Unknown chat channel: {channel}")
+            return []  # Should never reach here with proper enum validation
 
 
 async def broadcast_event(

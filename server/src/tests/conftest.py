@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.future import select
 from sqlalchemy import delete, create_engine, text
 from sqlalchemy.pool import NullPool
+from asyncpg.exceptions import InvalidCatalogNameError
 from alembic import command
 from alembic.config import Config
 
@@ -27,6 +28,7 @@ from server.src.models.item import Item, GroundItem, PlayerInventory, PlayerEqui
 from server.src.models.skill import Skill, PlayerSkill
 from server.src.models.skill import PlayerSkill
 from server.src.core.security import get_password_hash, create_access_token
+from server.src.tests.utils.time_mock import FrozenTime, freeze_time, afreeze_time, control_random
 from server.src.services.game_state import (
     get_player_state_manager,
     get_reference_data_manager,
@@ -506,6 +508,12 @@ def setup_worker_database():
         admin_engine.dispose()  # Clean up admin engine
         logger.info(f"Worker database ready: {worker_db_name}")
         
+        # Small delay to allow PostgreSQL to fully initialize the database
+        # This prevents InvalidCatalogNameError when asyncpg tries to connect
+        import time
+        time.sleep(0.2)
+        logger.info(f"Database initialization delay complete for {worker_db_name}")
+        
         # Run Alembic migrations on the worker database
         try:
             logger.info(f"Running Alembic migrations on {worker_db_name}")
@@ -601,17 +609,51 @@ def setup_worker_database():
             pass
 
 
+async def create_engine_with_retry(database_url: str, max_retries: int = 3):
+    """
+    Create async database engine with exponential backoff retry logic.
+    
+    Retries on InvalidCatalogNameError which can occur when the database
+    is not fully initialized after creation.
+    
+    Args:
+        database_url: The PostgreSQL connection URL
+        max_retries: Maximum number of retry attempts (default: 3)
+        
+    Returns:
+        The created async engine
+        
+    Raises:
+        InvalidCatalogNameError: If all retry attempts fail
+    """
+    delays = [0.1, 0.2, 0.4]  # 100ms, 200ms, 400ms
+    
+    for attempt in range(max_retries):
+        try:
+            engine = create_async_engine(
+                database_url,
+                echo=False,
+                poolclass=NullPool,
+            )
+            return engine
+        except InvalidCatalogNameError as e:
+            if attempt < max_retries - 1:
+                delay = delays[attempt] if attempt < len(delays) else delays[-1]
+                logger.warning(
+                    f"Database catalog not ready, retrying in {delay*1000:.0f}ms (attempt {attempt + 1}/{max_retries})"
+                )
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"Failed to connect to database after {max_retries} attempts")
+                raise
+
+
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def setup_test_db():
     """Set up async database engine and session factory for worker database."""
     global test_engine, TestingSessionLocal
 
-    test_engine = create_async_engine(
-        TEST_DATABASE_URL,
-        echo=False,
-        # Optimize for test isolation with connection pooling
-        poolclass=NullPool,  # Each session gets its own connection
-    )
+    test_engine = await create_engine_with_retry(TEST_DATABASE_URL)
     TestingSessionLocal = sessionmaker(
         autocommit=False,
         autoflush=False,
@@ -898,6 +940,73 @@ def create_test_player(
         return player
     
     return _create_player
+
+
+@pytest_asyncio.fixture
+async def spawned_test_entities(game_state_managers) -> Dict[str, int]:
+    """
+    Spawn test entities (GOBLIN, FOREST_BEAR) on samplemap for combat tests.
+    
+    Returns a dict mapping entity names to their instance_ids.
+    Entities are cleaned up (despawned) after the test.
+    
+    Example:
+        async def test_attack(spawned_test_entities):
+            goblin_id = spawned_test_entities["GOBLIN"]
+            # Use goblin_id for combat tests
+    """
+    from server.src.services.game_state import get_entity_manager, get_reference_data_manager
+    
+    entity_mgr = get_entity_manager()
+    ref_mgr = get_reference_data_manager()
+    
+    # Get entity IDs from reference data
+    goblin_entity_id = await ref_mgr.get_entity_id_by_name("GOBLIN")
+    bear_entity_id = await ref_mgr.get_entity_id_by_name("FOREST_BEAR")
+    
+    assert goblin_entity_id is not None, "GOBLIN entity not found in reference data"
+    assert bear_entity_id is not None, "FOREST_BEAR entity not found in reference data"
+    
+    # Spawn entities on samplemap at specific coordinates (adjacent to player spawn at 10,10)
+    # Melee combat requires target within 1 tile
+    goblin_instance_id = await entity_mgr.spawn_entity_instance(
+        entity_id=goblin_entity_id,
+        map_id="samplemap",
+        x=10,  # Same column as player spawn
+        y=11,  # 1 tile below player spawn (10,10)
+        current_hp=10,
+        max_hp=10,
+    )
+    
+    bear_instance_id = await entity_mgr.spawn_entity_instance(
+        entity_id=bear_entity_id,
+        map_id="samplemap",
+        x=11,  # 1 tile right of player spawn
+        y=10,  # Same row as player spawn
+        current_hp=20,
+        max_hp=20,
+    )
+    
+    # Store entity data for cleanup
+    spawned_entities = {
+        "GOBLIN": goblin_instance_id,
+        "FOREST_BEAR": bear_instance_id,
+    }
+    
+    yield spawned_entities
+    
+    # Cleanup: Despawn all test entities with no respawn
+    for entity_name, instance_id in spawned_entities.items():
+        try:
+            await entity_mgr.despawn_entity(
+                instance_id=instance_id,
+                death_tick=0,
+                respawn_delay_seconds=0  # No respawn for test entities
+            )
+        except Exception:
+            # Entity might already be dead/despawned, that's ok
+            pass
+
 
 @pytest_asyncio.fixture
 def create_test_player_and_token(
@@ -1291,3 +1400,48 @@ def test_disconnection_context(
 def test_item_id() -> str:
     """Provide a test item ID for equipment tests"""
     return "wooden_sword"  # Use an item that should exist in the test data
+
+
+@pytest.fixture
+def frozen_time() -> Generator[FrozenTime, None, None]:
+    """
+    Fixture that mocks time functions to use frozen time.
+
+    Yields a FrozenTime instance initialized to 1000.0.
+    Tests can call frozen_time.advance(seconds) or frozen_time.set_time(timestamp)
+    to manipulate time during test execution.
+
+    This patches time.time, datetime.datetime, and BaseManager._utc_timestamp.
+    """
+    import random
+    from datetime import datetime, timezone
+    from unittest.mock import patch, MagicMock
+    from server.src.services.game_state.base_manager import BaseManager
+    from server.src.tests.utils.time_mock import FrozenTime
+
+    frozen = FrozenTime(initial_timestamp=1000.0)
+
+    # Create mock datetime class
+    mock_datetime = MagicMock()
+    mock_datetime.now = lambda tz=None: frozen.datetime_now()
+    mock_datetime.utcnow = lambda: frozen.datetime_now()
+
+    with patch('time.time', frozen.now):
+        with patch('datetime.datetime', mock_datetime):
+            with patch.object(BaseManager, '_utc_timestamp', frozen.utc_timestamp):
+                yield frozen
+
+
+@pytest.fixture
+def controlled_random() -> Generator[None, None, None]:
+    """
+    Fixture that seeds random with 42 for deterministic test execution.
+    
+    Ensures that any random numbers generated during the test are reproducible.
+    """
+    import random
+    
+    random.seed(42)
+    yield
+    # Reset to a different seed to avoid affecting subsequent tests
+    random.seed(None)

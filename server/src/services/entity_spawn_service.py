@@ -6,7 +6,6 @@ entity respawn logic.
 """
 
 import traceback
-from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 from glide import RangeByScore, ScoreBoundary
@@ -128,8 +127,16 @@ class EntitySpawnService:
         aggro_override = spawn_point.get("aggro_override")
         disengage_override = spawn_point.get("disengage_override")
         
-        # Get the numeric entity_id from the enum
-        entity_id = entity_enum.value.id if hasattr(entity_enum.value, 'id') else entity_enum.value.value
+        # Get the numeric entity_id from the reference data manager
+        from .game_state import get_reference_data_manager
+        ref_mgr = get_reference_data_manager()
+        entity_id = await ref_mgr.get_entity_id_by_name(entity_id_str)
+        if entity_id is None:
+            logger.error(
+                "Entity ID not found in reference data",
+                extra={"entity_id_str": entity_id_str}
+            )
+            raise ValueError(f"Entity ID not found for: {entity_id_str}")
         
         # Spawn entity instance with simplified API
         instance_id = await entity_mgr.spawn_entity_instance(
@@ -189,7 +196,8 @@ class EntitySpawnService:
             return 0
         
         # Get entities ready to respawn (score <= current time)
-        current_time = datetime.now(timezone.utc).timestamp()
+        # Use entity_mgr's timestamp method for testability
+        current_time = entity_mgr._utc_timestamp()
         score_query = RangeByScore(
             start=ScoreBoundary(0, is_inclusive=True),
             end=ScoreBoundary(current_time, is_inclusive=True),

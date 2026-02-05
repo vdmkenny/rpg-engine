@@ -186,6 +186,48 @@ class EntityManager(BaseManager):
                 data["target_player_id"] = target_player_id
             await self._cache_in_valkey(key, data, ENTITY_TTL)
 
+    async def mark_entity_dying(
+        self, instance_id: int, death_tick: int, respawn_delay_seconds: int = 30
+    ) -> None:
+        """
+        Mark entity as dying with death animation.
+        
+        Entity remains visible during death animation period (10 ticks).
+        State is set to "dying" and death_tick is stored.
+        Actual despawn happens later via game loop when death_tick is reached.
+        
+        Args:
+            instance_id: The entity instance ID
+            death_tick: The tick count when death animation completes
+            respawn_delay_seconds: Seconds before entity respawns (stored for later)
+        """
+        if not self._valkey or not settings.USE_VALKEY:
+            return
+
+        key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
+        data = await self._get_from_valkey(key)
+
+        if not data:
+            return
+
+        # Set state to dying and store death_tick for animation period
+        data["state"] = "dying"
+        data["death_tick"] = death_tick
+        data["respawn_delay_seconds"] = respawn_delay_seconds
+        data["current_hp"] = 0  # Ensure HP is 0
+        
+        # Update in Valkey (entity stays visible during animation)
+        await self._cache_in_valkey(key, data, ENTITY_TTL)
+        
+        logger.debug(
+            "Entity marked as dying",
+            extra={
+                "instance_id": instance_id,
+                "death_tick": death_tick,
+                "respawn_delay_seconds": respawn_delay_seconds,
+            }
+        )
+
     async def despawn_entity(
         self, instance_id: int, death_tick: int, respawn_delay_seconds: int = 30
     ) -> None:

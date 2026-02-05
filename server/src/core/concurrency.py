@@ -82,7 +82,7 @@ class LockType(Enum):
     GAME_LOOP = "game_loop"
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class LockAcquisitionContext:
     """Context information for lock acquisition."""
     player_id: int
@@ -159,6 +159,9 @@ class PlayerLockManager:
         if player_id not in self._active_contexts:
             self._active_contexts[player_id] = set()
         
+        # Initialize lock acquisition flag before try block
+        acquired = False
+        
         try:
             # Check for potential deadlock (same operation already running for player)
             for active_context in self._active_contexts[player_id]:
@@ -174,13 +177,12 @@ class PlayerLockManager:
                     )
             
             # Acquire lock with timeout
-            acquired = False
             try:
                 await asyncio.wait_for(lock.acquire(), timeout=context.timeout)
                 acquired = True
-                
-                context.acquired_at = time.time()
-                context.wait_time = context.acquired_at - start_time
+                current_time = time.time()
+                context.acquired_at = current_time
+                context.wait_time = current_time - start_time
                 
                 # Update metrics
                 PLAYER_LOCK_ACQUISITIONS.labels(
@@ -224,6 +226,7 @@ class PlayerLockManager:
         finally:
             if acquired:
                 context.released_at = time.time()
+                assert context.acquired_at is not None, "acquired_at must be set if lock was acquired"
                 hold_time = context.released_at - context.acquired_at
                 
                 PLAYER_LOCK_HOLD_TIME.observe(hold_time)

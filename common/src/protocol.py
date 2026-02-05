@@ -112,6 +112,7 @@ class MessageType(str, Enum):
     
     # Server → Client: Events (Broadcasts/Notifications)
     EVENT_WELCOME = "event_welcome"
+    EVENT_CHUNK_UPDATE = "event_chunk_update"  # Map chunk data on boundary crossing
     EVENT_STATE_UPDATE = "event_state_update"
     EVENT_GAME_UPDATE = "event_game_update"
     EVENT_CHAT_MESSAGE = "event_chat_message"
@@ -153,11 +154,15 @@ class AuthenticatePayload(BaseModel):
 
 class MovePayload(BaseModel):
     """Payload for CMD_MOVE"""
+    model_config = ConfigDict(use_enum_values=True)
+
     direction: Direction = Field(..., description="Movement direction")
 
 
 class ChatSendPayload(BaseModel):
     """Payload for CMD_CHAT_SEND"""
+    model_config = ConfigDict(use_enum_values=True)
+
     message: str = Field(..., max_length=500, description="Chat message content")
     channel: ChatChannel = Field(ChatChannel.LOCAL, description="Chat channel type")
     recipient: Optional[str] = Field(None, description="Recipient username for DM")
@@ -171,6 +176,8 @@ class InventoryMovePayload(BaseModel):
 
 class InventorySortPayload(BaseModel):
     """Payload for CMD_INVENTORY_SORT"""
+    model_config = ConfigDict(use_enum_values=True)
+
     sort_by: InventorySortCriteria = Field(InventorySortCriteria.CATEGORY, description="Sort criteria")
 
 
@@ -197,6 +204,8 @@ class ItemUnequipPayload(BaseModel):
 
 class AttackPayload(BaseModel):
     """Payload for CMD_ATTACK"""
+    model_config = ConfigDict(use_enum_values=True)
+
     target_type: CombatTargetType = Field(..., description="Type of target (entity or player)")
     target_id: Union[int, str] = Field(..., description="Entity instance ID (int) or player username (str)")
 
@@ -271,6 +280,8 @@ class WelcomeEventPayload(BaseModel):
 
 class StateUpdateEventPayload(BaseModel):
     """Payload for EVENT_STATE_UPDATE - consolidated state changes"""
+    model_config = ConfigDict(use_enum_values=True)
+
     update_type: UpdateType = Field(UpdateType.FULL, description="Full state or changes only")
     target: UpdateScope = Field(UpdateScope.PERSONAL, description="Update distribution scope")
     systems: Dict[str, Any] = Field(..., description="Updated game systems")
@@ -284,6 +295,14 @@ class StateUpdateEventPayload(BaseModel):
         entities: Optional[Dict[str, Any]] = None    # Visible game entities
 
 
+class ChunkUpdateEventPayload(BaseModel):
+    """Payload for EVENT_CHUNK_UPDATE - map chunk data on boundary crossing"""
+    map_id: str = Field(..., description="Map identifier")
+    chunks: List[Dict[str, Any]] = Field(..., description="Chunk data list")
+    player_x: int = Field(..., description="Player X position")
+    player_y: int = Field(..., description="Player Y position")
+
+
 class GameUpdateEventPayload(BaseModel):
     """Payload for EVENT_GAME_UPDATE - real-time game entity updates"""
     entities: List[Dict[str, Any]] = Field(..., description="Visible game entities")
@@ -293,9 +312,11 @@ class GameUpdateEventPayload(BaseModel):
 
 class ChatMessageEventPayload(BaseModel):
     """Payload for EVENT_CHAT_MESSAGE"""
+    model_config = ConfigDict(use_enum_values=True)
+
     sender: str = Field(..., description="Sender username")
     message: str = Field(..., description="Chat message content")
-    channel: str = Field(..., description="Chat channel")
+    channel: ChatChannel = Field(..., description="Chat channel")
     sender_position: Optional[Dict[str, Any]] = Field(None, description="Sender position data")
 
 
@@ -476,6 +497,7 @@ QUERY_TYPES = {
 # Events (no correlation ID required)
 EVENT_TYPES = {
     MessageType.EVENT_WELCOME,
+    MessageType.EVENT_CHUNK_UPDATE,
     MessageType.EVENT_STATE_UPDATE,
     MessageType.EVENT_GAME_UPDATE,
     MessageType.EVENT_CHAT_MESSAGE,

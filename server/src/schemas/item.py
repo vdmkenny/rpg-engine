@@ -157,6 +157,7 @@ class ItemInfo(BaseModel):
     required_level: int = Field(default=1, description="Level required to equip")
     is_tradeable: bool = Field(default=True, description="Can be traded with other players")
     value: int = Field(default=0, description="Base gold value")
+    ammo_type: Optional[str] = Field(default=None, description="Ammo type for ranged weapons")
     stats: ItemStats = Field(default_factory=ItemStats, description="Item stat bonuses")
     icon_sprite_id: str = Field(..., description="Sprite for inventory/ground display")
     equipped_sprite_id: Optional[str] = Field(default=None, description="Sprite for paperdoll rendering")

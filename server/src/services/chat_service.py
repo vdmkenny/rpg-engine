@@ -12,6 +12,7 @@ from common.src.protocol import ChatChannel
 
 from ..core.logging_config import get_logger
 from ..core.config import settings
+from ..schemas.player import PlayerRole
 from .player_service import PlayerService
 
 logger = get_logger(__name__)
@@ -85,9 +86,22 @@ class ChatService:
                     )
                 }
             
-            # For now, all online players have global chat permission
-            # TODO: Implement role-based permission check if needed
-            has_permission = True
+            # Check player role for global chat permission
+            player_data = await PlayerService.get_player_by_id(player_id)
+            if not player_data:
+                return {
+                    "valid": False,
+                    "error_message": "Player not found.",
+                    "system_message": ChatService.create_system_error_message(
+                        "Unable to verify player status."
+                    )
+                }
+            
+            # Check if player's role is in allowed roles
+            allowed_roles = [role.lower() for role in settings.CHAT_GLOBAL_ALLOWED_ROLES]
+            player_role = player_data.role.value.lower()
+            has_permission = player_role in allowed_roles
+            
             if not has_permission:
                 return {
                     "valid": False,

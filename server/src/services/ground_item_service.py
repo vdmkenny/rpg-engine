@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
 from ..core.config import settings
+from ..core.concurrency import PlayerLockManager, LockType
 from ..core.items import ItemRarity
 from ..core.logging_config import get_logger
 from ..schemas.item import (
@@ -31,6 +32,8 @@ from .inventory_service import InventoryService
 from .item_service import ItemService
 
 logger = get_logger(__name__)
+
+_lock_manager = PlayerLockManager()
 
 
 class GroundItemService:
@@ -141,94 +144,97 @@ class GroundItemService:
         Returns:
             OperationResult with success status
         """
-        inventory_mgr = get_inventory_manager()
+        async with _lock_manager.acquire_player_lock(
+            player_id, LockType.INVENTORY, "drop_from_inventory"
+        ):
+            inventory_mgr = get_inventory_manager()
 
-        slot_data = await inventory_mgr.get_inventory_slot(player_id, inventory_slot)
-        if not slot_data:
+            slot_data = await inventory_mgr.get_inventory_slot(player_id, inventory_slot)
+            if not slot_data:
+                return OperationResult(
+                    success=False,
+                    message="Inventory slot is empty",
+                    operation=OperationType.DROP,
+                )
+
+            item_id = slot_data["item_id"]
+            current_quantity = slot_data["quantity"]
+            durability = slot_data.get("current_durability")
+
+            drop_quantity = quantity if quantity is not None else current_quantity
+            if drop_quantity <= 0:
+                return OperationResult(
+                    success=False,
+                    message="Quantity must be positive",
+                    operation=OperationType.DROP,
+                )
+            if drop_quantity > current_quantity:
+                return OperationResult(
+                    success=False,
+                    message=f"Not enough items (have {current_quantity}, want to drop {drop_quantity})",
+                    operation=OperationType.DROP,
+                )
+
+            item = await ItemService.get_item_by_id(item_id)
+
+            if not item:
+                return OperationResult(
+                    success=False,
+                    message="Item not found",
+                    operation=OperationType.DROP,
+                )
+
+            current_time = datetime.now(timezone.utc).timestamp()
+            protection_seconds = GroundItemService._get_protection_seconds(item.rarity)
+            despawn_seconds = GroundItemService._get_despawn_seconds(item.rarity)
+
+            ground_item_mgr = get_ground_item_manager()
+            ground_item_id = await ground_item_mgr.add_ground_item(
+                map_id=map_id,
+                x=x,
+                y=y,
+                item_id=item_id,
+                quantity=drop_quantity,
+                durability=durability or 1.0,
+                dropped_by_player_id=player_id,
+                loot_protection_expires_at=current_time + protection_seconds,
+                despawn_at=current_time + despawn_seconds,
+            )
+
+            if not ground_item_id:
+                return OperationResult(
+                    success=False,
+                    message="Failed to create ground item",
+                    operation=OperationType.DROP,
+                )
+
+            if drop_quantity >= current_quantity:
+                await inventory_mgr.delete_inventory_slot(player_id, inventory_slot)
+            else:
+                await inventory_mgr.set_inventory_slot(
+                    player_id,
+                    inventory_slot,
+                    item_id,
+                    current_quantity - drop_quantity,
+                    durability or 1.0,
+                )
+
+            logger.info(
+                "Player dropped item",
+                extra={
+                    "player_id": player_id,
+                    "item_id": item_id,
+                    "quantity": drop_quantity,
+                    "ground_item_id": ground_item_id,
+                },
+            )
+
             return OperationResult(
-                success=False,
-                message="Inventory slot is empty",
+                success=True,
+                message="Item dropped",
                 operation=OperationType.DROP,
+                data={"ground_item_id": ground_item_id},
             )
-
-        item_id = slot_data["item_id"]
-        current_quantity = slot_data["quantity"]
-        durability = slot_data.get("current_durability")
-
-        drop_quantity = quantity if quantity is not None else current_quantity
-        if drop_quantity <= 0:
-            return OperationResult(
-                success=False,
-                message="Quantity must be positive",
-                operation=OperationType.DROP,
-            )
-        if drop_quantity > current_quantity:
-            return OperationResult(
-                success=False,
-                message=f"Not enough items (have {current_quantity}, want to drop {drop_quantity})",
-                operation=OperationType.DROP,
-            )
-
-        item = await ItemService.get_item_by_id(item_id)
-
-        if not item:
-            return OperationResult(
-                success=False,
-                message="Item not found",
-                operation=OperationType.DROP,
-            )
-
-        current_time = datetime.now(timezone.utc).timestamp()
-        protection_seconds = GroundItemService._get_protection_seconds(item.rarity)
-        despawn_seconds = GroundItemService._get_despawn_seconds(item.rarity)
-
-        ground_item_mgr = get_ground_item_manager()
-        ground_item_id = await ground_item_mgr.add_ground_item(
-            map_id=map_id,
-            x=x,
-            y=y,
-            item_id=item_id,
-            quantity=drop_quantity,
-            durability=durability or 1.0,
-            dropped_by_player_id=player_id,
-            loot_protection_expires_at=current_time + protection_seconds,
-            despawn_at=current_time + despawn_seconds,
-        )
-
-        if not ground_item_id:
-            return OperationResult(
-                success=False,
-                message="Failed to create ground item",
-                operation=OperationType.DROP,
-            )
-
-        if drop_quantity >= current_quantity:
-            await inventory_mgr.delete_inventory_slot(player_id, inventory_slot)
-        else:
-            await inventory_mgr.set_inventory_slot(
-                player_id,
-                inventory_slot,
-                item_id,
-                current_quantity - drop_quantity,
-                durability or 1.0,
-            )
-
-        logger.info(
-            "Player dropped item",
-            extra={
-                "player_id": player_id,
-                "item_id": item_id,
-                "quantity": drop_quantity,
-                "ground_item_id": ground_item_id,
-            },
-        )
-
-        return OperationResult(
-            success=True,
-            message="Item dropped",
-            operation=OperationType.DROP,
-            data={"ground_item_id": ground_item_id},
-        )
 
     @staticmethod
     async def pickup_item(
@@ -255,89 +261,92 @@ class GroundItemService:
         Returns:
             OperationResult with success status and detailed error messages
         """
-        ground_item_mgr = get_ground_item_manager()
-        now = datetime.now(timezone.utc).timestamp()
+        async with _lock_manager.acquire_player_lock(
+            player_id, LockType.INVENTORY, "pickup_item"
+        ):
+            ground_item_mgr = get_ground_item_manager()
+            now = datetime.now(timezone.utc).timestamp()
 
-        ground_item = await ground_item_mgr.get_ground_item(ground_item_id)
+            ground_item = await ground_item_mgr.get_ground_item(ground_item_id)
 
-        if not ground_item:
-            return OperationResult(
-                success=False,
-                message="Item not found or already picked up",
-                operation=OperationType.PICKUP,
+            if not ground_item:
+                return OperationResult(
+                    success=False,
+                    message="Item not found or already picked up",
+                    operation=OperationType.PICKUP,
+                )
+
+            if ground_item["map_id"] != player_map_id:
+                return OperationResult(
+                    success=False,
+                    message="Item not found or already picked up",
+                    operation=OperationType.PICKUP,
+                )
+
+            if ground_item["despawn_at"] <= now:
+                await ground_item_mgr.remove_ground_item(ground_item_id, ground_item["map_id"])
+                return OperationResult(
+                    success=False,
+                    message="Item has despawned",
+                    operation=OperationType.PICKUP,
+                )
+
+            if ground_item["x"] != player_x or ground_item["y"] != player_y:
+                return OperationResult(
+                    success=False,
+                    message="You must be on the same tile to pick up this item",
+                    operation=OperationType.PICKUP,
+                )
+
+            is_owner = ground_item.get("dropped_by_player_id") == player_id
+            is_public = ground_item.get("loot_protection_expires_at", 0.0) <= now
+
+            if not is_owner and not is_public:
+                return OperationResult(
+                    success=False,
+                    message="This item is protected",
+                    operation=OperationType.PICKUP,
+                )
+
+            durability_val = ground_item.get("durability")
+            
+            durability_int = None
+            if durability_val is not None:
+                durability_int = int(durability_val) if durability_val != 1.0 else None
+            
+            add_result = await InventoryService.add_item(
+                player_id=player_id,
+                item_id=ground_item["item_id"],
+                quantity=ground_item["quantity"],
+                durability=durability_int,
             )
+            
+            if not add_result.success:
+                return OperationResult(
+                    success=False,
+                    message=add_result.message or "Failed to add item to inventory",
+                    operation=OperationType.PICKUP,
+                )
 
-        if ground_item["map_id"] != player_map_id:
-            return OperationResult(
-                success=False,
-                message="Item not found or already picked up",
-                operation=OperationType.PICKUP,
-            )
-
-        if ground_item["despawn_at"] <= now:
             await ground_item_mgr.remove_ground_item(ground_item_id, ground_item["map_id"])
-            return OperationResult(
-                success=False,
-                message="Item has despawned",
-                operation=OperationType.PICKUP,
+
+            logger.info(
+                "Player picked up item",
+                extra={
+                    "player_id": player_id,
+                    "ground_item_id": ground_item_id,
+                    "item_id": ground_item["item_id"],
+                    "quantity": ground_item["quantity"],
+                    "inventory_slot": add_result.data.get("slot"),
+                },
             )
 
-        if ground_item["x"] != player_x or ground_item["y"] != player_y:
             return OperationResult(
-                success=False,
-                message="You must be on the same tile to pick up this item",
+                success=True,
+                message="Item picked up",
                 operation=OperationType.PICKUP,
+                data={"inventory_slot": add_result.data.get("slot")},
             )
-
-        is_owner = ground_item.get("dropped_by_player_id") == player_id
-        is_public = ground_item.get("loot_protection_expires_at", 0.0) <= now
-
-        if not is_owner and not is_public:
-            return OperationResult(
-                success=False,
-                message="This item is protected",
-                operation=OperationType.PICKUP,
-            )
-
-        durability_val = ground_item.get("durability")
-        
-        durability_int = None
-        if durability_val is not None:
-            durability_int = int(durability_val) if durability_val != 1.0 else None
-        
-        add_result = await InventoryService.add_item(
-            player_id=player_id,
-            item_id=ground_item["item_id"],
-            quantity=ground_item["quantity"],
-            durability=durability_int,
-        )
-        
-        if not add_result.success:
-            return OperationResult(
-                success=False,
-                message=add_result.message or "Failed to add item to inventory",
-                operation=OperationType.PICKUP,
-            )
-
-        await ground_item_mgr.remove_ground_item(ground_item_id, ground_item["map_id"])
-
-        logger.info(
-            "Player picked up item",
-            extra={
-                "player_id": player_id,
-                "ground_item_id": ground_item_id,
-                "item_id": ground_item["item_id"],
-                "quantity": ground_item["quantity"],
-                "inventory_slot": add_result.data.get("slot"),
-            },
-        )
-
-        return OperationResult(
-            success=True,
-            message="Item picked up",
-            operation=OperationType.PICKUP,
-            data={"inventory_slot": add_result.data.get("slot")},
-        )
 
     @staticmethod
     async def get_ground_item(ground_item_id: int) -> Optional[GroundItem]:

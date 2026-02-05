@@ -442,12 +442,12 @@ class CombatService:
         else:
             await entity_mgr.update_entity_hp(defender_id, new_defender_hp)
             
-            # If entity died, trigger death animation
+            # If entity died, mark as dying for death animation
             if defender_died:
                 from server.src.game.game_loop import get_game_loop_state
                 game_state = get_game_loop_state()
                 death_tick = game_state.tick_counter + 10  # 10 ticks for death animation
-                await entity_mgr.despawn_entity(defender_id, death_tick=death_tick, respawn_delay_seconds=30)
+                await entity_mgr.mark_entity_dying(defender_id, death_tick=death_tick, respawn_delay_seconds=30)
         
         # Calculate XP (only for player attackers)
         xp_gained = {}

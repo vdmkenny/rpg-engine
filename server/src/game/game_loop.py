@@ -597,21 +597,15 @@ async def send_chunk_update_if_needed(
                         "height": chunk["height"],
                     })
 
-                # Send chunk data as state update event
+                # Send chunk data as chunk update event
                 chunk_message = WSMessage(
                     id=None,  # No correlation ID for events
-                    type=MessageType.EVENT_STATE_UPDATE,
+                    type=MessageType.EVENT_CHUNK_UPDATE,
                     payload={
-                        "update_type": "full",
-                        "target": "personal", 
-                        "systems": {
-                            "map": {
-                                "map_id": map_id,
-                                "chunks": chunk_data_list,
-                                "player_x": x,
-                                "player_y": y
-                            }
-                        }
+                        "map_id": map_id,
+                        "chunks": chunk_data_list,
+                        "player_x": x,
+                        "player_y": y
                     },
                     version=PROTOCOL_VERSION
                 )

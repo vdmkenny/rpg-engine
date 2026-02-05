@@ -9,6 +9,8 @@ from ..core.config import settings
 from ..core.items import ItemCategory
 from ..core.skills import SkillType
 from ..core.logging_config import get_logger
+from ..core.concurrency import PlayerLockManager, LockType
+_lock_manager = PlayerLockManager()
 from ..schemas.item import (
     ItemStats,
     OperationResult,
@@ -384,9 +386,12 @@ class EquipmentService:
         Returns:
             OperationResult with status and updated stats
         """
-        equipment_mgr = get_equipment_manager()
+        async with _lock_manager.acquire_player_lock(
+            player_id, LockType.EQUIPMENT, "equip_from_inventory"
+        ):
+            equipment_mgr = get_equipment_manager()
         
-        inv = await InventoryService.get_item_at_slot(player_id, inventory_slot)
+            inv = await InventoryService.get_item_at_slot(player_id, inventory_slot)
         if not inv:
             return OperationResult(
                 success=False,

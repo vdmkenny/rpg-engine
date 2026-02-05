@@ -150,7 +150,7 @@ class TestDataService:
             if config.x != 0 or config.y != 0 or config.map_id != "samplemap":
                 # Set position through player state manager
                 player_mgr = get_player_state_manager()
-                player_mgr.register_online_player(player_id=player.id, username=username)
+                await player_mgr.register_online_player(player_id=player.id, username=username)
                 await player_mgr.set_player_full_state(
                     player_id=player.id,
                     x=config.x,

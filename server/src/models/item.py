@@ -55,6 +55,10 @@ class Item(Base):
     # Value
     value: Mapped[int] = mapped_column(default=0)
 
+    # Visual sprites
+    icon_sprite_id: Mapped[str] = mapped_column(String, default="default_item_icon")
+    equipped_sprite_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     # Combat stats (offensive)
     attack_bonus: Mapped[int] = mapped_column(default=0)
     strength_bonus: Mapped[int] = mapped_column(default=0)
