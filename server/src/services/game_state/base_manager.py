@@ -82,7 +82,7 @@ class BaseManager:
         return str(value)
 
     def _decode_from_valkey(self, value: Any, target_type: type = str) -> Any:
-        if value is None:
+        if value is None or value == "None":
             return None
 
         if isinstance(value, bytes):

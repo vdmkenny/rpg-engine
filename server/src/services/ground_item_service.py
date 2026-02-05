@@ -354,7 +354,7 @@ class GroundItemService:
         item_info = ItemService.item_to_info(item_wrapper._data)
         
         return GroundItem(
-            id=item_data["id"],
+            id=item_data["ground_item_id"],
             item=item_info,
             x=item_data["x"],
             y=item_data["y"],
@@ -429,7 +429,7 @@ class GroundItemService:
                 
             items.append(
                 GroundItem(
-                    id=gi["id"],
+                    id=gi["ground_item_id"],
                     item=item_info,
                     x=gi["x"],
                     y=gi["y"],
@@ -466,7 +466,7 @@ class GroundItemService:
             for item in all_items:
                 despawn_at = item.get("despawn_at", 0)
                 if despawn_at <= now:
-                    success = await ground_item_mgr.remove_ground_item(item["id"], map_id)
+                    success = await ground_item_mgr.remove_ground_item(item["ground_item_id"], map_id)
                     if success:
                         cleanup_count += 1
 
@@ -625,7 +625,7 @@ class GroundItemService:
             
             result.append(
                 GroundItem(
-                    id=item_data["id"],
+                    id=item_data["ground_item_id"],
                     item=item_info,
                     x=item_data["x"],
                     y=item_data["y"],

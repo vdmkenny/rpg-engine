@@ -257,6 +257,7 @@ class FakeValkey:
         self._data: Dict[str, Dict[str, str]] = {}
         self._string_data: Dict[str, str] = {}
         self._set_data: Dict[str, set] = {}
+        self._zset_data: Dict[str, Dict[str, float]] = {}
     
     async def hset(self, key: str, mapping: Dict[str, str]) -> int:
         """Set multiple hash fields."""
@@ -412,9 +413,22 @@ class FakeValkey:
         """Set a timeout on key (for testing, we just return success)."""
         # In a real implementation this would set TTL, but for tests we don't need to track it
         # Just return 1 to indicate the key exists and the expire was set
-        if (key in self._data or key in self._string_data or key in self._set_data):
+        if (key in self._data or key in self._string_data or key in self._set_data or key in self._zset_data):
             return 1
         return 0
+    
+    async def zadd(self, key: str, mapping: Dict[str, float]) -> int:
+        """Add members to a sorted set. Returns number of new members added."""
+        if key not in self._zset_data:
+            self._zset_data[key] = {}
+        
+        added = 0
+        for member, score in mapping.items():
+            if member not in self._zset_data[key]:
+                added += 1
+            self._zset_data[key][member] = score
+        
+        return added
     
     def multi(self):
         """Start a transaction and return a transaction object."""
@@ -429,6 +443,7 @@ class FakeValkey:
         self._data.clear()
         self._string_data.clear()
         self._set_data.clear()
+        self._zset_data.clear()
     
     def get_hash_data(self, key: str) -> Dict[str, str]:
         """Direct access to hash data for test assertions."""
@@ -699,6 +714,30 @@ async def game_state_managers(fake_valkey: FakeValkey) -> AsyncGenerator[None, N
     ref_manager = get_reference_data_manager()
     await ref_manager.load_item_cache_from_db()
     
+    # Sync items to database and reload cache (needed for item lookups by name)
+    from server.src.services.item_service import ItemService
+    await ItemService.sync_items_to_db()
+    await ref_manager.load_item_cache_from_db()
+    
+    # Sync entities to database for tests that need entity references
+    from server.src.services.entity_service import EntityService
+    await EntityService.sync_entities_to_db()
+    
+    # Sync skills to database for tests that need skill operations
+    from server.src.core.skills import SkillType
+    from server.src.models.skill import Skill
+    from sqlalchemy.dialects.postgresql import insert
+    async with TestingSessionLocal() as db:
+        skill_names = SkillType.all_skill_names()
+        result = await db.execute(select(Skill))
+        existing_skills = {s.name for s in result.scalars().all()}
+        for skill_name in skill_names:
+            if skill_name not in existing_skills:
+                new_skill = Skill(name=skill_name)
+                db.add(new_skill)
+        await db.commit()
+    await ref_manager.load_skill_cache_from_db()
+    
     yield
     
     # Clean up - reset all managers
@@ -749,18 +788,6 @@ async def map_manager_loaded() -> None:
     if not map_manager.maps:
         await map_manager.load_maps()
         logger.info(f"Loaded {len(map_manager.maps)} real map(s) for testing")
-
-
-@pytest_asyncio.fixture(scope="function")
-async def skills_synced(game_state_managers) -> None:
-    """
-    Global fixture to ensure skills are synced to database.
-    
-    Depends on game_state_managers fixture to ensure managers are initialized first.
-    Uses managers' own session management - no external sessions needed.
-    """
-    from server.src.services.skill_service import SkillService
-    await SkillService.sync_skills_to_db()
 
 
 @pytest_asyncio.fixture
@@ -953,7 +980,7 @@ def create_offline_player(session: AsyncSession) -> Callable[..., Awaitable[Play
 
 @pytest_asyncio.fixture
 def create_player_with_skills(
-    create_offline_player, session: AsyncSession, skills_synced
+    create_offline_player, session: AsyncSession
 ) -> Callable[..., Awaitable[Player]]:
     """
     Create player with pre-configured PlayerSkill records.

@@ -24,13 +24,69 @@ class ItemCategory(str, Enum):
 
 
 class ItemRarity(str, Enum):
-    """Item rarity tiers affecting drop rates and UI colors."""
+    """Item rarity tiers affecting drop rates and UI colors.
+    
+    Modern str-based enum for JSON serialization with color metadata.
+    """
     POOR = "poor"
     COMMON = "common"
     UNCOMMON = "uncommon"
     RARE = "rare"
     EPIC = "epic"
     LEGENDARY = "legendary"
+    
+    @property
+    def color(self) -> str:
+        """Get the hex color for this rarity tier."""
+        colors = {
+            "poor": "#9d9d9d",      # Gray - vendor trash
+            "common": "#ffffff",     # White - basic items
+            "uncommon": "#1eff00",   # Green - slightly better
+            "rare": "#0070dd",       # Blue - good items
+            "epic": "#a335ee",       # Purple - excellent items
+            "legendary": "#ff8000",  # Orange - best items
+        }
+        return colors.get(self.value, "#ffffff")
+    
+    @classmethod
+    def from_value(cls, value: str) -> "ItemRarity":
+        """Look up ItemRarity by its string value.
+        
+        Args:
+            value: The rarity string (e.g., "common", "rare")
+            
+        Returns:
+            The matching ItemRarity enum member
+            
+        Raises:
+            ValueError: If no matching rarity is found
+        """
+        try:
+            return cls(value)
+        except ValueError:
+            raise ValueError(f"'{value}' is not a valid ItemRarity")
+    
+    @classmethod
+    def get_color(cls, rarity_value: str, default: str = "#ffffff") -> str:
+        """Get the color for a rarity value with a safe fallback.
+        
+        This is a convenience method that handles missing/invalid rarity values
+        gracefully without raising exceptions.
+        
+        Args:
+            rarity_value: The rarity string (e.g., "common", "rare")
+            default: Default color to return if rarity is invalid
+            
+        Returns:
+            Hex color string for the rarity
+        """
+        if not rarity_value:
+            return default
+        try:
+            rarity_enum = cls.from_value(rarity_value)
+            return rarity_enum.color
+        except ValueError:
+            return default
 
 
 class EquipmentSlot(str, Enum):

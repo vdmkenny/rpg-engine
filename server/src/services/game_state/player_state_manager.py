@@ -431,26 +431,33 @@ class PlayerStateManager:
 
     async def get_player_position(self, player_id: int) -> Optional[Dict[str, Any]]:
         """Get player position from cache or database."""
-        if not settings.USE_VALKEY or not self._valkey:
-            return await self._load_position_from_db(player_id)
+        try:
+            if not settings.USE_VALKEY or not self._valkey:
+                return await self._load_position_from_db(player_id)
 
-        key = PLAYER_KEY.format(player_id=player_id)
+            key = PLAYER_KEY.format(player_id=player_id)
 
-        async def load_from_db():
-            return await self._load_position_from_db(player_id)
+            async def load_from_db():
+                return await self._load_position_from_db(player_id)
 
-        position = await self.auto_load_with_ttl(
-            key, load_from_db, TIER1_TTL, decoder={"x": int, "y": int}
-        )
+            position = await self.auto_load_with_ttl(
+                key, load_from_db, TIER1_TTL, decoder={"x": int, "y": int}
+            )
 
-        if position:
-            return {
-                "x": position.get("x", 0),
-                "y": position.get("y", 0),
-                "map_id": position.get("map_id", ""),
-                "last_movement_time": float(position.get("last_move_time", 0)),
-            }
-        return None
+            if position:
+                return {
+                    "x": position.get("x", 0),
+                    "y": position.get("y", 0),
+                    "map_id": position.get("map_id", ""),
+                    "last_movement_time": float(position.get("last_move_time", 0)),
+                }
+            return None
+        except Exception as e:
+            logger.error(
+                "Error getting player position",
+                extra={"player_id": player_id, "error": str(e)}
+            )
+            return None
 
     async def _load_position_from_db(self, player_id: int) -> Optional[Dict[str, Any]]:
         """Load player position from database."""

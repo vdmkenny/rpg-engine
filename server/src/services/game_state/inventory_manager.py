@@ -75,7 +75,7 @@ class InventoryManager(BaseManager):
     async def get_inventory_slot(self, player_id: int, slot: int) -> Optional[Dict[str, Any]]:
         """Get specific slot contents."""
         inventory = await self.get_inventory(player_id)
-        return inventory.get(slot)
+        return inventory.get(str(slot))
 
     async def set_inventory_slot(
         self, player_id: int, slot: int, item_id: int, quantity: int, durability: float = 1.0
@@ -137,16 +137,11 @@ class InventoryManager(BaseManager):
             return
 
         key = INVENTORY_KEY.format(player_id=player_id)
-
-        # Get current inventory
-        inventory = await self._get_from_valkey(key) or {}
-
-        # Remove slot
         slot_str = str(slot)
-        if slot_str in inventory:
-            del inventory[slot_str]
-            await self._cache_in_valkey(key, inventory, TIER2_TTL)
-            await self._valkey.sadd(DIRTY_INVENTORY_KEY, [str(player_id)])
+
+        # Delete the field from the hash
+        await self._valkey.hdel(key, [slot_str])
+        await self._valkey.sadd(DIRTY_INVENTORY_KEY, [str(player_id)])
 
     async def _delete_slot_from_db(self, player_id: int, slot: int) -> None:
         if not self._session_factory:

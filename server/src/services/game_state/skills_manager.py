@@ -87,6 +87,10 @@ class SkillsManager(BaseManager):
         self, player_id: int, skill_name: str, level: int, experience: int
     ) -> None:
         """Set skill level and XP for a player."""
+        # Convert SkillType enum to string name
+        if hasattr(skill_name, 'name'):
+            skill_name = skill_name.name
+        
         if not settings.USE_VALKEY or not self._valkey:
             await self._update_skill_in_db(player_id, skill_name, level, experience)
             return
@@ -96,7 +100,7 @@ class SkillsManager(BaseManager):
         # Get current skills
         skills = await self._get_from_valkey(key) or {}
 
-        # Update skill
+        # Update skill (lowercase to match database)
         skill_name_lower = skill_name.lower()
         skills[skill_name_lower] = {
             "level": level,
@@ -111,6 +115,10 @@ class SkillsManager(BaseManager):
     ) -> None:
         if not self._session_factory:
             return
+
+        # Convert SkillType enum to string name
+        if hasattr(skill_name, 'name'):
+            skill_name = skill_name.name
 
         from server.src.models.skill import PlayerSkill, Skill
         from sqlalchemy.dialects.postgresql import insert
@@ -165,14 +173,18 @@ class SkillsManager(BaseManager):
 
             await self._commit_if_not_test_session(db)
 
-            # Also cache in Valkey if available
+            # Also cache in Valkey if available - only set skills that don't exist
             if self._valkey and settings.USE_VALKEY:
-                skills_data = {
-                    name.lower(): {"level": 1, "experience": 0}
-                    for _, name in skills
-                }
                 key = SKILLS_KEY.format(player_id=player_id)
-                await self._cache_in_valkey(key, skills_data, SKILLS_TTL)
+                existing_skills = await self._get_from_valkey(key) or {}
+                
+                # Only add skills that don't already exist in cache
+                for _, name in skills:
+                    skill_name_lower = name.lower()
+                    if skill_name_lower not in existing_skills:
+                        existing_skills[skill_name_lower] = {"level": 1, "experience": 0}
+                
+                await self._cache_in_valkey(key, existing_skills, SKILLS_TTL)
 
     async def clear_skills(self, player_id: int) -> None:
         """Remove all skills from player."""

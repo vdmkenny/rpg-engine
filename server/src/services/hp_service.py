@@ -131,7 +131,8 @@ class HpService:
         await HpService.set_hp(player_id, new_hp)
 
         from .player_service import PlayerService
-        username = await PlayerService.get_username_by_player_id(player_id) or "unknown"
+        player_data = await PlayerService.get_player_by_id(player_id)
+        username = player_data.username if player_data else "unknown"
 
         logger.info(
             "Dealt damage to player",
@@ -199,7 +200,8 @@ class HpService:
         await HpService.set_hp(player_id, new_hp)
 
         from .player_service import PlayerService
-        username = await PlayerService.get_username_by_player_id(player_id) or "unknown"
+        player_data = await PlayerService.get_player_by_id(player_id)
+        username = player_data.username if player_data else "unknown"
 
         logger.info(
             "Healed player",
@@ -305,7 +307,8 @@ class HpService:
             RespawnResult with new location and HP
         """
         from .player_service import PlayerService
-        username = await PlayerService.get_username_by_player_id(player_id)
+        player_data = await PlayerService.get_player_by_id(player_id)
+        username = player_data.username if player_data else None
         
         if not username:
             return RespawnResult(
@@ -324,12 +327,14 @@ class HpService:
         player_mgr = get_player_state_manager()
         # Update player position and HP via player state manager
         await player_mgr.set_player_full_state(
-            player_id=player_id,
-            x=spawn_x,
-            y=spawn_y,
-            map_id=spawn_map_id,
-            current_hp=max_hp,
-            max_hp=max_hp,
+            player_id,
+            {
+                "x": spawn_x,
+                "y": spawn_y,
+                "map_id": spawn_map_id,
+                "current_hp": max_hp,
+                "max_hp": max_hp,
+            }
         )
 
         logger.info(
@@ -373,7 +378,8 @@ class HpService:
             RespawnResult with respawn info
         """
         from .player_service import PlayerService
-        username = await PlayerService.get_username_by_player_id(player_id) or "unknown"
+        player_data = await PlayerService.get_player_by_id(player_id)
+        username = player_data.username if player_data else "unknown"
 
         # Step 1: Handle death (drop items)
         death_map_id, death_x, death_y, items_dropped = await HpService.handle_death(

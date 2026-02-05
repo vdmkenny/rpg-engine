@@ -153,8 +153,6 @@ class ReferenceDataManager(BaseManager):
                 skills_data[skill.name.lower()] = {
                     "id": skill.id,
                     "name": skill.name,
-                    "description": skill.description,
-                    "max_level": skill.max_level,
                 }
 
             if self._valkey and settings.USE_VALKEY:
@@ -347,10 +345,13 @@ class ReferenceDataManager(BaseManager):
                     "id": entity.id,
                     "name": entity.name,
                     "entity_type": entity.entity_type,
+                    "display_name": entity.display_name,
+                    "behavior": entity.behavior,
+                    "level": entity.level,
                     "max_hp": entity.max_hp,
-                    "attack_level": entity.attack_level,
-                    "strength_level": entity.strength_level,
-                    "defence_level": entity.defence_level,
+                    "skills": entity.skills or {},
+                    "aggro_radius": entity.aggro_radius,
+                    "disengage_radius": entity.disengage_radius,
                 }
 
             await self._cache_in_valkey(ENTITY_DEFS_KEY, entity_data, 0)
@@ -370,6 +371,20 @@ class ReferenceDataManager(BaseManager):
         definition = await self.get_entity_definition(entity_name)
         if definition:
             return self._decode_from_valkey(definition.get("id"), int)
+        return None
+
+    async def get_entity_definition_by_id(self, entity_id: int) -> Optional[Dict[str, Any]]:
+        """Get entity definition by ID."""
+        if not self._valkey or not settings.USE_VALKEY:
+            return None
+
+        entity_data = await self._get_from_valkey(ENTITY_DEFS_KEY)
+        if entity_data:
+            # Search through all entity definitions to find matching ID
+            for entity_name, entity_def in entity_data.items():
+                def_id = self._decode_from_valkey(entity_def.get("id"), int)
+                if def_id == entity_id:
+                    return entity_def
         return None
 
 

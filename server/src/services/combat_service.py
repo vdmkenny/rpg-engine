@@ -133,7 +133,7 @@ class CombatService:
                 defence_bonus += item_meta.get("physical_defence_bonus", 0)
         
         # Get username for display
-        username = player_mgr.get_username_for_player(player_id) or f"Player{player_id}"
+        username = await player_mgr.get_username_for_player(player_id) or f"Player{player_id}"
         
         return CombatStats(
             attack_level=attack_level,
@@ -159,14 +159,25 @@ class CombatService:
             CombatStats or None if entity not found
         """
         entity_mgr = get_entity_manager()
+        ref_mgr = get_reference_data_manager()
         
         # Get entity instance
         entity_data = await entity_mgr.get_entity_instance(entity_id)
         if not entity_data:
             return None
         
-        # Get entity definition (works for both humanoids and monsters)
-        entity_name = entity_data.get("entity_name", "")
+        # Get entity reference ID from instance data
+        entity_ref_id = entity_data.get("entity_id")
+        if not entity_ref_id:
+            return None
+            
+        # Get entity definition from reference data manager
+        entity_def_data = await ref_mgr.get_entity_definition_by_id(entity_ref_id)
+        if not entity_def_data:
+            return None
+            
+        # Get entity name and lookup the enum
+        entity_name = entity_def_data.get("name", "")
         entity_enum = get_entity_by_name(entity_name)
         if not entity_enum:
             return None

@@ -146,14 +146,9 @@ class EquipmentManager(BaseManager):
 
         key = EQUIPMENT_KEY.format(player_id=player_id)
 
-        # Get current equipment
-        equipment = await self._get_from_valkey(key) or {}
-
-        # Remove slot
-        if slot in equipment:
-            del equipment[slot]
-            await self._cache_in_valkey(key, equipment, TIER2_TTL)
-            await self._valkey.sadd(DIRTY_EQUIPMENT_KEY, [str(player_id)])
+        # Delete the field from the hash
+        await self._valkey.hdel(key, [slot])
+        await self._valkey.sadd(DIRTY_EQUIPMENT_KEY, [str(player_id)])
 
     async def _delete_equipment_slot_from_db(self, player_id: int, slot: str) -> None:
         if not self._session_factory:

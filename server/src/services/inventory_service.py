@@ -279,7 +279,7 @@ class InventoryService:
                         success=True,
                         message=f"Added {quantity} {item.display_name} to existing stack",
                         operation=OperationType.ADD,
-                        data={"slot": slot_num, "quantity": quantity},
+                        data={"slot": int(slot_num), "quantity": quantity},
                     )
                 else:
                     # Continue with remaining quantity
@@ -292,7 +292,7 @@ class InventoryService:
             inventory_data = await inventory_mgr.get_inventory(player_id)
             free_slot = None
             for i in range(settings.INVENTORY_MAX_SLOTS):
-                if i not in inventory_data:
+                if str(i) not in inventory_data:  # Keys are strings in the inventory dict!
                     free_slot = i
                     break
             if free_slot is None:
@@ -359,6 +359,7 @@ class InventoryService:
         from .game_state import get_inventory_manager
         
         inventory_mgr = get_inventory_manager()
+        
         if quantity <= 0:
             return OperationResult(
                 success=False,
@@ -460,7 +461,7 @@ class InventoryService:
                 operation=OperationType.MOVE,
             )
             
-        from_data = inventory_data.get(from_slot)
+        from_data = inventory_data.get(str(from_slot))
         if not from_data:
             return OperationResult(
                 success=False, 
@@ -468,7 +469,7 @@ class InventoryService:
                 operation=OperationType.MOVE,
             )
             
-        to_data = inventory_data.get(to_slot)
+        to_data = inventory_data.get(str(to_slot))
         
         # Handle move/swap operations
         if to_data:
