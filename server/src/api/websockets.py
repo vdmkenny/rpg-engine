@@ -245,8 +245,9 @@ async def websocket_endpoint(
         player_id = auth_result["player_id"]
         
         # Initialize connection
-        init_result = await initialize_player_connection(player_id, username)
-        if not init_result["success"]:
+        try:
+            await initialize_player_connection(username, player_id, valkey)
+        except Exception:
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
             return
         
@@ -259,7 +260,7 @@ async def websocket_endpoint(
         await send_welcome_message(websocket, username, player_id)
         
         # Broadcast player join to others
-        await handle_player_join_broadcast(player_id, username, init_result["position"])
+        await handle_player_join_broadcast(websocket, username, player_id, manager)
         
         # Register with game loop
         await register_player_login(player_id)
