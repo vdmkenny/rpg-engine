@@ -236,13 +236,11 @@ async def websocket_endpoint(
             return
         
         # Authenticate player
-        auth_result = await authenticate_player(auth_data)
-        if not auth_result["success"]:
+        try:
+            username, player_id = await authenticate_player(auth_data)
+        except WebSocketDisconnect:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
-        
-        username = auth_result["username"]
-        player_id = auth_result["player_id"]
         
         # Initialize connection
         try:
@@ -307,6 +305,9 @@ async def websocket_endpoint(
             extra={"player_id": player_id, "username": username}
         )
     except Exception as e:
+        import sys
+        print(f"WEBSOCKET ERROR: {e}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
         logger.error(
             "WebSocket error",
             extra={
