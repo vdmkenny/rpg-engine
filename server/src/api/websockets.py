@@ -319,9 +319,14 @@ async def websocket_endpoint(
     finally:
         # Cleanup
         if player_id:
+            # Get player position for the disconnect broadcast
+            from server.src.services.player_service import PlayerService
+            position = await PlayerService.get_player_position(player_id)
+            player_map = position.map_id if position else None
+            
             await manager.disconnect(player_id)
             players_online.dec()
-            await broadcast_player_left(player_id)
+            await broadcast_player_left(username or "Unknown", player_id, player_map, manager)
             
             if handler:
                 await ConnectionService.disconnect(player_id)
