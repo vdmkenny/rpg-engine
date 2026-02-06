@@ -17,6 +17,7 @@ class EventType(Enum):
     CONNECTED = auto()
     DISCONNECTED = auto()
     CONNECTION_ERROR = auto()
+    RECONNECTING = auto()
     
     # Authentication events
     AUTHENTICATING = auto()
@@ -71,7 +72,7 @@ class EventType(Enum):
     
     # Entity events
     ENTITY_SPAWNED = auto()
-    ENTITY_DESPawnED = auto()
+    ENTITY_DESPAWNED = auto()
     ENTITY_MOVED = auto()
     
     # Map events
@@ -115,14 +116,28 @@ class EventBus:
             self._once_handlers[event_type].remove(handler)
     
     def emit(self, event_type: EventType, data: Optional[Dict[str, Any]] = None, source: Optional[str] = None) -> None:
-        """Emit an event to all subscribers."""
+        """
+        Emit an event to all subscribers.
+        
+        Note: Async handlers will be scheduled as tasks on the running event loop.
+        For guaranteed async execution, use emit_async() instead.
+        """
         event = Event(type=event_type, data=data or {}, source=source)
         
         # Call regular handlers
         handlers = self._handlers.get(event_type, [])
         for handler in handlers:
             try:
-                handler(event)
+                if asyncio.iscoroutinefunction(handler):
+                    # Schedule async handler as a task
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(handler(event))
+                    except RuntimeError:
+                        # No running event loop - can't schedule async handler
+                        print(f"Warning: async handler {handler} registered but no event loop running")
+                else:
+                    handler(event)
             except Exception as e:
                 print(f"Error in event handler: {e}")
         
@@ -131,7 +146,16 @@ class EventBus:
         if once_handlers:
             for handler in once_handlers:
                 try:
-                    handler(event)
+                    if asyncio.iscoroutinefunction(handler):
+                        # Schedule async handler as a task
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(handler(event))
+                        except RuntimeError:
+                            # No running event loop - can't schedule async handler
+                            print(f"Warning: async once-handler {handler} registered but no event loop running")
+                    else:
+                        handler(event)
                 except Exception as e:
                     print(f"Error in once handler: {e}")
             # Clear once handlers

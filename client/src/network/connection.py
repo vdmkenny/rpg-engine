@@ -54,6 +54,8 @@ class ConnectionManager:
         self._connection_attempts = 0
         self._max_reconnect_attempts = 5
         self._reconnect_delay = 1.0
+        self._auth_complete = asyncio.Event()
+        self._buffered_messages: list = []  # Messages received during auth
     
     @property
     def state(self) -> ConnectionState:
@@ -93,22 +95,34 @@ class ConnectionManager:
         self._event_bus.emit(EventType.CONNECTING)
         
         try:
-            # Connect to WebSocket
+            # Connect to WebSocket (no headers - auth is via first message)
             uri = self._config.server.websocket_url
-            extra_headers = {"Authorization": f"Bearer {jwt_token}"}
             
             logger.info(f"Connecting to {uri}")
-            self._websocket = await websockets.connect(uri, extra_headers=extra_headers)
+            self._websocket = await websockets.connect(uri)
             
             self._state = ConnectionState.CONNECTED
             self._connection_attempts = 0
             self._event_bus.emit(EventType.CONNECTED)
             
-            # Start message receiver
+            # Clear buffered messages and auth event
+            self._buffered_messages.clear()
+            self._auth_complete.clear()
+            
+            # Start message receiver BEFORE sending auth
+            # This ensures no messages are missed or delayed
             self._receive_task = asyncio.create_task(self._receive_messages())
             
-            # Authenticate
-            await self._authenticate()
+            # Send authentication message
+            auth_success = await self._authenticate()
+            
+            if not auth_success:
+                logger.error("Authentication failed")
+                await self.disconnect()
+                return False
+            
+            # Process any buffered messages that arrived during auth
+            await self._process_buffered_messages()
             
             return True
             
@@ -119,7 +133,11 @@ class ConnectionManager:
             return False
     
     async def _authenticate(self) -> bool:
-        """Send authentication message."""
+        """
+        Send authentication message and wait for auth completion.
+        
+        The receiver task will process auth responses and set _auth_complete when done.
+        """
         if not self._websocket or not self._jwt_token:
             return False
         
@@ -134,22 +152,21 @@ class ConnectionManager:
             
             await self._websocket.send(msgpack.packb(auth_msg))
             
-            # Wait for authentication response
-            response_data = await self._websocket.recv()
-            response = msgpack.unpackb(response_data, raw=False)
+            # Wait for auth completion signal from receiver (with timeout)
+            try:
+                await asyncio.wait_for(self._auth_complete.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.error("Authentication timeout")
+                self._state = ConnectionState.ERROR
+                return False
             
-            msg_type = response.get("type")
-            
-            if msg_type == MessageType.RESP_SUCCESS.value:
-                self._state = ConnectionState.AUTHENTICATED
-                self._event_bus.emit(EventType.AUTHENTICATED)
+            # Check if auth was successful
+            if self._state == ConnectionState.AUTHENTICATED:
                 logger.info("Authentication successful")
                 return True
             else:
-                self._state = ConnectionState.ERROR
-                error = response.get("payload", {}).get("error", "Unknown error")
-                logger.error(f"Authentication failed: {error}")
-                self._event_bus.emit(EventType.AUTH_FAILED, {"error": error})
+                logger.error("Authentication failed")
+                self._event_bus.emit(EventType.AUTH_FAILED, {"error": "Authentication rejected by server"})
                 return False
                 
         except Exception as e:
@@ -178,6 +195,41 @@ class ConnectionManager:
         self._jwt_token = None
         self._event_bus.emit(EventType.DISCONNECTED)
         logger.info("Disconnected from server")
+    
+    async def reconnect(self) -> bool:
+        """
+        Attempt to reconnect with exponential backoff.
+        
+        Returns:
+            True if reconnection successful, False if max attempts reached
+        """
+        if not self._jwt_token:
+            logger.error("Cannot reconnect: no JWT token stored")
+            return False
+        
+        for attempt in range(1, self._max_reconnect_attempts + 1):
+            self._state = ConnectionState.RECONNECTING
+            self._event_bus.emit(EventType.RECONNECTING)
+            
+            # Exponential backoff: 1s, 2s, 4s, 8s, etc.
+            delay = self._reconnect_delay * (2 ** (attempt - 1))
+            logger.info(f"Reconnection attempt {attempt}/{self._max_reconnect_attempts} in {delay:.1f}s")
+            
+            await asyncio.sleep(delay)
+            
+            # Try to reconnect
+            success = await self.connect(self._jwt_token)
+            if success:
+                logger.info(f"Reconnected successfully on attempt {attempt}")
+                self._connection_attempts = 0
+                return True
+            else:
+                logger.warning(f"Reconnection attempt {attempt} failed")
+        
+        logger.error(f"Failed to reconnect after {self._max_reconnect_attempts} attempts")
+        self._state = ConnectionState.ERROR
+        self._event_bus.emit(EventType.CONNECTION_ERROR, {"error": "Max reconnection attempts reached"})
+        return False
     
     async def send(self, message: Dict[str, Any]) -> bool:
         """
@@ -258,6 +310,14 @@ class ConnectionManager:
             if self._state != ConnectionState.DISCONNECTED:
                 self._state = ConnectionState.DISCONNECTED
                 self._event_bus.emit(EventType.DISCONNECTED)
+                
+                # Attempt automatic reconnection if we were authenticated
+                if self._jwt_token and self._connection_attempts < self._max_reconnect_attempts:
+                    logger.info("Attempting automatic reconnection...")
+                    self._connection_attempts += 1
+                    success = await self.reconnect()
+                    if not success:
+                        logger.error("Automatic reconnection failed after all attempts")
     
     async def _handle_message(self, message: Dict[str, Any]) -> None:
         """Route a received message to its handler."""
@@ -273,6 +333,19 @@ class ConnectionManager:
             logger.warning(f"Unknown message type: {msg_type_str}")
             return
         
+        # During authentication, buffer all messages except auth responses
+        if self._state == ConnectionState.AUTHENTICATING:
+            if msg_type in (MessageType.RESP_SUCCESS, MessageType.RESP_ERROR, MessageType.EVENT_WELCOME):
+                # Auth response - handle immediately
+                await self._handle_auth_response(msg_type, message)
+                return
+            else:
+                # Buffer other messages for processing after auth
+                logger.debug(f"Buffering message {msg_type.value} received during auth")
+                self._buffered_messages.append(message)
+                return
+        
+        # After authentication, process all messages normally
         handler = self._message_handlers.get(msg_type)
         
         if handler:
@@ -289,6 +362,40 @@ class ConnectionManager:
         else:
             # No handler registered, might be normal for events
             logger.debug(f"No handler for message type: {msg_type.value}")
+    
+    async def _handle_auth_response(self, msg_type: MessageType, message: Dict[str, Any]) -> None:
+        """Handle authentication response message."""
+        if msg_type in (MessageType.RESP_SUCCESS, MessageType.EVENT_WELCOME):
+            self._state = ConnectionState.AUTHENTICATED
+            self._event_bus.emit(EventType.AUTHENTICATED)
+            
+            # If we got welcome event, process it immediately via handler
+            if msg_type == MessageType.EVENT_WELCOME:
+                handler = self._message_handlers.get(MessageType.EVENT_WELCOME)
+                if handler:
+                    payload = message.get("payload", {})
+                    correlation_id = message.get("id")
+                    if asyncio.iscoroutinefunction(handler):
+                        await handler(payload, correlation_id)
+                    else:
+                        handler(payload, correlation_id)
+            
+            # Signal auth completion
+            self._auth_complete.set()
+            
+        elif msg_type == MessageType.RESP_ERROR:
+            error = message.get("payload", {}).get("error", "Unknown error")
+            logger.error(f"Authentication failed: {error}")
+            self._state = ConnectionState.ERROR
+            self._event_bus.emit(EventType.AUTH_FAILED, {"error": error})
+            # Signal auth completion (as failure)
+            self._auth_complete.set()
+    
+    async def _process_buffered_messages(self) -> None:
+        """Process messages that were buffered during authentication."""
+        while self._buffered_messages:
+            message = self._buffered_messages.pop(0)
+            await self._handle_message(message)
 
 
 # Singleton instance

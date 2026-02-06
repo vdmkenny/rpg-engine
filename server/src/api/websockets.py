@@ -231,9 +231,6 @@ async def websocket_endpoint(
     try:
         # Receive and validate authentication message
         auth_data = await receive_auth_message(websocket)
-        if not auth_data:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
         
         # Authenticate player
         try:
@@ -267,6 +264,9 @@ async def websocket_endpoint(
         # Register with game loop
         await register_player_login(player_id)
         
+        # Message loop state for periodic cleanup
+        message_count = 0
+        
         # Message processing loop
         while True:
             try:
@@ -277,12 +277,15 @@ async def websocket_endpoint(
                 try:
                     message_data = message_validator.validate_message_structure(raw_data)
                 except ValueError as e:
-                    await handler._send_error_response(
-                        None,
-                        ErrorCodes.SYS_INVALID_MESSAGE,
-                        ErrorCategory.VALIDATION,
-                        str(e)
-                    )
+                    try:
+                        await handler._send_error_response(
+                            None,
+                            ErrorCodes.SYS_INVALID_MESSAGE,
+                            ErrorCategory.VALIDATION,
+                            str(e)
+                        )
+                    except ConnectionError:
+                        raise WebSocketDisconnect(code=status.WS_1006_ABNORMAL_CLOSURE)
                     continue
                 
                 # Create message object
@@ -291,8 +294,20 @@ async def websocket_endpoint(
                 # Process message
                 await handler.process_message(message)
                 
+                # Periodically clean up expired correlation IDs (every 100 messages)
+                message_count += 1
+                if message_count >= 100:
+                    correlation_manager.cleanup_expired(max_age_seconds=60.0)
+                    message_count = 0
+                
             except WebSocketDisconnect:
                 raise
+            except ConnectionError as e:
+                logger.warning(
+                    "Connection error in message loop, disconnecting",
+                    extra={"player_id": player_id, "error": str(e)}
+                )
+                raise WebSocketDisconnect(code=status.WS_1006_ABNORMAL_CLOSURE)
             except Exception as e:
                 logger.error(
                     "Error in message loop",

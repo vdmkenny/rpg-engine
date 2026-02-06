@@ -93,32 +93,33 @@ class BaseHandlerMixin:
         await self._send_message(response)
     
     async def _send_message(self, message: WSMessage) -> None:
-        """Send message with serialization and connection health checks."""
+        """
+        Send message with serialization and connection health checks.
+        
+        Raises:
+            ConnectionError: If WebSocket is closed/closing, so the message loop can handle disconnection
+        """
+        message_dump = message.model_dump()
+        packed_message = msgpack.packb(message_dump, use_bin_type=True)
+        
+        # Check connection state before sending
+        if hasattr(self.websocket, 'client_state'):
+            if self.websocket.client_state == 3:  # CLOSED
+                logger.warning(
+                    "Attempted to send on closed WebSocket",
+                    extra={"username": self.username, "message_type": message.type}
+                )
+                raise ConnectionError("WebSocket connection is closed")
+            elif self.websocket.client_state == 2:  # CLOSING
+                logger.warning(
+                    "Attempted to send on closing WebSocket",
+                    extra={"username": self.username, "message_type": message.type}
+                )
+                raise ConnectionError("WebSocket connection is closing")
+        
         try:
-            message_dump = message.model_dump()
-            packed_message = msgpack.packb(message_dump, use_bin_type=True)
-            
-            # Check connection state before sending
-            if hasattr(self.websocket, 'client_state'):
-                if self.websocket.client_state == 3:  # CLOSED
-                    logger.warning(
-                        "Attempted to send on closed WebSocket",
-                        extra={"username": self.username, "message_type": message.type}
-                    )
-                    from server.src.api.connection_manager import ConnectionManager
-                    manager = ConnectionManager()
-                    await manager.disconnect(self.player_id)
-                    raise ConnectionError("WebSocket connection is closed")
-                elif self.websocket.client_state == 2:  # CLOSING
-                    logger.warning(
-                        "Attempted to send on closing WebSocket",
-                        extra={"username": self.username, "message_type": message.type}
-                    )
-                    raise ConnectionError("WebSocket connection is closing")
-            
             await self.websocket.send_bytes(packed_message)
             metrics.track_websocket_message(str(message.type), "outbound")
-            
         except Exception as e:
             logger.error(
                 "Error sending WebSocket message",
@@ -131,6 +132,7 @@ class BaseHandlerMixin:
                     "traceback": traceback.format_exc()
                 }
             )
+            raise
     
     async def _send_inventory_state_update(self) -> None:
         """Send personal inventory state update event."""

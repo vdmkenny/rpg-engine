@@ -366,112 +366,19 @@ class RateLimiter:
 MessageHandler = Callable[[WSMessage], Awaitable[None]]
 
 class MessageRouter:
-    """Routes WebSocket messages to appropriate handlers"""
+    """Simple message handler registry.
+    
+    Note: The actual message routing happens in websockets.py using module-level
+    rate_limiter and correlation_manager instances. This class is kept as a
+    lightweight handler registry.
+    """
     
     def __init__(self):
         self.handlers: Dict[MessageType, MessageHandler] = {}
-        self.correlation_manager = CorrelationManager()
-        self.rate_limiter = RateLimiter()
         
     def register_handler(self, message_type: MessageType, handler: MessageHandler) -> None:
         """Register a message handler"""
         self.handlers[message_type] = handler
-        
-    async def route_message(
-        self, 
-        websocket: Any, 
-        raw_message: bytes, 
-        player_id: Optional[int] = None
-    ) -> None:
-        """Route an incoming message to the appropriate handler"""
-        try:
-            # Validate and parse message
-            message_data = MessageValidator.validate_message_structure(raw_message)
-            MessageValidator.validate_correlation_id(message_data)
-            ws_message = MessageValidator.create_ws_message(message_data)
-            
-            # Check if handler exists
-            if ws_message.type not in self.handlers:
-                await self._send_error_response(
-                    websocket, 
-                    ws_message.id,
-                    ErrorCodes.SYS_SERVICE_UNAVAILABLE,
-                    f"No handler for message type: {ws_message.type}"
-                )
-                return
-                
-            # Check rate limiting for commands and queries
-            if player_id and ws_message.type in (COMMAND_TYPES | QUERY_TYPES):
-                retry_after = self.rate_limiter.check_rate_limit(player_id, ws_message.type)
-                if retry_after is not None:
-                    await self._send_error_response(
-                        websocket,
-                        ws_message.id, 
-                        ErrorCodes.MOVE_RATE_LIMITED,  # Generic rate limit error
-                        "Operation rate limited",
-                        error_category=ErrorCategory.RATE_LIMIT,
-                        retry_after=retry_after
-                    )
-                    return
-                    
-            # Register correlation for tracking (commands/queries only)
-            if ws_message.id:
-                self.correlation_manager.register_request(
-                    ws_message.id,
-                    ws_message.type,
-                    player_id
-                )
-                
-            # Route to handler  
-            handler = self.handlers[ws_message.type]
-            await handler(ws_message)
-            
-        except ValueError as e:
-            # Message validation error
-            logger.warning(f"Invalid message from player {player_id}: {e}")
-            await self._send_error_response(
-                websocket,
-                None,
-                ErrorCodes.SYS_INTERNAL_ERROR,
-                f"Invalid message format: {e}",
-                error_category=ErrorCategory.VALIDATION
-            )
-        except Exception as e:
-            # Unexpected error
-            logger.error(f"Error routing message from player {player_id}: {e}", exc_info=True)
-            await self._send_error_response(
-                websocket,
-                message_data.get("id") if 'message_data' in locals() else None,
-                ErrorCodes.SYS_INTERNAL_ERROR,
-                "Internal server error",
-                error_category=ErrorCategory.SYSTEM
-            )
-            
-    async def _send_error_response(
-        self,
-        websocket: Any,
-        correlation_id: Optional[str],
-        error_code: str,
-        message: str,
-        error_category: ErrorCategory = ErrorCategory.SYSTEM,
-        retry_after: Optional[float] = None
-    ) -> None:
-        """Send an error response"""
-        try:
-            error_msg = create_error_response(
-                correlation_id or "unknown",
-                error_code,
-                message,
-                error_category=error_category,
-                retry_after=retry_after
-            )
-            await websocket.send_bytes(msgpack.packb(error_msg.model_dump()))
-        except Exception as e:
-            logger.error(f"Failed to send error response: {e}")
-            
-    def cleanup_player(self, player_id: int) -> None:
-        """Clean up resources for disconnected player"""
-        self.rate_limiter.cleanup_player(player_id)
 
 
 # =============================================================================
