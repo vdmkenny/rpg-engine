@@ -21,7 +21,8 @@ class ConnectionService:
     @staticmethod
     async def initialize_player_connection(
         player_id: int, username: str, x: int, y: int, 
-        map_id: str, current_hp: int, max_hp: int
+        map_id: str, current_hp: int, max_hp: int,
+        appearance: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
         Initialize a player's WebSocket connection state.
@@ -36,6 +37,7 @@ class ConnectionService:
             map_id: Player's map ID
             current_hp: Player's current HP
             max_hp: Player's maximum HP
+            appearance: Player appearance data to cache in Valkey
 
         Returns:
             Dict with initialization data
@@ -66,6 +68,10 @@ class ConnectionService:
             from server.src.services.hp_service import HpService
             hp_data = {"current_hp": current_hp, "max_hp": max_hp}
             await HpService.set_hp(player_id, current_hp, max_hp)
+            
+            # Cache appearance data if provided
+            if appearance:
+                await player_mgr.cache_player_appearance(player_id, appearance)
 
             # Get nearby players for initial state
             nearby_players = await PlayerService.get_nearby_players(

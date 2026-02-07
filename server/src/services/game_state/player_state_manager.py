@@ -315,8 +315,10 @@ class PlayerStateManager:
             db.add(player)
             await db.flush()
             await db.refresh(player)
+            # Capture ID before commit expires the object
+            player_id = player.id
             await db.commit()
-            return player.id
+            return player_id
 
     async def get_player_record_by_username(self, username: str) -> Optional[PlayerData]:
         """Get player record by username from database."""
@@ -642,6 +644,43 @@ class PlayerStateManager:
         key = PLAYER_COMBAT_STATE_KEY.format(player_id=player_id)
         await self._valkey.delete(key)
 
+    async def get_all_players_in_combat(self) -> List[Dict[str, Any]]:
+        """
+        Get all players currently in combat with their combat state.
+        
+        Uses Valkey SCAN to find all player_combat:* keys.
+        """
+        if not self._valkey or not settings.USE_VALKEY:
+            return []
+
+        pattern = PLAYER_COMBAT_STATE_KEY.replace("{player_id}", "*")
+        result = []
+        cursor = "0"
+        
+        # Use SCAN to iterate through matching keys
+        while True:
+            scan_result = await self._valkey.scan(cursor, match=pattern, count=100)
+            cursor = scan_result[0].decode() if isinstance(scan_result[0], bytes) else str(scan_result[0])
+            keys = scan_result[1]
+            
+            for key in keys:
+                key_str = key.decode() if isinstance(key, bytes) else key
+                # Extract player_id from key (format: "player_combat:123")
+                player_id = int(key_str.split(":")[-1])
+                
+                combat_state = await self._get_from_valkey(key_str)
+                if combat_state:
+                    result.append({
+                        "player_id": player_id,
+                        "combat_state": combat_state
+                    })
+            
+            # cursor "0" means we've completed the full scan
+            if cursor == "0":
+                break
+        
+        return result
+
     # =========================================================================
     # Appearance
     # =========================================================================
@@ -706,6 +745,39 @@ class PlayerStateManager:
                 extra={"player_id": player_id}
             )
             return True
+
+    async def cache_player_appearance(
+        self, player_id: int, appearance_dict: Dict[str, Any]
+    ) -> None:
+        """
+        Cache player appearance in Valkey.
+        
+        This ensures the game loop and other services can access appearance data
+        from the cache without hitting the database.
+        
+        Args:
+            player_id: Player ID
+            appearance_dict: Appearance data to cache
+        """
+        if not self._valkey or not settings.USE_VALKEY:
+            return
+        
+        key = PLAYER_KEY.format(player_id=player_id)
+        
+        # Get existing player data to preserve other fields
+        existing_data = await self._get_from_valkey(key)
+        
+        if existing_data:
+            # Update existing cache entry with appearance
+            existing_data["appearance"] = appearance_dict
+            await self._cache_in_valkey(key, existing_data, TIER1_TTL)
+        else:
+            # Create minimal cache entry if it doesn't exist (shouldn't happen in normal flow)
+            data = {
+                "player_id": player_id,
+                "appearance": appearance_dict,
+            }
+            await self._cache_in_valkey(key, data, TIER1_TTL)
 
     # =========================================================================
     # Cleanup

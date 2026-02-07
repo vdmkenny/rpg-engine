@@ -43,6 +43,51 @@ class TestInitializePlayerConnection:
         assert "nearby_players" in result
 
     @pytest.mark.asyncio
+    async def test_initialization_caches_appearance(self, game_state_managers, create_test_player):
+        """Test that appearance is properly cached in Valkey during initialization."""
+        player = await create_test_player("appearance_cache_test", "password123")
+        
+        # Set appearance in database
+        player_mgr = get_player_state_manager()
+        appearance_data = {
+            "body_type": "male",
+            "skin_tone": "light",
+            "head_type": "human/male",
+            "hair_style": "buzzcut",
+            "hair_color": "dark_brown",
+            "eye_color": "brown",
+            "facial_hair_style": "none",
+            "facial_hair_color": "dark_brown",
+            "shirt_style": "longsleeve2",
+            "shirt_color": "white",
+            "pants_style": "pants",
+            "pants_color": "brown",
+            "shoes_style": "shoes/basic",
+            "shoes_color": "brown",
+        }
+        # Update the player's appearance in the database
+        await player_mgr.update_player_appearance(player.id, appearance_data)
+        
+        # Initialize connection which should cache appearance
+        await ConnectionService.initialize_player_connection(
+            player_id=player.id,
+            username="appearance_cache_test",
+            x=10,
+            y=20,
+            map_id="samplemap",
+            current_hp=80,
+            max_hp=100,
+            appearance=appearance_data
+        )
+        
+        # Verify appearance was cached in Valkey via player state manager
+        # We can't directly verify Valkey, but we can check the game loop would find it
+        player_full_state = await player_mgr.get_player_full_state(player.id)
+        assert player_full_state is not None
+        assert "appearance" in player_full_state
+        assert player_full_state["appearance"] == appearance_data
+
+    @pytest.mark.asyncio
     async def test_initialization_sets_hp_in_gsm(self, game_state_managers, create_test_player):
         """Test that HP is properly set in GSM during initialization."""
         player = await create_test_player("hp_init_test", "password123")
