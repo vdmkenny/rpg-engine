@@ -150,21 +150,18 @@ class EntitySpawnService:
             target_player_id=None,
         )
         
-        # Store additional spawn metadata in entity state
-        key = f"entity_instance:{instance_id}"
-        if entity_mgr._valkey:
-            # Get current data and update with spawn metadata
-            current_data = await entity_mgr._get_from_valkey(key)
-            if current_data:
-                current_data["entity_name"] = entity_id_str
-                current_data["entity_type"] = entity_type.value
-                current_data["spawn_x"] = spawn_x
-                current_data["spawn_y"] = spawn_y
-                current_data["wander_radius"] = wander_radius
-                current_data["spawn_point_id"] = spawn_point_id
-                current_data["aggro_radius"] = aggro_override
-                current_data["disengage_radius"] = disengage_override
-                await entity_mgr._cache_in_valkey(key, current_data, 1800)
+        # Store additional spawn metadata in entity state via public API
+        await entity_mgr.store_spawn_metadata(
+            instance_id=instance_id,
+            entity_name=entity_id_str,
+            entity_type=entity_type.value,
+            spawn_x=spawn_x,
+            spawn_y=spawn_y,
+            wander_radius=wander_radius,
+            spawn_point_id=spawn_point_id,
+            aggro_radius=aggro_override,
+            disengage_radius=disengage_override,
+        )
         
         logger.debug(
             "Entity spawned",
@@ -192,33 +189,22 @@ class EntitySpawnService:
         Returns:
             Number of entities respawned
         """
-        if not entity_mgr._valkey:
-            return 0
-        
-        # Get entities ready to respawn (score <= current time)
-        # Use entity_mgr's timestamp method for testability
-        current_time = entity_mgr._utc_timestamp()
-        score_query = RangeByScore(
-            start=ScoreBoundary(0, is_inclusive=True),
-            end=ScoreBoundary(current_time, is_inclusive=True),
-        )
-        ready_to_respawn = await entity_mgr._valkey.zrange(
-            ENTITY_RESPAWN_QUEUE_KEY,
-            score_query,
-        )
+        # Get entities ready to respawn using public API
+        import time
+        current_time = time.time()
+        ready_to_respawn = await entity_mgr.get_time_based_respawn_queue(current_time)
         
         if not ready_to_respawn:
             return 0
         
         respawned_count = 0
-        for instance_id_bytes in ready_to_respawn:
-            instance_id = int(instance_id_bytes.decode() if isinstance(instance_id_bytes, bytes) else instance_id_bytes)
+        for instance_id in ready_to_respawn:
             
             # Get entity data to respawn
             entity_data = await entity_mgr.get_entity_instance(instance_id)
             if not entity_data:
                 logger.warning("Entity not found for respawn", extra={"instance_id": instance_id})
-                await entity_mgr._valkey.zrem(ENTITY_RESPAWN_QUEUE_KEY, [str(instance_id)])
+                await entity_mgr.remove_from_respawn_queue(instance_id)
                 continue
             
             # Get spawn coordinates from entity data or fall back to current position
@@ -239,7 +225,7 @@ class EntitySpawnService:
             await entity_mgr.set_entity_state(instance_id, "idle")
             
             # Remove from respawn queue
-            await entity_mgr._valkey.zrem(ENTITY_RESPAWN_QUEUE_KEY, [str(instance_id)])
+            await entity_mgr.remove_from_respawn_queue(instance_id)
             
             respawned_count += 1
             logger.debug(

@@ -137,6 +137,11 @@ class SpritePaths:
         if shirt_style == ClothingStyle.NONE:
             return ""
 
+        # Handle nested directory structure for longsleeve variants
+        # longsleeve2, longsleeve2_buttoned, etc. are inside longsleeve/ parent directory
+        if shirt_style.value.startswith("longsleeve"):
+            return f"torso/clothes/longsleeve/{shirt_style.value}/{body_type.value}/{animation}/{shirt_color.value}.png"
+
         return f"torso/clothes/{shirt_style.value}/{body_type.value}/{animation}/{shirt_color.value}.png"
 
     @staticmethod

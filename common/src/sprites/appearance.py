@@ -58,13 +58,13 @@ class AppearanceData:
     body_type: BodyType = BodyType.MALE
     skin_tone: SkinTone = SkinTone.LIGHT
     head_type: HeadType = HeadType.HUMAN_MALE
-    hair_style: HairStyle = HairStyle.SHORT
-    hair_color: HairColor = HairColor.BROWN
+    hair_style: HairStyle = HairStyle.BUZZCUT
+    hair_color: HairColor = HairColor.DARK_BROWN
     eye_color: EyeColor = EyeColor.BROWN
 
     # Facial hair (available for all body types, defaults to none for female)
     facial_hair_style: FacialHairStyle = FacialHairStyle.NONE
-    facial_hair_color: HairColor = HairColor.BROWN
+    facial_hair_color: HairColor = HairColor.DARK_BROWN
 
     # Base clothing (worn under armor)
     shirt_style: ClothingStyle = ClothingStyle.LONGSLEEVE
@@ -130,11 +130,11 @@ class AppearanceData:
             body_type=get_enum(BodyType, data.get("body_type"), BodyType.MALE),
             skin_tone=get_enum(SkinTone, data.get("skin_tone"), SkinTone.LIGHT),
             head_type=get_enum(HeadType, data.get("head_type"), HeadType.HUMAN_MALE),
-            hair_style=get_enum(HairStyle, data.get("hair_style"), HairStyle.SHORT),
-            hair_color=get_enum(HairColor, data.get("hair_color"), HairColor.BROWN),
+            hair_style=get_enum(HairStyle, data.get("hair_style"), HairStyle.BUZZCUT),
+            hair_color=get_enum(HairColor, data.get("hair_color"), HairColor.DARK_BROWN),
             eye_color=get_enum(EyeColor, data.get("eye_color"), EyeColor.BROWN),
             facial_hair_style=get_enum(FacialHairStyle, data.get("facial_hair_style"), FacialHairStyle.NONE),
-            facial_hair_color=get_enum(HairColor, data.get("facial_hair_color"), HairColor.BROWN),
+            facial_hair_color=get_enum(HairColor, data.get("facial_hair_color"), HairColor.DARK_BROWN),
             shirt_style=get_enum(ClothingStyle, data.get("shirt_style"), ClothingStyle.LONGSLEEVE),
             shirt_color=get_enum(ClothingColor, data.get("shirt_color"), ClothingColor.WHITE),
             pants_style=get_enum(PantsStyle, data.get("pants_style"), PantsStyle.PANTS),
@@ -199,11 +199,11 @@ class AppearancePresets:
         body_type=BodyType.MALE,
         skin_tone=SkinTone.LIGHT,
         head_type=HeadType.HUMAN_MALE,
-        hair_style=HairStyle.SHORT,
-        hair_color=HairColor.BROWN,
+        hair_style=HairStyle.BUZZCUT,
+        hair_color=HairColor.DARK_BROWN,
         eye_color=EyeColor.BROWN,
         facial_hair_style=FacialHairStyle.NONE,
-        facial_hair_color=HairColor.BROWN,
+        facial_hair_color=HairColor.DARK_BROWN,
         shirt_style=ClothingStyle.LONGSLEEVE,
         shirt_color=ClothingColor.WHITE,
         pants_style=PantsStyle.PANTS,
@@ -218,10 +218,10 @@ class AppearancePresets:
         skin_tone=SkinTone.LIGHT,
         head_type=HeadType.HUMAN_FEMALE,
         hair_style=HairStyle.LONG,
-        hair_color=HairColor.BRUNETTE,
+        hair_color=HairColor.CHESTNUT,
         eye_color=EyeColor.GREEN,
         facial_hair_style=FacialHairStyle.NONE,
-        facial_hair_color=HairColor.BRUNETTE,
+        facial_hair_color=HairColor.CHESTNUT,
         shirt_style=ClothingStyle.BLOUSE,
         shirt_color=ClothingColor.WHITE,
         pants_style=PantsStyle.PANTS,
@@ -235,7 +235,7 @@ class AppearancePresets:
         body_type=BodyType.MALE,
         skin_tone=SkinTone.OLIVE,
         head_type=HeadType.HUMAN_MALE,
-        hair_style=HairStyle.SHORT,
+        hair_style=HairStyle.BUZZCUT,
         hair_color=HairColor.BLACK,
         eye_color=EyeColor.BROWN,
         facial_hair_style=FacialHairStyle.BEARD_BLACK,
@@ -272,10 +272,10 @@ class AppearancePresets:
         skin_tone=SkinTone.BROWN,
         head_type=HeadType.HUMAN_MALE,
         hair_style=HairStyle.PARTED,
-        hair_color=HairColor.BROWN,
+        hair_color=HairColor.DARK_BROWN,
         eye_color=EyeColor.BROWN,
         facial_hair_style=FacialHairStyle.NONE,
-        facial_hair_color=HairColor.BROWN,
+        facial_hair_color=HairColor.DARK_BROWN,
         shirt_style=ClothingStyle.LONGSLEEVE,
         shirt_color=ClothingColor.BLUE,
         pants_style=PantsStyle.PANTS,

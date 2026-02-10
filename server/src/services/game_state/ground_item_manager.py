@@ -24,6 +24,7 @@ GROUND_ITEM_KEY = "ground_item:{ground_item_id}"
 GROUND_ITEMS_MAP_KEY = "ground_items:map:{map_id}"
 GROUND_ITEMS_NEXT_ID_KEY = "ground_items:next_id"
 DIRTY_GROUND_ITEMS_KEY = "dirty:ground_items"
+GROUND_ITEMS_DELETE_KEY = "ground_items:to_delete"
 
 # Ground items use longer TTL since they persist until picked up/despawn
 GROUND_ITEM_TTL = 3600  # 1 hour
@@ -118,7 +119,7 @@ class GroundItemManager(BaseManager):
         await self._valkey.srem(map_key, [str(ground_item_id)])
 
         # Mark for DB deletion
-        await self._valkey.sadd("ground_items:to_delete", [str(ground_item_id)])
+        await self._valkey.sadd(GROUND_ITEMS_DELETE_KEY, [str(ground_item_id)])
 
         return True
 
@@ -376,8 +377,18 @@ class GroundItemManager(BaseManager):
             )
             await db.execute(stmt)
 
-        # Clear dirty set
-        await self._valkey.delete([DIRTY_GROUND_ITEMS_KEY])
+        # Process deletions
+        items_to_delete = await self._valkey.smembers(GROUND_ITEMS_DELETE_KEY)
+        for item_id_bytes in items_to_delete:
+            item_id = int(self._decode_bytes(item_id_bytes))
+            # Delete from database
+            await db.execute(
+                delete(GroundItem).where(GroundItem.id == item_id)
+            )
+            logger.debug("Deleted ground item from DB", extra={"item_id": item_id})
+
+        # Clear dirty sets
+        await self._valkey.delete([DIRTY_GROUND_ITEMS_KEY, GROUND_ITEMS_DELETE_KEY])
 
 
 # Singleton instance

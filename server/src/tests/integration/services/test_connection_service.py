@@ -192,12 +192,13 @@ class TestHandlePlayerDisconnect:
     async def test_disconnect_player_not_found(self, game_state_managers):
         """Test disconnect handling when player not found."""
         result = await ConnectionService.handle_player_disconnect(
-            username="nonexistent_user"
+            player_id=99999
         )
         
-        assert result["cleanup_completed"] is False
-        assert result["error"] == "Player not found"
-        assert result["player_id"] is None
+        # Non-existent player should still clean up successfully (no error)
+        assert result["cleanup_completed"] is True
+        assert result["player_id"] == 99999
+        assert result["username"] is None
 
     @pytest.mark.asyncio
     async def test_disconnect_successful(self, game_state_managers, create_test_player):
@@ -216,7 +217,7 @@ class TestHandlePlayerDisconnect:
         )
         
         result = await ConnectionService.handle_player_disconnect(
-            username="disconnect_test"
+            player_id=player.id
         )
         
         assert result["player_id"] == player.id

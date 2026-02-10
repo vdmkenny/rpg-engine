@@ -12,7 +12,8 @@ from typing import Dict, Any
 
 from server.src.services.player_service import PlayerService
 from server.src.services.game_state import get_player_state_manager
-from server.src.schemas.player import PlayerCreate, PlayerRole
+from server.src.core.constants import PlayerRole
+from server.src.schemas.player import PlayerCreate
 from server.src.models.player import Player
 from fastapi import HTTPException
 

@@ -506,10 +506,12 @@ class CombatService:
                 game_state = get_game_loop_state()
                 
                 # Get defender's weapon attack speed
-                defender_equipment = await equip_mgr.get_equipment(defender_id)
+                equipment_mgr = get_equipment_manager()
+                reference_mgr = get_reference_data_manager()
+                defender_equipment = await equipment_mgr.get_equipment(defender_id)
                 defender_weapon = defender_equipment.get("weapon")
                 if defender_weapon and defender_weapon.get("item_id"):
-                    weapon_meta = ref_mgr.get_cached_item_meta(defender_weapon["item_id"])
+                    weapon_meta = reference_mgr.get_cached_item_meta(defender_weapon["item_id"])
                     base_attack_speed = game_config.get("game", {}).get("combat", {}).get("base_attack_speed", 3.0)
                     defender_attack_speed = weapon_meta.get("attack_speed", base_attack_speed)
                 else:

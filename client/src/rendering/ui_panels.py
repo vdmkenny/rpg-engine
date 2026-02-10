@@ -1,0 +1,903 @@
+"""
+OSRS-Style UI Panels - Tabbed side panel, chat window, minimap, etc.
+
+Ported from legacy_ui_panels.py with modern architecture.
+"""
+
+import pygame
+from typing import Dict, List, Tuple, Optional, Callable, Any
+import time
+from dataclasses import dataclass
+
+from ..ui.colors import Colors
+
+
+# =============================================================================
+# BASE PANEL CLASS
+# =============================================================================
+
+class UIPanel:
+    """Base class for UI panels with 3D stone border styling."""
+    
+    def __init__(self, x: int, y: int, width: int, height: int, title: str = "", visible: bool = True):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.title = title
+        self.visible = visible
+        self.is_dragging = False
+        self.drag_offset_x = 0
+        self.drag_offset_y = 0
+        
+        # Pre-rendered background
+        self._bg_surface = None
+        self._bg_dirty = True
+        
+        # Fonts
+        try:
+            self.font = pygame.font.Font("client/assets/fonts/RetroRPG.ttf", 24)
+            self.small_font = pygame.font.Font("client/assets/fonts/RetroRPG.ttf", 18)
+            self.tiny_font = pygame.font.Font("client/assets/fonts/RetroRPG.ttf", 14)
+        except:
+            self.font = pygame.font.Font(None, 24)
+            self.small_font = pygame.font.Font(None, 18)
+            self.tiny_font = pygame.font.Font(None, 14)
+    
+    @property
+    def rect(self) -> pygame.Rect:
+        """Get panel rectangle."""
+        return pygame.Rect(self.x, self.y, self.width, self.height)
+    
+    def _render_background(self) -> pygame.Surface:
+        """Render 3D stone-themed background."""
+        surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        
+        # Main fill
+        surface.fill(Colors.PANEL_BG)
+        
+        # Outer border (2px dark)
+        pygame.draw.rect(surface, Colors.PANEL_BORDER, (0, 0, self.width, self.height), 2)
+        
+        # Inner border (1px light)
+        pygame.draw.rect(surface, Colors.PANEL_INNER_BORDER, (2, 2, self.width-4, self.height-4), 1)
+        
+        # Top/left highlight
+        pygame.draw.line(surface, Colors.STONE_HIGHLIGHT, (3, 3), (self.width-3, 3), 1)
+        pygame.draw.line(surface, Colors.STONE_HIGHLIGHT, (3, 3), (3, self.height-3), 1)
+        
+        # Bottom/right shadow
+        pygame.draw.line(surface, Colors.PANEL_BORDER, (3, self.height-3), (self.width-3, self.height-3), 1)
+        pygame.draw.line(surface, Colors.PANEL_BORDER, (self.width-3, 3), (self.width-3, self.height-3), 1)
+        
+        return surface
+    
+    def draw(self, screen: pygame.Surface) -> None:
+        """Draw the panel."""
+        if not self.visible:
+            return
+        
+        if self._bg_dirty:
+            self._bg_surface = self._render_background()
+            self._bg_dirty = False
+        
+        # Blit background
+        screen.blit(self._bg_surface, (self.x, self.y))
+        
+        # Draw title
+        if self.title:
+            title_surface = self.font.render(self.title, True, Colors.TEXT_ORANGE)
+            screen.blit(title_surface, (self.x + self.width//2 - title_surface.get_width()//2, self.y + 5))
+    
+    def handle_event(self, event: pygame.event.Event) -> Optional[str]:
+        """Handle input events. Override in subclasses."""
+        return None
+
+
+# =============================================================================
+# INVENTORY PANEL
+# =============================================================================
+
+class InventoryPanel(UIPanel):
+    """Inventory grid with 4x7 slots."""
+    
+    SLOT_SIZE = 36
+    PADDING = 2
+    COLUMNS = 4
+    ROWS = 7
+    
+    def __init__(self, x: int, y: int):
+        super().__init__(
+            x, y,
+            self.COLUMNS * (self.SLOT_SIZE + self.PADDING) + 6 + 6,
+            self.ROWS * (self.SLOT_SIZE + self.PADDING) + 2 + 32,
+            "Inventory"
+        )
+        self.items: Dict[int, Dict[str, Any]] = {}
+        self.hovered_slot = -1
+        self.selected_slot = -1
+        self.on_slot_click: Optional[Callable[[int, int], None]] = None
+    
+    def _get_slot_rect(self, slot: int) -> pygame.Rect:
+        """Calculate rect for a slot."""
+        col = slot % self.COLUMNS
+        row = slot // self.COLUMNS
+        x = self.x + 6 + col * (self.SLOT_SIZE + self.PADDING)
+        y = self.y + 26 + row * (self.SLOT_SIZE + self.PADDING)
+        return pygame.Rect(x, y, self.SLOT_SIZE, self.SLOT_SIZE)
+    
+    def draw(self, screen: pygame.Surface) -> None:
+        """Draw inventory."""
+        super().draw(screen)
+        
+        for slot in range(self.COLUMNS * self.ROWS):
+            slot_rect = self._get_slot_rect(slot)
+            
+            # Background
+            if slot == self.selected_slot:
+                bg_color = Colors.SLOT_SELECTED
+            elif slot == self.hovered_slot:
+                bg_color = Colors.SLOT_HOVER
+            else:
+                bg_color = Colors.SLOT_BG
+            
+            pygame.draw.rect(screen, bg_color, slot_rect)
+            pygame.draw.rect(screen, Colors.SLOT_BORDER, slot_rect, 1)
+            
+            # Item if present
+            if slot in self.items:
+                item = self.items[slot]
+                # Draw rarity color
+                item_rect = slot_rect.inflate(-6, -6)
+                rarity = item.get("rarity", "common")
+                rarity_color = {
+                    "common": Colors.RARITY_COMMON,
+                    "uncommon": Colors.RARITY_UNCOMMON,
+                    "rare": Colors.RARITY_RARE,
+                    "epic": Colors.RARITY_EPIC,
+                    "legendary": Colors.RARITY_LEGENDARY,
+                }.get(rarity, Colors.RARITY_COMMON)
+                pygame.draw.rect(screen, rarity_color, item_rect)
+                pygame.draw.rect(screen, Colors.PANEL_BORDER, item_rect, 1)
+                
+                # Item name (3 chars)
+                name = item.get("name", "?")[:3]
+                text = self.tiny_font.render(name, True, Colors.TEXT_ORANGE)
+                screen.blit(text, (slot_rect.x + 2, slot_rect.y + 2))
+                
+                # Quantity
+                qty = item.get("quantity", 1)
+                if qty > 1:
+                    qty_text = "XK" if qty >= 100000 else str(qty)
+                    qty_surface = self.tiny_font.render(qty_text, True, Colors.TEXT_YELLOW)
+                    screen.blit(qty_surface, (slot_rect.x + 2, slot_rect.y + self.SLOT_SIZE - 12))
+    
+    def handle_event(self, event: pygame.event.Event) -> Optional[str]:
+        """Handle mouse events."""
+        if event.type == pygame.MOUSEMOTION:
+            # Update hover
+            for slot in range(self.COLUMNS * self.ROWS):
+                if self._get_slot_rect(slot).collidepoint(event.pos):
+                    self.hovered_slot = slot
+                    return None
+            self.hovered_slot = -1
+        
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            for slot in range(self.COLUMNS * self.ROWS):
+                if self._get_slot_rect(slot).collidepoint(event.pos):
+                    self.selected_slot = slot
+                    if self.on_slot_click:
+                        self.on_slot_click(slot, event.button)
+                    return None
+        
+        return None
+
+
+# =============================================================================
+# TABBED SIDE PANEL
+# =============================================================================
+
+class TabbedSidePanel(UIPanel):
+    """Main tabbed panel with Inventory, Equipment, Stats, Settings tabs."""
+
+    TAB_HEIGHT = 32
+    PANEL_WIDTH = 200
+    PANEL_HEIGHT = 280
+
+    def __init__(self, x: int, y: int, on_logout: Optional[Callable[[], None]] = None):
+        super().__init__(
+            x, y,
+            self.PANEL_WIDTH,
+            self.TAB_HEIGHT + self.PANEL_HEIGHT,
+            ""
+        )
+
+        self.tabs = [
+            ("inventory", "I", "Inventory"),
+            ("equipment", "E", "Equipment"),
+            ("stats", "S", "Stats"),
+            ("settings", "O", "Settings"),
+        ]
+
+        self.active_tab = "inventory"
+        self.hovered_tab = -1
+
+        # Inventory state
+        self.inventory_items: Dict[int, Dict[str, Any]] = {}
+        self.inventory_hovered_slot = -1
+        self.inventory_selected_slot = -1
+        self.on_inventory_click: Optional[Callable[[int, int], None]] = None
+        self.inventory_sort_criteria = "category"
+        self.on_inventory_sort: Optional[Callable[[str], None]] = None
+        self._sort_button_rects: Dict[str, pygame.Rect] = {}
+
+        # Equipment state
+        self.equipment_items: Dict[str, Dict[str, Any]] = {}
+
+        # Stats
+        self.skills: Dict[str, Dict[str, Any]] = {}
+        self.total_level = 0
+
+        # Settings - logout button
+        self.on_logout = on_logout
+        self.logout_hovered = False
+        self._logout_rect: Optional[pygame.Rect] = None
+
+        # Fonts
+        try:
+            self.tab_font = pygame.font.Font("client/assets/fonts/RetroRPG.ttf", 18)
+        except:
+            self.tab_font = pygame.font.Font(None, 18)
+    
+    def _get_tab_rect(self, tab_idx: int) -> pygame.Rect:
+        """Get rect for a tab."""
+        tab_width = self.PANEL_WIDTH // 4
+        return pygame.Rect(self.x + tab_idx * tab_width, self.y, tab_width, self.TAB_HEIGHT)
+    
+    def _get_content_rect(self) -> pygame.Rect:
+        """Get rect for content area below tabs."""
+        return pygame.Rect(
+            self.x,
+            self.y + self.TAB_HEIGHT,
+            self.PANEL_WIDTH,
+            self.PANEL_HEIGHT
+        )
+    
+    def draw(self, screen: pygame.Surface) -> None:
+        """Draw the tabbed panel."""
+        if not self.visible:
+            return
+        
+        content_rect = self._get_content_rect()
+        
+        # Draw panel background (below tabs)
+        pygame.draw.rect(screen, Colors.PANEL_BG, content_rect)
+        pygame.draw.rect(screen, Colors.PANEL_BORDER, content_rect, 2)
+        
+        # Draw tabs
+        for tab_idx, (tab_key, icon, label) in enumerate(self.tabs):
+            tab_rect = self._get_tab_rect(tab_idx)
+            
+            # Background
+            if tab_key == self.active_tab:
+                bg_color = Colors.PANEL_BG
+                # Draw connection to panel (hide bottom border)
+                pygame.draw.line(screen, Colors.PANEL_BG, tab_rect.bottomleft, tab_rect.bottomright, 2)
+            elif tab_idx == self.hovered_tab:
+                bg_color = Colors.STONE_LIGHT
+            else:
+                bg_color = Colors.STONE_DARK
+            
+            pygame.draw.rect(screen, bg_color, tab_rect)
+            pygame.draw.rect(screen, Colors.PANEL_BORDER, tab_rect, 1)
+            
+            # Icon
+            icon_color = Colors.TEXT_YELLOW if tab_key == self.active_tab else Colors.TEXT_WHITE
+            icon_text = self.tab_font.render(icon, True, icon_color)
+            screen.blit(icon_text, (
+                tab_rect.centerx - icon_text.get_width() // 2,
+                tab_rect.centery - icon_text.get_height() // 2
+            ))
+        
+        # Draw active tab content
+        if self.active_tab == "inventory":
+            self._draw_inventory_content(screen, content_rect)
+        elif self.active_tab == "equipment":
+            self._draw_equipment_content(screen, content_rect)
+        elif self.active_tab == "stats":
+            self._draw_stats_content(screen, content_rect)
+        elif self.active_tab == "settings":
+            self._draw_settings_content(screen, content_rect)
+    
+    def _draw_inventory_content(self, screen: pygame.Surface, content_rect: pygame.Rect) -> None:
+        """Draw inventory grid with sort buttons."""
+        # Sort buttons at top
+        btn_height = 18
+        btn_width = 45
+        btn_gap = 4
+        sort_y = content_rect.y + 6
+        sort_start_x = content_rect.x + (content_rect.width - (4 * btn_width + 3 * btn_gap)) // 2
+        
+        sort_buttons = [
+            ("Cat", "category"),
+            ("Rar", "rarity"),
+            ("Val", "value"),
+            ("A-Z", "name")
+        ]
+        
+        for i, (label, criteria) in enumerate(sort_buttons):
+            btn_x = sort_start_x + i * (btn_width + btn_gap)
+            btn_rect = pygame.Rect(btn_x, sort_y, btn_width, btn_height)
+            
+            # Check if this is the active sort
+            is_active = getattr(self, 'inventory_sort_criteria', 'category') == criteria
+            
+            # Button background
+            if is_active:
+                pygame.draw.rect(screen, (100, 100, 140), btn_rect)  # Highlighted
+                pygame.draw.rect(screen, (140, 140, 180), btn_rect, 2)  # Bright border
+            else:
+                pygame.draw.rect(screen, (60, 60, 80), btn_rect)  # Normal
+                pygame.draw.rect(screen, Colors.SLOT_BORDER, btn_rect, 1)  # Normal border
+            
+            # Button text
+            text = self.tiny_font.render(label, True, Colors.TEXT_WHITE)
+            text_x = btn_rect.x + (btn_width - text.get_width()) // 2
+            text_y = btn_rect.y + (btn_height - text.get_height()) // 2
+            screen.blit(text, (text_x, text_y))
+            
+            # Store rect for click detection
+            if not hasattr(self, '_sort_button_rects'):
+                self._sort_button_rects = {}
+            self._sort_button_rects[criteria] = btn_rect
+        
+        # Inventory grid below buttons
+        slot_size = 32
+        cols = 4
+        rows = 7
+        grid_width = cols * (slot_size + 2) - 2
+        start_x = content_rect.x + (content_rect.width - grid_width) // 2
+        start_y = content_rect.y + 8 + btn_height + 6  # Shift down for buttons
+        
+        for slot in range(cols * rows):
+            col = slot % cols
+            row = slot // cols
+            slot_rect = pygame.Rect(start_x + col * (slot_size + 2), start_y + row * (slot_size + 2), slot_size, slot_size)
+            
+            # Background
+            if slot == self.inventory_selected_slot:
+                bg = Colors.SLOT_SELECTED
+            elif slot == self.inventory_hovered_slot:
+                bg = Colors.SLOT_HOVER
+            else:
+                bg = Colors.SLOT_BG
+            
+            pygame.draw.rect(screen, bg, slot_rect)
+            pygame.draw.rect(screen, Colors.SLOT_BORDER, slot_rect, 1)
+            
+            # Item
+            if slot in self.inventory_items:
+                item = self.inventory_items[slot]
+                pygame.draw.rect(screen, Colors.RARITY_UNCOMMON, slot_rect.inflate(-4, -4))
+                name = item.get("name", "?")[:3]
+                text = self.tiny_font.render(name, True, Colors.TEXT_ORANGE)
+                screen.blit(text, (slot_rect.x + 2, slot_rect.y + 2))
+    
+    def _draw_equipment_content(self, screen: pygame.Surface, content_rect: pygame.Rect) -> None:
+        """Draw equipment paperdoll-style layout."""
+        center_x = content_rect.centerx
+        content_y = content_rect.y + 8
+        slot_size = 34
+        
+        # All 11 equipment slots in paperdoll layout
+        # Proper 3-column centered layout with 4px gaps between columns
+        # Left: center_x - 55, Middle: center_x - 17, Right: center_x + 21
+        col_left = center_x - 55
+        col_mid = center_x - 17
+        col_right = center_x + 21
+        row_step = 38  # slot_size + 4px gap
+
+        slots = [
+            ("head", col_mid, content_y),
+            ("cape", col_left, content_y + row_step),
+            ("neck", col_mid, content_y + row_step),
+            ("ammunition", col_right, content_y + row_step),
+            ("weapon", col_left, content_y + 2 * row_step),
+            ("body", col_mid, content_y + 2 * row_step),
+            ("shield", col_right, content_y + 2 * row_step),
+            ("hands", col_left, content_y + 3 * row_step),
+            ("legs", col_mid, content_y + 3 * row_step),
+            ("ring", col_right, content_y + 3 * row_step),
+            ("boots", col_mid, content_y + 4 * row_step),
+        ]
+        
+        # Slot abbreviations for display
+        slot_abbreviations = {
+            "head": "H", "cape": "C", "neck": "N", "ammunition": "A",
+            "weapon": "W", "body": "B", "shield": "S", "hands": "Ha",
+            "legs": "L", "ring": "R", "boots": "Bo"
+        }
+        
+        for slot_name, sx, sy in slots:
+            slot_rect = pygame.Rect(sx, sy, slot_size, slot_size)
+            
+            # Check if something is equipped in this slot
+            equipped_item = self.equipment_items.get(slot_name)
+            
+            if equipped_item:
+                # Draw equipped item slot
+                pygame.draw.rect(screen, Colors.RARITY_UNCOMMON, slot_rect)
+                pygame.draw.rect(screen, Colors.PANEL_BORDER, slot_rect, 1)
+                
+                # Draw item name (abbreviated)
+                item_name = equipped_item.get("name", "?")[:3]
+                text = self.tiny_font.render(item_name, True, Colors.TEXT_ORANGE)
+                text_x = slot_rect.x + (slot_size - text.get_width()) // 2
+                text_y = slot_rect.y + (slot_size - text.get_height()) // 2
+                screen.blit(text, (text_x, text_y))
+            else:
+                # Draw empty slot
+                pygame.draw.rect(screen, Colors.SLOT_BG, slot_rect)
+                pygame.draw.rect(screen, Colors.SLOT_BORDER, slot_rect, 1)
+                
+                # Slot abbreviation label
+                label = slot_abbreviations.get(slot_name, slot_name[0].upper())
+                label_text = self.tiny_font.render(label, True, Colors.TEXT_GRAY)
+                text_x = slot_rect.x + (slot_size - label_text.get_width()) // 2
+                text_y = slot_rect.y + (slot_size - label_text.get_height()) // 2
+                screen.blit(label_text, (text_x, text_y))
+    
+    def _draw_stats_content(self, screen: pygame.Surface, content_rect: pygame.Rect) -> None:
+        """Draw skills list with progress bars."""
+        # Title with total level
+        title_text = f"Skills (Total: {self.total_level})"
+        title = self.small_font.render(title_text, True, Colors.TEXT_YELLOW)
+        screen.blit(title, (content_rect.x + 8, content_rect.y + 6))
+        
+        # Skill categories with colors
+        category_colors = {
+            "combat": (255, 100, 100),      # Red
+            "gathering": (100, 255, 100),   # Green
+            "crafting": (100, 200, 255),    # Blue
+            "other": (200, 200, 200)        # Gray
+        }
+        
+        y = content_rect.y + 32
+        skill_height = 22
+        max_display = 10
+        
+        # Sort skills by category then by level
+        sorted_skills = sorted(
+            self.skills.items(),
+            key=lambda x: (x[1].get("category", "other"), -x[1].get("level", 1))
+        )[:max_display]
+        
+        for skill_name, skill_data in sorted_skills:
+            level = skill_data.get("level", 1)
+            xp = skill_data.get("xp", 0)
+            xp_to_next = skill_data.get("xp_to_next", 0)
+            category = skill_data.get("category", "other")
+            
+            # Skill name and level
+            name_text = self.tiny_font.render(f"{skill_name.title()}", True, Colors.TEXT_WHITE)
+            screen.blit(name_text, (content_rect.x + 8, y))
+            
+            # Level number on the right
+            level_text = self.tiny_font.render(str(level), True, Colors.TEXT_YELLOW)
+            level_x = content_rect.right - level_text.get_width() - 8
+            screen.blit(level_text, (level_x, y))
+            
+            # XP progress bar (thin, 3px height)
+            if xp_to_next > 0:
+                bar_width = content_rect.width - 16
+                bar_x = content_rect.x + 8
+                bar_y = y + 14
+                
+                # Calculate progress
+                progress = min(1.0, xp / xp_to_next) if xp_to_next > 0 else 0
+                fill_width = int(bar_width * progress)
+                
+                # Background (dark)
+                pygame.draw.rect(screen, (40, 40, 40), (bar_x, bar_y, bar_width, 3))
+                
+                # Fill (category color or green)
+                cat_color = category_colors.get(category, (100, 255, 100))
+                if fill_width > 0:
+                    pygame.draw.rect(screen, cat_color, (bar_x, bar_y, fill_width, 3))
+            
+            y += skill_height
+    
+    def _draw_settings_content(self, screen: pygame.Surface, content_rect: pygame.Rect) -> None:
+        """Draw settings."""
+        title = self.small_font.render("Settings", True, Colors.TEXT_YELLOW)
+        screen.blit(title, (content_rect.x + 8, content_rect.y + 8))
+
+        # Logout button
+        btn_rect = pygame.Rect(content_rect.x + 20, content_rect.y + 40, content_rect.width - 40, 30)
+
+        # Highlight if hovered - bright red for visibility
+        if self.logout_hovered:
+            pygame.draw.rect(screen, (180, 80, 80), btn_rect)  # Much brighter red
+            pygame.draw.rect(screen, (220, 120, 120), btn_rect, 3)  # Bright border
+        else:
+            pygame.draw.rect(screen, (100, 50, 50), btn_rect)
+            pygame.draw.rect(screen, Colors.STONE_HIGHLIGHT, btn_rect, 2)
+
+        btn_text = self.font.render("Logout", True, Colors.TEXT_WHITE)
+        screen.blit(btn_text, (
+            btn_rect.centerx - btn_text.get_width() // 2,
+            btn_rect.centery - btn_text.get_height() // 2
+        ))
+
+        # Store rect for click detection
+        self._logout_rect = btn_rect
+    
+    def handle_event(self, event: pygame.event.Event) -> Optional[str]:
+        """Handle events."""
+        if event.type == pygame.MOUSEMOTION:
+            pos = event.pos
+
+            # Update tab hover
+            self.hovered_tab = -1
+            for i, _ in enumerate(self.tabs):
+                if self._get_tab_rect(i).collidepoint(pos):
+                    self.hovered_tab = i
+                    break
+            
+            # Check logout hover (independent of tab hover)
+            if self.active_tab == "settings" and self._logout_rect:
+                self.logout_hovered = self._logout_rect.collidepoint(pos)
+            else:
+                self.logout_hovered = False
+
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            pos = event.pos
+
+            # Check if clicking on panel
+            if not self.rect.collidepoint(pos):
+                return None
+
+            # Check tab clicks
+            for i, (tab_key, _, _) in enumerate(self.tabs):
+                if self._get_tab_rect(i).collidepoint(pos):
+                    self.active_tab = tab_key
+                    return "tab_changed"
+
+            # Check inventory sort button clicks (only in inventory tab)
+            if self.active_tab == "inventory":
+                for criteria, btn_rect in self._sort_button_rects.items():
+                    if btn_rect.collidepoint(pos):
+                        self.inventory_sort_criteria = criteria
+                        if self.on_inventory_sort:
+                            self.on_inventory_sort(criteria)
+                        return "inventory_sort"
+
+            # Check logout button click (only in settings tab)
+            if self.active_tab == "settings" and self._logout_rect:
+                if self._logout_rect.collidepoint(pos):
+                    if self.on_logout:
+                        self.on_logout()
+                    return "logout"
+
+        return None
+
+
+# =============================================================================
+# CHAT WINDOW
+# =============================================================================
+
+class ChatWindow(UIPanel):
+    """Chat with channel tabs (Local, Global, DM)."""
+    
+    TAB_HEIGHT = 24
+    
+    def __init__(self, x: int, y: int, width: int = 400, height: int = 150):
+        super().__init__(x, y, width, height, "")
+        
+        self.channels = {
+            "local": {"messages": [], "color": Colors.TEXT_GREEN},
+            "global": {"messages": [], "color": Colors.TEXT_CYAN},
+            "dm": {"messages": [], "color": Colors.TEXT_PURPLE},
+        }
+        self.active_channel = "local"
+        
+        self.input_text = ""
+        self.input_focused = False
+        self.input_cursor_pos = 0
+        self.cursor_blink_time = 0.0
+    
+    def draw(self, screen: pygame.Surface) -> None:
+        """Draw chat window."""
+        if not self.visible:
+            return
+        
+        # Translucent background
+        surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        surface.fill((*Colors.PANEL_BG, 180))
+        screen.blit(surface, (self.x, self.y))
+        
+        # Border
+        pygame.draw.rect(screen, Colors.PANEL_BORDER, (self.x, self.y, self.width, self.height), 2)
+        
+        # Tabs
+        tab_width = self.width // 3
+        for tab_idx, (ch_name, ch_data) in enumerate(self.channels.items()):
+            tab_rect = pygame.Rect(self.x + tab_idx * tab_width, self.y, tab_width, self.TAB_HEIGHT)
+            
+            if ch_name == self.active_channel:
+                pygame.draw.rect(screen, Colors.STONE_MEDIUM, tab_rect)
+            else:
+                pygame.draw.rect(screen, Colors.STONE_DARK, tab_rect)
+            
+            pygame.draw.rect(screen, Colors.PANEL_BORDER, tab_rect, 1)
+            
+            tab_text = self.tiny_font.render(ch_name.title(), True, ch_data["color"])
+            screen.blit(tab_text, (
+                tab_rect.centerx - tab_text.get_width() // 2,
+                tab_rect.centery - tab_text.get_height() // 2
+            ))
+        
+        # Messages area
+        msg_y = self.y + self.TAB_HEIGHT + 4
+        for msg_data in self.channels[self.active_channel]["messages"][-5:]:
+            text = f"{msg_data.get('username', '?')}: {msg_data.get('text', '')}"
+            msg_surface = self.tiny_font.render(text[:60], True, self.channels[self.active_channel]["color"])
+            screen.blit(msg_surface, (self.x + 4, msg_y))
+            msg_y += 16
+        
+        # Input field
+        input_y = self.y + self.height - 24
+        pygame.draw.rect(screen, Colors.SLOT_BG, (self.x + 4, input_y, self.width - 8, 20))
+        border_color = Colors.TEXT_WHITE if self.input_focused else Colors.SLOT_BORDER
+        pygame.draw.rect(screen, border_color, (self.x + 4, input_y, self.width - 8, 20), 1)
+        
+        # Input text
+        input_text_surface = self.tiny_font.render(self.input_text, True, Colors.TEXT_WHITE)
+        screen.blit(input_text_surface, (self.x + 6, input_y + 2))
+        
+        # Cursor
+        if self.input_focused and int(self.cursor_blink_time * 2) % 2 == 0:
+            cursor_x = self.x + 6 + input_text_surface.get_width()
+            pygame.draw.line(screen, Colors.TEXT_WHITE, (cursor_x, input_y + 2), (cursor_x, input_y + 18))
+        
+        self.cursor_blink_time += 1/60  # Assuming 60 FPS
+    
+    def add_message(self, channel: str, username: str, text: str) -> None:
+        """Add a message to a channel."""
+        if channel in self.channels:
+            self.channels[channel]["messages"].append({
+                "username": username,
+                "text": text,
+            })
+            # Keep last 100 messages
+            if len(self.channels[channel]["messages"]) > 100:
+                self.channels[channel]["messages"].pop(0)
+    
+    def handle_event(self, event: pygame.event.Event) -> Optional[str]:
+        """Handle chat input."""
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            # Check tab clicks
+            tab_width = self.width // 3
+            for tab_idx, ch_name in enumerate(self.channels.keys()):
+                tab_rect = pygame.Rect(self.x + tab_idx * tab_width, self.y, tab_width, self.TAB_HEIGHT)
+                if tab_rect.collidepoint(event.pos):
+                    self.active_channel = ch_name
+                    return None
+            
+            # Check input focus
+            input_y = self.y + self.height - 24
+            input_rect = pygame.Rect(self.x + 4, input_y, self.width - 8, 20)
+            self.input_focused = input_rect.collidepoint(event.pos)
+        
+        elif event.type == pygame.KEYDOWN and self.input_focused:
+            if event.key == pygame.K_RETURN:
+                if self.input_text.strip():
+                    # Send message
+                    self.add_message(self.active_channel, "You", self.input_text)
+                    self.input_text = ""
+                    self.input_cursor_pos = 0
+                    return "chat_send"
+            elif event.key == pygame.K_ESCAPE:
+                self.input_focused = False
+            elif event.key == pygame.K_BACKSPACE:
+                self.input_text = self.input_text[:-1]
+            elif event.unicode.isprintable():
+                self.input_text += event.unicode
+        
+        return None
+
+
+# =============================================================================
+# CONTEXT MENU
+# =============================================================================
+
+@dataclass
+class ContextMenuItem:
+    """A single item in a context menu."""
+    label: str
+    action: str
+    color: Tuple[int, int, int] = Colors.TEXT_WHITE
+    data: Any = None
+
+
+class ContextMenu:
+    """
+    Right-click context menu system.
+    
+    Used for inventory items, equipment slots, entities, and ground items.
+    """
+    
+    ITEM_HEIGHT = 20
+    PADDING = 4
+    WIDTH = 150
+    
+    def __init__(self):
+        self.visible = False
+        self.x = 0
+        self.y = 0
+        self.items: List[ContextMenuItem] = []
+        self.hovered_index = -1
+        self.on_select: Optional[Callable[[ContextMenuItem], None]] = None
+    
+    def show(self, x: int, y: int, items: List[ContextMenuItem], on_select: Optional[Callable[[ContextMenuItem], None]] = None) -> None:
+        """Show the context menu at the specified position."""
+        self.x = x
+        self.y = y
+        self.items = items
+        self.hovered_index = -1
+        self.on_select = on_select
+        self.visible = True
+    
+    def hide(self) -> None:
+        """Hide the context menu."""
+        self.visible = False
+        self.items = []
+        self.hovered_index = -1
+    
+    def draw(self, screen: pygame.Surface) -> None:
+        """Draw the context menu."""
+        if not self.visible:
+            return
+        
+        # Calculate height based on items
+        height = len(self.items) * self.ITEM_HEIGHT + self.PADDING * 2
+        
+        # Draw background
+        menu_rect = pygame.Rect(self.x, self.y, self.WIDTH, height)
+        pygame.draw.rect(screen, Colors.PANEL_BG, menu_rect)
+        pygame.draw.rect(screen, Colors.PANEL_BORDER, menu_rect, 2)
+        
+        # Draw items
+        font = pygame.font.SysFont("sans-serif", 12)
+        for i, item in enumerate(self.items):
+            item_y = self.y + self.PADDING + i * self.ITEM_HEIGHT
+            item_rect = pygame.Rect(self.x, item_y, self.WIDTH, self.ITEM_HEIGHT)
+            
+            # Highlight if hovered
+            if i == self.hovered_index:
+                pygame.draw.rect(screen, Colors.SLOT_HOVER, item_rect)
+            
+            # Draw text
+            text_surface = font.render(item.label, True, item.color)
+            screen.blit(text_surface, (self.x + self.PADDING, item_y + 3))
+    
+    def handle_event(self, event: pygame.event.Event) -> Optional[str]:
+        """Handle mouse events for the context menu."""
+        if not self.visible:
+            return None
+        
+        if event.type == pygame.MOUSEMOTION:
+            # Update hover
+            height = len(self.items) * self.ITEM_HEIGHT + self.PADDING * 2
+            menu_rect = pygame.Rect(self.x, self.y, self.WIDTH, height)
+            
+            if menu_rect.collidepoint(event.pos):
+                relative_y = event.pos[1] - self.y - self.PADDING
+                if relative_y >= 0:
+                    self.hovered_index = relative_y // self.ITEM_HEIGHT
+                    self.hovered_index = max(0, min(self.hovered_index, len(self.items) - 1))
+            else:
+                self.hovered_index = -1
+        
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:  # Left click
+                height = len(self.items) * self.ITEM_HEIGHT + self.PADDING * 2
+                menu_rect = pygame.Rect(self.x, self.y, self.WIDTH, height)
+                
+                if menu_rect.collidepoint(event.pos):
+                    # Clicked on menu
+                    if 0 <= self.hovered_index < len(self.items):
+                        item = self.items[self.hovered_index]
+                        if self.on_select:
+                            self.on_select(item)
+                        self.hide()
+                        return item.action
+                else:
+                    # Clicked outside - close menu
+                    self.hide()
+        
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.hide()
+        
+        return None
+
+
+# =============================================================================
+# TOOLTIP
+# =============================================================================
+
+class Tooltip:
+    """
+    Hover tooltip for items and entities.
+    
+    Shows multi-line information with color coding.
+    """
+    
+    PADDING = 6
+    LINE_SPACING = 2
+    MAX_WIDTH = 250
+    
+    def __init__(self):
+        self.visible = False
+        self.x = 0
+        self.y = 0
+        self.lines: List[Tuple[str, Tuple[int, int, int]]] = []
+        self.width = 0
+        self.height = 0
+    
+    def show(self, x: int, y: int, lines: List[Tuple[str, Tuple[int, int, int]]]) -> None:
+        """
+        Show tooltip at position.
+        
+        Args:
+            x, y: Position (usually mouse position)
+            lines: List of (text, color) tuples
+        """
+        self.lines = lines
+        self.visible = True
+        
+        # Calculate dimensions
+        font = pygame.font.SysFont("sans-serif", 11)
+        self.width = 0
+        total_height = 0
+        
+        for text, _ in lines:
+            text_surface = font.render(text, True, Colors.TEXT_WHITE)
+            self.width = max(self.width, text_surface.get_width())
+            total_height += text_surface.get_height() + self.LINE_SPACING
+        
+        self.width = min(self.width + self.PADDING * 2, self.MAX_WIDTH)
+        self.height = total_height + self.PADDING * 2 - self.LINE_SPACING
+        
+        # Adjust position to stay on screen
+        screen_width = pygame.display.get_surface().get_width()
+        screen_height = pygame.display.get_surface().get_height()
+        
+        self.x = min(x, screen_width - self.width - 5)
+        self.y = min(y, screen_height - self.height - 5)
+    
+    def hide(self) -> None:
+        """Hide the tooltip."""
+        self.visible = False
+        self.lines = []
+    
+    def draw(self, screen: pygame.Surface) -> None:
+        """Draw the tooltip."""
+        if not self.visible or not self.lines:
+            return
+        
+        # Background
+        tooltip_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        pygame.draw.rect(screen, Colors.PANEL_BG, tooltip_rect)
+        pygame.draw.rect(screen, Colors.PANEL_BORDER, tooltip_rect, 1)
+        
+        # Lines
+        font = pygame.font.SysFont("sans-serif", 11)
+        line_y = self.y + self.PADDING
+        
+        for text, color in self.lines:
+            text_surface = font.render(text, True, color)
+            screen.blit(text_surface, (self.x + self.PADDING, line_y))
+            line_y += text_surface.get_height() + self.LINE_SPACING
+

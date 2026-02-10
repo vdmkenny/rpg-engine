@@ -104,14 +104,16 @@ class TilesetManager:
                     
                     return tilesets
                 elif response.status == 401:
-                    print("Authentication failed - please log in again")
+                    logger.error("Authentication failed - please log in again")
                     return []
                 else:
-                    print(f"Failed to load tilesets for map {map_id}: {response.status}")
+                    logger.error(f"Failed to load tilesets for map {map_id}: {response.status}")
                     return []
                     
         except Exception as e:
-            print(f"Error loading tilesets for map {map_id}: {e}")
+            logger.error(f"Error loading tilesets for map {map_id}: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     async def _ensure_tileset_cached(self, tileset_metadata: Dict):
@@ -322,3 +324,14 @@ class TilesetManager:
             "cache_dir": str(self.cache_dir),
             "cache_dir_exists": self.cache_dir.exists()
         }
+
+
+# Singleton instance
+_tileset_manager_instance = None
+
+def get_tileset_manager() -> TilesetManager:
+    """Get or create the singleton TilesetManager instance."""
+    global _tileset_manager_instance
+    if _tileset_manager_instance is None:
+        _tileset_manager_instance = TilesetManager()
+    return _tileset_manager_instance

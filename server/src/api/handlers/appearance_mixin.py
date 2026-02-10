@@ -7,6 +7,8 @@ Handles player appearance updates (paperdoll customization).
 import traceback
 from typing import Any
 
+from fastapi import WebSocket
+
 from server.src.core.logging_config import get_logger
 from server.src.services.visual_state_service import VisualStateService
 from server.src.services.visual_registry import visual_registry
@@ -16,6 +18,7 @@ from server.src.services.player_service import PlayerService
 from common.src.protocol import (
     WSMessage,
     MessageType,
+    ErrorCodes,
     ErrorCategory,
     AppearanceUpdatePayload,
 )
@@ -27,7 +30,7 @@ logger = get_logger(__name__)
 class AppearanceHandlerMixin:
     """Handles CMD_UPDATE_APPEARANCE for player appearance customization."""
 
-    websocket: Any
+    websocket: WebSocket
     username: str
     player_id: int
 
@@ -43,7 +46,7 @@ class AppearanceHandlerMixin:
                 )
                 await self._send_error_response(
                     message.id,
-                    "PLAYER_NOT_ONLINE",
+                    ErrorCodes.SYS_INTERNAL_ERROR,
                     ErrorCategory.SYSTEM,
                     "Player not properly initialized - please reconnect"
                 )
@@ -96,7 +99,7 @@ class AppearanceHandlerMixin:
             if not validation_result["valid"]:
                 await self._send_error_response(
                     message.id,
-                    "INVALID_APPEARANCE",
+                    ErrorCodes.APPEARANCE_INVALID_VALUE,
                     ErrorCategory.VALIDATION,
                     validation_result["error"]
                 )
@@ -147,7 +150,7 @@ class AppearanceHandlerMixin:
             )
             await self._send_error_response(
                 message.id,
-                "APPEARANCE_UPDATE_FAILED",
+                ErrorCodes.APPEARANCE_UPDATE_FAILED,
                 ErrorCategory.SYSTEM,
                 "Failed to update appearance - please try again"
             )

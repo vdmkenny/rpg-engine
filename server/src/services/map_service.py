@@ -215,8 +215,13 @@ class TileMap:
         tilesets = []
         for tileset in self.tmx_data.tilesets:
             # pytmx automatically resolves external .tsx files, so we can treat all tilesets uniformly
-            logger.debug(f"Processing tileset: name={getattr(tileset, 'name', 'unnamed')}, "
-                       f"firstgid={getattr(tileset, 'firstgid', 'none')}")
+            logger.debug(
+                "Processing tileset",
+                extra={
+                    "tileset_name": getattr(tileset, 'name', 'unnamed'),
+                    "firstgid": getattr(tileset, 'firstgid', 'none')
+                }
+            )
             
             image_source = None
             
@@ -245,7 +250,7 @@ class TileMap:
                 "margin": getattr(tileset, 'margin', 0),
             }
             
-            logger.debug(f"Tileset metadata: {tileset_info}")
+            logger.debug("Tileset metadata", extra={"tileset": tileset_info})
             tilesets.append(tileset_info)
         
         return tilesets
@@ -382,7 +387,7 @@ class TileMap:
                         self._raw_tmx_layers.append(layer_rows)
                     
         except Exception as e:
-            logger.warning(f"Error loading raw TMX data: {e}")
+            logger.warning("Error loading raw TMX data", extra={"error": str(e)})
             self._raw_tmx_layers = []
     
     def _parse_external_tileset(self, tileset) -> Optional[Dict]:
@@ -401,10 +406,10 @@ class TileMap:
         try:
             # Build path to .tsx file
             tsx_path = Path(self.map_path).parent / tileset.source
-            logger.debug(f"Looking for external tileset at: {tsx_path}")
+            logger.debug("Looking for external tileset", extra={"path": str(tsx_path)})
             
             if not tsx_path.exists():
-                logger.warning(f"External tileset file not found: {tsx_path}")
+                logger.warning("External tileset file not found", extra={"path": str(tsx_path)})
                 return None
             
             # Parse the .tsx file
@@ -439,7 +444,10 @@ class TileMap:
             return tileset_info
             
         except Exception as e:
-            logger.error(f"Failed to parse external tileset {tileset.source}: {e}", extra={"traceback": traceback.format_exc()})
+            logger.error(
+                "Failed to parse external tileset",
+                extra={"tileset_source": tileset.source, "error": str(e), "traceback": traceback.format_exc()}
+            )
             return None
 
     def is_walkable(self, x: int, y: int) -> bool:
@@ -742,7 +750,7 @@ class MapManager:
         """
         Discover and load all .tmx maps from the maps directory asynchronously.
         """
-        logger.debug(f"Searching for maps in: {self.maps_path}")
+        logger.debug("Searching for maps", extra={"maps_path": str(self.maps_path)})
         map_files = list(self.maps_path.glob("*.tmx"))
 
         if not map_files:
@@ -760,10 +768,11 @@ class MapManager:
         for result, map_path in zip(results, map_files):
             if isinstance(result, Exception):
                 logger.error(
-                    f"Failed to load map {map_path.name}", extra={"error": result}
+                    "Failed to load map",
+                    extra={"map_name": map_path.name, "error": str(result)}
                 )
             else:
-                logger.debug(f"Successfully loaded map: {map_path.name}")
+                logger.debug("Successfully loaded map", extra={"map_name": map_path.name})
 
     def _load_map_sync(self, map_path: Path, map_id: str):
         """Synchronous helper to load a single map. To be run in a thread."""
@@ -913,8 +922,6 @@ class MapManager:
         """
         tile_map = self.get_map(map_id)
         if not tile_map:
-            # DEBUG: Print available maps for debugging
-            print(f"[MAP DEBUG] Map '{map_id}' not found. Available maps: {list(self.maps.keys())}")
             logger.warning(
                 "Map not found for movement validation", 
                 extra={"map_id": map_id, "available_maps": list(self.maps.keys())}
@@ -1104,12 +1111,4 @@ def get_map_manager() -> "MapManager":
     return _map_manager_instance
 
 
-# For backward compatibility, expose as map_manager
-class MapManagerProxy:
-    """Proxy to provide backward compatibility while enabling lazy initialization."""
 
-    def __getattr__(self, name):
-        return getattr(get_map_manager(), name)
-
-
-map_manager = MapManagerProxy()

@@ -1,14 +1,15 @@
 """
 Map renderer.
 
-Renders map chunks and tiles.
+Renders map chunks and tiles using tileset sprites.
 """
 
 import pygame
-from typing import Dict, Tuple, List, Optional
+from typing import Dict, Tuple, List, Optional, Any
 
 from ..config import get_config
 from .camera import Camera
+from ..tileset_manager import get_tileset_manager
 
 
 class MapRenderer:
@@ -22,7 +23,10 @@ class MapRenderer:
         # Chunk size in tiles
         self.chunk_size = 16
         
-        # Tile colors (fallback if no tileset)
+        # Get tileset manager for sprites
+        self.tileset_manager = get_tileset_manager()
+        
+        # Tile colors (fallback if no tileset loaded)
         self.tile_colors = {
             0: (34, 139, 34),    # Grass - green
             1: (139, 69, 19),    # Dirt - brown
@@ -35,18 +39,25 @@ class MapRenderer:
         
         # Default color for unknown tiles
         self.default_color = (128, 128, 128)
+        
+        # Current map ID for sprite lookups
+        self.current_map_id: Optional[str] = None
     
-    def render(self, chunks: Dict[Tuple[int, int], List[List[int]]]) -> None:
+    def render(self, chunks: Dict[Tuple[int, int], Any], map_id: Optional[str] = None) -> None:
         """Render all visible map chunks."""
+        # Update current map ID
+        if map_id:
+            self.current_map_id = map_id
+
         # Get visible tile range
         min_x, min_y, max_x, max_y = self.camera.get_visible_tile_range()
-        
+
         # Convert to chunk coordinates
         min_chunk_x = min_x // self.chunk_size
         min_chunk_y = min_y // self.chunk_size
         max_chunk_x = max_x // self.chunk_size
         max_chunk_y = max_y // self.chunk_size
-        
+
         # Render each visible chunk
         for chunk_x in range(min_chunk_x, max_chunk_x + 1):
             for chunk_y in range(min_chunk_y, max_chunk_y + 1):
@@ -63,7 +74,7 @@ class MapRenderer:
         chunk_pixel_y = chunk_y * self.chunk_size * self.tile_size
         
         for y, row in enumerate(chunk):
-            for x, tile_id in enumerate(row):
+            for x, tile_data in enumerate(row):
                 # Calculate world position
                 world_x = chunk_pixel_x + x * self.tile_size
                 world_y = chunk_pixel_y + y * self.tile_size
@@ -75,15 +86,34 @@ class MapRenderer:
                 # Convert to screen coordinates
                 screen_x, screen_y = self.camera.world_to_screen(world_x, world_y)
                 
-                # Get tile color
-                color = self.tile_colors.get(tile_id, self.default_color)
-                
-                # Draw tile
-                rect = pygame.Rect(int(screen_x), int(screen_y), self.tile_size, self.tile_size)
-                pygame.draw.rect(self.screen, color, rect)
-                
-                # Draw tile border (subtle grid)
-                pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)
+                # Handle both raw GID (int) and structured tile data (dict with layers)
+                layers = []
+                if isinstance(tile_data, dict):
+                    # Structured format: {"layers": [{"gid": int, ...}], "properties": {...}}
+                    layers = tile_data.get("layers", [])
+                elif isinstance(tile_data, int):
+                    # Raw GID format: just an integer
+                    if tile_data > 0:
+                        layers = [{"gid": tile_data}]
+                elif isinstance(tile_data, list):
+                    # List of GIDs format
+                    for gid in tile_data:
+                        if isinstance(gid, int) and gid > 0:
+                            layers.append({"gid": gid})
+
+                # Render each layer in order (bottom to top)
+                for layer in layers:
+                    if isinstance(layer, dict):
+                        gid = layer.get("gid", 0)
+                    elif isinstance(layer, int):
+                        gid = layer
+                    else:
+                        continue
+
+                    if gid > 0 and self.current_map_id:
+                        sprite = self.tileset_manager.get_tile_sprite(gid, self.current_map_id)
+                        if sprite:
+                            self.screen.blit(sprite, (int(screen_x), int(screen_y)))
     
     def _render_missing_chunk(self, chunk_x: int, chunk_y: int) -> None:
         """Render placeholder for missing chunk."""

@@ -108,102 +108,161 @@ class HairStyle(str, Enum):
     """
     LPC hair styles.
     
-    Curated subset of available styles. Values match folder names in hair/.
+    Complete enumeration of all available styles. Values match folder names in hair/.
     Most styles only support "adult" age group.
     """
     # No hair
     BALD = "bald"
+    BALDING = "balding"
+    
+    # Very short / buzzed styles
+    BUZZCUT = "buzzcut"
+    HIGH_AND_TIGHT = "high_and_tight"
+    FLAT_TOP_FADE = "flat_top_fade"
+    FLAT_TOP_STRAIGHT = "flat_top_straight"
     
     # Short styles
-    SHORT = "short"
+    PLAIN = "plain"
+    PIXIE = "pixie"
     SHORTHAWK = "shorthawk"
     SHORTKNOT = "shortknot"
-    BUZZCUT = "buzzcut"
-    PIXIE = "pixie"
-    PLAIN = "plain"
-    PARTED = "parted"
+    MESSY = "messy"
     MESSY1 = "messy1"
     MESSY2 = "messy2"
+    MESSY3 = "messy3"
     BEDHEAD = "bedhead"
+    PARTED = "parted"
+    PARTED2 = "parted2"
+    PARTED3 = "parted3"
+    PARTED_SIDE_BANGS = "parted_side_bangs"
+    PARTED_SIDE_BANGS2 = "parted_side_bangs2"
+    CURLY_SHORT = "curly_short"
+    CURLY_SHORT2 = "curly_short2"
     
-    # Medium styles
+    # Spiked styles
+    SPIKED = "spiked"
+    SPIKED2 = "spiked2"
+    SPIKED_BEEHIVE = "spiked_beehive"
+    SPIKED_LIBERTY = "spiked_liberty"
+    SPIKED_LIBERTY2 = "spiked_liberty2"
+    SPIKED_PORCUPINE = "spiked_porcupine"
+    MOHAWK = "mohawk"
+    
+    # Bob / medium-short styles
+    BOB = "bob"
+    BOB_SIDE_PART = "bob_side_part"
+    PAGE = "page"
+    PAGE2 = "page2"
+    LOB = "lob"
+    SWOOP = "swoop"
+    SWOOP_SIDE = "swoop_side"
     BANGS = "bangs"
+    BANGSSHORT = "bangsshort"
+    BANGS_BUN = "bangs_bun"
+    
+    # Bangs / long bangs styles
     BANGSLONG = "bangslong"
     BANGSLONG2 = "bangslong2"
-    BANGSSHORT = "bangsshort"
-    PAGE = "page"
-    BOB = "bob"
-    SWOOP = "swoop"
+    CURTAINS = "curtains"
+    CURTAINS_LONG = "curtains_long"
+    
+    # Medium length styles
+    MOP = "mop"
+    SINGLE = "single"
     UNKEMPT = "unkempt"
+    NATURAL = "natural"
     HALFMESSY = "halfmessy"
-    CURLY_SHORT = "curly_short"
+    HALF_UP = "half_up"
+    IDOL = "idol"
+    
+    # Braids and twists
+    BRAID = "braid"
+    BRAID2 = "braid2"
+    CORNROWS = "cornrows"
+    DREADLOCKS_SHORT = "dreadlocks_short"
+    DREADLOCKS_LONG = "dreadlocks_long"
+    TWISTS_FADE = "twists_fade"
+    TWISTS_STRAIGHT = "twists_straight"
+    
+    # Curls and waves (medium)
+    CURLS_LARGE = "curls_large"
+    WAVY = "wavy"
     
     # Long styles
     LONG = "long"
+    LONG_BAND = "long_band"
+    LONG_CENTER_PART = "long_center_part"
+    LONG_MESSY = "long_messy"
+    LONG_MESSY2 = "long_messy2"
+    LONG_STRAIGHT = "long_straight"
+    LONG_TIED = "long_tied"
     LONGHAWK = "longhawk"
-    LONGKNOT = "longknot"
-    LOOSE = "loose"
+    
+    # Extra long styles
     XLONG = "xlong"
-    XLONGKNOT = "xlongknot"
+    XLONG_WAVY = "xlong_wavy"
+    CURLS_LARGE_XLONG = "curls_large_xlong"
+    CURLY_LONG = "curly_long"
+    RELM_XLONG = "relm_xlong"
+    
+    # Shoulder length
     SHOULDERL = "shoulderl"
     SHOULDERR = "shoulderr"
-    PRINCESS = "princess"
-    CURLY_LONG = "curly_long"
     
-    # Ponytails and updos
+    # Ponytails and pigtails
     PONYTAIL = "ponytail"
     PONYTAIL2 = "ponytail2"
     HIGH_PONYTAIL = "high_ponytail"
+    RELM_PONYTAIL = "relm_ponytail"
+    PIGTAILS = "pigtails"
+    PIGTAILS_BANGS = "pigtails_bangs"
     BUNCHES = "bunches"
-    BRAID = "braid"
     
-    # Special styles
-    MOHAWK = "mohawk"
-    JEWFRO = "jewfro"
+    # Updos and buns
+    PRINCESS = "princess"
+    RELM_SHORT = "relm_short"
+    
+    # Voluminous / afro styles
     AFRO = "afro"
-    DREADLOCKS_SHORT = "dreadlocks_short"
-    DREADLOCKS_LONG = "dreadlocks_long"
-    CORNROWS = "cornrows"
+    JEWFRO = "jewfro"
+    
+    # Character-specific styles
+    SARA = "sara"
 
 
 class HairColor(str, Enum):
     """
     LPC hair colors.
     
-    Values match folder names in hair/{style}/.
+    Values match actual filenames in hair/{style}/{age_group}/{animation}/.
     """
-    # Natural colors
+    # All colors that exist as actual .png files
+    ASH = "ash"
     BLACK = "black"
-    BROWN = "brown"
-    BROWN2 = "brown2"
-    BRUNETTE = "brunette"
-    BRUNETTE2 = "brunette2"
     BLONDE = "blonde"
-    BLONDE2 = "blonde2"
-    DARK_BLONDE = "dark-blonde"
-    LIGHT_BLONDE = "light-blonde"
-    LIGHT_BLONDE2 = "light-blonde2"
+    BLUE = "blue"
+    CARROT = "carrot"
+    CHESTNUT = "chestnut"
+    DARK_BROWN = "dark_brown"
+    DARK_GRAY = "dark_gray"
+    GINGER = "ginger"
     GOLD = "gold"
+    GRAY = "gray"
+    GREEN = "green"
+    LIGHT_BROWN = "light_brown"
+    NAVY = "navy"
+    ORANGE = "orange"
+    PINK = "pink"
+    PLATINUM = "platinum"
+    PURPLE = "purple"
+    RAVEN = "raven"
     RED = "red"
     REDHEAD = "redhead"
-    REDHEAD2 = "redhead2"
-    RAVEN = "raven"
-    RAVEN2 = "raven2"
-    GRAY = "gray"
+    ROSE = "rose"
+    SANDY = "sandy"
+    STRAWBERRY = "strawberry"
+    VIOLET = "violet"
     WHITE = "white"
-    WHITE_BLONDE = "white-blonde"
-    WHITE_BLONDE2 = "white-blonde2"
-    
-    # Fantasy colors
-    BLUE = "blue"
-    BLUE2 = "blue2"
-    GREEN = "green"
-    GREEN2 = "green2"
-    PINK = "pink"
-    PINK2 = "pink2"
-    PURPLE = "purple"
-    ORANGE = "orange"
-    WHITE_CYAN = "white-cyan"
 
 
 class EyeColor(str, Enum):

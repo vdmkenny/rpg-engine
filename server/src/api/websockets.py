@@ -16,7 +16,6 @@ import traceback
 from typing import Optional, Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, status
-from jose import JWTError
 import msgpack
 from glide import GlideClient
 
@@ -31,10 +30,9 @@ from server.src.core.metrics import (
 )
 
 from server.src.services.game_state import get_player_state_manager
-from server.src.services.map_service import map_manager
 from server.src.services.player_service import PlayerService
-from server.src.services.equipment_service import EquipmentService
 from server.src.services.connection_service import ConnectionService
+from server.src.game.game_loop import cleanup_disconnected_player
 
 from common.src.protocol import (
     WSMessage,
@@ -43,7 +41,6 @@ from common.src.protocol import (
     ErrorCategory,
     ErrorResponsePayload,
     PROTOCOL_VERSION,
-    AuthenticatePayload,
 )
 
 from common.src.websocket_utils import (
@@ -345,7 +342,10 @@ async def websocket_endpoint(
             await broadcast_player_left(username or "Unknown", player_id, player_map, manager)
             
             if handler:
-                await ConnectionService.disconnect(player_id)
+                await ConnectionService.handle_player_disconnect(player_id)
+            
+            # Cleanup game loop state and visibility service for disconnected player
+            await cleanup_disconnected_player(player_id)
         
         # Record metrics
         duration = time.time() - start_time

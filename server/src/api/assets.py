@@ -9,10 +9,9 @@ Sprite files are served from server/sprites/lpc/ which should be populated by
 running scripts/setup_lpc_sprites.py before first use.
 """
 
-import os
 import json
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse, JSONResponse
@@ -331,14 +330,6 @@ async def get_sprite_image(
         resolved_sprite = sprite_file.resolve()
         resolved_base = SPRITES_BASE_DIR.resolve()
         
-        # DEBUG: Print path resolution (temporary)
-        print(f"[SPRITE DEBUG] sprite_path={sprite_path}")
-        print(f"[SPRITE DEBUG] sprite_file={sprite_file}")
-        print(f"[SPRITE DEBUG] resolved_sprite={resolved_sprite}")
-        print(f"[SPRITE DEBUG] resolved_base={resolved_base}")
-        print(f"[SPRITE DEBUG] exists={resolved_sprite.exists()}")
-        print(f"[SPRITE DEBUG] startswith check={str(resolved_sprite).startswith(str(resolved_base))}")
-        
         logger.debug(
             "Resolving sprite path",
             extra={
@@ -454,7 +445,7 @@ async def get_sprite_status(
         "sprites_available": sprites_exist and manifest_exists,
         "manifest_available": manifest_exists,
         "credits_available": credits_exist,
-        "base_path": str(SPRITES_BASE_DIR),
+        # base_path intentionally omitted - server filesystem paths should not be exposed to clients
     }
     
     # If manifest exists, include some basic stats

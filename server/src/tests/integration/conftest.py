@@ -9,14 +9,13 @@ import pytest_asyncio
 
 
 @pytest.fixture
-def create_test_player_with_skills(create_test_player, skills_synced):
+def create_test_player_with_skills(create_test_player):
     """Factory fixture to create player with skills pre-granted."""
     async def _create(username, password):
         from server.src.services.skill_service import SkillService
-        from server.src.services.game_state import get_skills_manager
         
         player = await create_test_player(username, password)
-        await SkillService.grant_all_skills_to_player(player["id"])
+        await SkillService.grant_all_skills_to_player(player.id)
         return player
     return _create
 

@@ -19,9 +19,6 @@ logger = get_logger(__name__)
 class MovementService:
     """Service for managing player movement operations."""
 
-    # Movement cooldown in seconds to prevent spam
-    MOVEMENT_COOLDOWN = 0.5  # 500ms between movements
-
     # Direction mappings
     DIRECTION_OFFSETS = {
         "up": (0, -1),
@@ -61,8 +58,8 @@ class MovementService:
             last_movement_time = last_movement_data.get("last_movement_time", 0)
             time_since_last = current_time - last_movement_time
 
-            if time_since_last < MovementService.MOVEMENT_COOLDOWN:
-                cooldown_remaining = MovementService.MOVEMENT_COOLDOWN - time_since_last
+            if time_since_last < settings.MOVE_COOLDOWN:
+                cooldown_remaining = settings.MOVE_COOLDOWN - time_since_last
                 logger.debug(
                     "Movement denied - cooldown active",
                     extra={
@@ -349,7 +346,7 @@ class MovementService:
             return {
                 "can_move": cooldown_check["can_move"],
                 "cooldown_remaining": cooldown_check["cooldown_remaining"],
-                "movement_cooldown": MovementService.MOVEMENT_COOLDOWN
+                "movement_cooldown": settings.MOVE_COOLDOWN
             }
 
         except Exception as e:
@@ -364,7 +361,7 @@ class MovementService:
             return {
                 "can_move": False,
                 "cooldown_remaining": 0,
-                "movement_cooldown": MovementService.MOVEMENT_COOLDOWN
+                "movement_cooldown": settings.MOVE_COOLDOWN
             }
 
     @staticmethod
@@ -414,6 +411,9 @@ class MovementService:
             }
             await player_mgr.set_player_full_state(player_id, state)
             
+            # Mark position as dirty for periodic batch sync
+            await player_mgr.set_player_position(player_id, x, y, map_id)
+            
             logger.debug(
                 "Player position updated successfully",
                 extra={
@@ -425,8 +425,6 @@ class MovementService:
             return True
             
         except Exception as e:
-            print(f"[SET POSITION ERROR] {type(e).__name__}: {e}")
-            print(traceback.format_exc())
             logger.error(
                 "Error setting player position",
                 extra={

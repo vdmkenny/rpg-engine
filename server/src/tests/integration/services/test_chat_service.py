@@ -17,7 +17,8 @@ from unittest.mock import patch, AsyncMock
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.src.services.chat_service import ChatService
-from server.src.schemas.player import PlayerRole, NearbyPlayer, Direction, AnimationState
+from server.src.core.constants import PlayerRole
+from server.src.schemas.player import NearbyPlayer, Direction, AnimationState
 from server.src.core.config import settings
 
 
@@ -107,28 +108,48 @@ class TestPermissionSystem:
     """Tests for role-based permission system."""
 
     @pytest.mark.asyncio
-    async def test_validate_global_chat_permission_admin_allowed(self, db_session):
-        """All players currently have global chat permission (role check not yet implemented)."""
-        result = await ChatService.validate_global_chat_permission(1)
+    async def test_validate_global_chat_permission_admin_allowed(self, create_test_player):
+        """Admin players should have global chat permission."""
+        # Create an admin player
+        admin = await create_test_player("admin_user", "password123", role=PlayerRole.ADMIN)
+        
+        result = await ChatService.validate_global_chat_permission(admin.id)
         
         assert result["valid"] is True
         assert "error_message" not in result
         assert "system_message" not in result
 
     @pytest.mark.asyncio
-    async def test_validate_global_chat_permission_player_denied(self, db_session):
-        """Test validates that permission check structure exists (actual role-based checking is TODO)."""
-        # Current implementation allows all players
-        result = await ChatService.validate_global_chat_permission(1)
+    async def test_validate_global_chat_permission_moderator_allowed(self, create_test_player):
+        """Moderator players should have global chat permission."""
+        # Create a moderator player
+        mod = await create_test_player("mod_user", "password123", role=PlayerRole.MODERATOR)
         
-        # Currently returns valid=True for all players
+        result = await ChatService.validate_global_chat_permission(mod.id)
+        
         assert result["valid"] is True
 
     @pytest.mark.asyncio
-    async def test_validate_global_chat_permission_global_disabled(self, db_session):
-        """Global chat disabled should deny all players."""
+    async def test_validate_global_chat_permission_player_denied(self, create_test_player):
+        """Regular players should be denied global chat permission."""
+        # Create a regular player (default role is PLAYER)
+        player = await create_test_player("regular_player", "password123")
+        
+        result = await ChatService.validate_global_chat_permission(player.id)
+        
+        assert result["valid"] is False
+        assert "permission" in result["error_message"].lower()
+        assert result["system_message"]["username"] == "System"
+        assert "permission" in result["system_message"]["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_validate_global_chat_permission_global_disabled(self, create_test_player):
+        """Global chat disabled should deny all players regardless of role."""
+        # Create an admin player (who would normally have permission)
+        admin = await create_test_player("admin_disabled", "password123", role=PlayerRole.ADMIN)
+        
         with patch('server.src.core.config.settings.CHAT_GLOBAL_ENABLED', False):
-            result = await ChatService.validate_global_chat_permission(1)
+            result = await ChatService.validate_global_chat_permission(admin.id)
             
             assert result["valid"] is False
             assert "currently disabled" in result["error_message"]

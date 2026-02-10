@@ -16,6 +16,7 @@ from ..schemas.player import (
     PlayerRole, Direction, AnimationState
 )
 from ..core.logging_config import get_logger
+
 from .game_state import get_player_state_manager
 from .skill_service import SkillService
 
@@ -64,9 +65,9 @@ class PlayerService:
                 )
             
             # Create player record via manager
-            final_x = x if x is not None else 10
-            final_y = y if y is not None else 10
-            final_map = map_id if map_id is not None else "samplemap"
+            final_x = x if x is not None else settings.DEFAULT_SPAWN_X
+            final_y = y if y is not None else settings.DEFAULT_SPAWN_Y
+            final_map = map_id if map_id is not None else settings.DEFAULT_MAP
             
             player_id = await player_mgr.create_player_record(
                 username=player_data.username,
@@ -262,6 +263,68 @@ class PlayerService:
         return nearby
 
     @staticmethod
+    async def validate_player_position_access(
+        player_id: int, map_id: str, center_x: int, center_y: int
+    ) -> bool:
+        """
+        Validate that a player can access chunks at the specified position.
+
+        This is a security check to prevent players from requesting chunk data
+        for positions they shouldn't have access to.
+
+        Args:
+            player_id: Player making the request
+            map_id: Map being requested
+            center_x: Center X coordinate of chunk request
+            center_y: Center Y coordinate of chunk request
+
+        Returns:
+            True if player can access this position, False otherwise
+        """
+        player_mgr = get_player_state_manager()
+
+        # Get player's actual position
+        player_pos = await player_mgr.get_player_position(player_id)
+        if not player_pos:
+            return False
+
+        player_map = player_pos.get("map_id", "")
+        player_x = player_pos.get("x", 0)
+        player_y = player_pos.get("y", 0)
+
+        # Must be on the same map
+        if player_map != map_id:
+            logger.warning(
+                "Player map mismatch in chunk request",
+                extra={
+                    "player_id": player_id,
+                    "player_map": player_map,
+                    "requested_map": map_id,
+                }
+            )
+            return False
+
+        # Allow reasonable distance from player position (within visible range)
+        # Allow up to 5 chunks (80 tiles) of leeway for chunk requests
+        max_distance = 80  # tiles
+        distance = max(abs(center_x - player_x), abs(center_y - player_y))
+
+        if distance > max_distance:
+            logger.warning(
+                "Player chunk request too far from position",
+                extra={
+                    "player_id": player_id,
+                    "player_pos": (player_x, player_y),
+                    "requested_center": (center_x, center_y),
+                    "distance": distance,
+                    "max_distance": max_distance,
+                }
+            )
+            return False
+
+        return True
+
+    @staticmethod
     async def login_player(player_id: int) -> None:
         """
         Mark player as online and load their state.
@@ -284,8 +347,41 @@ class PlayerService:
         Args:
             player_id: Player database ID
         """
+        from .game_state import (
+            get_player_state_manager,
+            get_batch_sync_coordinator,
+        )
+        
         player_mgr = get_player_state_manager()
-        await player_mgr.unregister_online_player(player_id)
+        
+        # Sync all player data to database before unregistering
+        # This ensures the player's complete state is preserved
+        try:
+            sync_coordinator = get_batch_sync_coordinator()
+            results = await sync_coordinator.sync_and_commit_player(player_id)
+            
+            if results["success"]:
+                logger.debug(
+                    "Player state synced on logout",
+                    extra={"player_id": player_id}
+                )
+            else:
+                logger.error(
+                    "Some player data failed to sync on logout",
+                    extra={
+                        "player_id": player_id,
+                        "errors": results["errors"],
+                        "synced": results["synced"]
+                    }
+                )
+        except Exception as e:
+            logger.error(
+                "Failed to sync player state on logout",
+                extra={"player_id": player_id, "error": str(e)}
+            )
+            # Continue with logout even if sync fails
+        
+        await player_mgr.cleanup_player(player_id)
         logger.info("Player logged out", extra={"player_id": player_id})
 
     @staticmethod

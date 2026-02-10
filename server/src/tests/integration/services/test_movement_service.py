@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from server.src.services.movement_service import MovementService
 from server.src.services.game_state import get_player_state_manager, get_entity_manager
+from server.src.core.config import settings
 from common.src.protocol import CombatTargetType
 
 
@@ -191,7 +192,7 @@ class TestValidateMovementCooldown:
         assert result["can_move"] is False
         assert result["reason"] == "Movement cooldown active"
         assert result["cooldown_remaining"] > 0
-        assert result["cooldown_remaining"] < MovementService.MOVEMENT_COOLDOWN
+        assert result["cooldown_remaining"] < settings.MOVE_COOLDOWN
 
     @pytest.mark.asyncio
     async def test_player_not_online(self, game_state_managers):
@@ -593,7 +594,7 @@ class TestGetMovementState:
         
         assert state["can_move"] is True
         assert state["cooldown_remaining"] == 0
-        assert state["movement_cooldown"] == MovementService.MOVEMENT_COOLDOWN
+        assert state["movement_cooldown"] == settings.MOVE_COOLDOWN
 
     @pytest.mark.asyncio
     async def test_get_state_in_cooldown(self, game_state_managers, create_test_player):
@@ -613,7 +614,7 @@ class TestGetMovementState:
         
         assert state["can_move"] is False
         assert state["cooldown_remaining"] > 0
-        assert state["movement_cooldown"] == MovementService.MOVEMENT_COOLDOWN
+        assert state["movement_cooldown"] == settings.MOVE_COOLDOWN
 
 
 class TestDirectionOffsets:
@@ -648,12 +649,12 @@ class TestDirectionOffsets:
 
 
 class TestMovementCooldownConstant:
-    """Tests for MOVEMENT_COOLDOWN constant."""
+    """Tests for movement cooldown configuration."""
 
     def test_cooldown_is_positive(self):
         """Verify cooldown is a positive value."""
-        assert MovementService.MOVEMENT_COOLDOWN > 0
+        assert settings.MOVE_COOLDOWN > 0
 
     def test_cooldown_is_reasonable(self):
         """Verify cooldown is within a reasonable range (100ms to 2s)."""
-        assert 0.1 <= MovementService.MOVEMENT_COOLDOWN <= 2.0
+        assert 0.1 <= settings.MOVE_COOLDOWN <= 2.0

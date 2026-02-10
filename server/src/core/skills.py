@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from typing import Optional
 from functools import lru_cache
 
+from .config import settings
+
 
 class SkillCategory(Enum):
     """Categories for organizing skills in the UI."""
@@ -40,6 +42,8 @@ class SkillType(Enum):
     ATTACK = SkillDefinition("Attack", SkillCategory.COMBAT, "Melee accuracy")
     STRENGTH = SkillDefinition("Strength", SkillCategory.COMBAT, "Melee damage")
     DEFENCE = SkillDefinition("Defence", SkillCategory.COMBAT, "Damage reduction")
+    RANGED = SkillDefinition("Ranged", SkillCategory.COMBAT, "Ranged combat")
+    MAGIC = SkillDefinition("Magic", SkillCategory.COMBAT, "Magical combat")
     HITPOINTS = SkillDefinition("Hitpoints", SkillCategory.COMBAT, "Health points")
 
     # Gathering skills
@@ -85,7 +89,7 @@ class SkillType(Enum):
 
 
 # Default max level constant
-MAX_LEVEL: int = 99
+MAX_LEVEL: int = settings.SKILL_MAX_LEVEL
 
 # Hitpoints starts at level 10
 HITPOINTS_START_LEVEL: int = 10

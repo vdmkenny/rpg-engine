@@ -21,6 +21,7 @@ import asyncio
 from collections import defaultdict
 from typing import Dict, List, Any
 from fastapi import WebSocket
+from starlette.websockets import WebSocketState
 from server.src.core.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -135,7 +136,7 @@ class ConnectionManager:
         for player_id, connection in connections_snapshot:
             try:
                 # Validate connection state before sending
-                if hasattr(connection, 'client_state') and connection.client_state == 3:  # WebSocket CLOSED
+                if hasattr(connection, 'client_state') and connection.client_state == WebSocketState.DISCONNECTED:
                     failed_connections.append(player_id)
                     continue
                     
@@ -229,7 +230,7 @@ class ConnectionManager:
         for player_id, connection, map_id in connections_snapshot:
             try:
                 # Validate connection state before sending
-                if hasattr(connection, 'client_state') and connection.client_state == 3:  # WebSocket CLOSED
+                if hasattr(connection, 'client_state') and connection.client_state == WebSocketState.DISCONNECTED:
                     failed_connections.append(player_id)
                     continue
                     
@@ -274,7 +275,7 @@ class ConnectionManager:
         connection, map_id = connection_info
         try:
             # Validate connection state before sending
-            if hasattr(connection, 'client_state') and connection.client_state == 3:  # WebSocket CLOSED
+            if hasattr(connection, 'client_state') and connection.client_state == WebSocketState.DISCONNECTED:
                 await self.disconnect(player_id)
                 return
                 
@@ -317,3 +318,44 @@ class ConnectionManager:
         async with self._connection_lock:
             self.connections_by_map.clear()
             self.player_to_map.clear()
+
+    async def disconnect_all(self):
+        """
+        Disconnect all active WebSocket connections and clear data structures (thread-safe).
+
+        This method:
+        1. Gets all active player connections
+        2. Properly closes each WebSocket connection
+        3. Clears the internal data structures
+
+        Used for graceful shutdown or mass disconnection scenarios.
+        """
+        async with self._connection_lock:
+            connections_to_close = []
+
+            for map_id, map_connections in self.connections_by_map.items():
+                for player_id, websocket in map_connections.items():
+                    connections_to_close.append((player_id, websocket, map_id))
+
+            self.connections_by_map.clear()
+            self.player_to_map.clear()
+
+        for player_id, websocket, map_id in connections_to_close:
+            try:
+                await websocket.close()
+                logger.debug(
+                    "WebSocket connection closed for player",
+                    extra={
+                        "player_id": player_id,
+                        "map_id": map_id,
+                    }
+                )
+            except Exception as e:
+                logger.warning(
+                    "Error closing WebSocket connection",
+                    extra={
+                        "player_id": player_id,
+                        "map_id": map_id,
+                        "error": str(e),
+                    }
+                )

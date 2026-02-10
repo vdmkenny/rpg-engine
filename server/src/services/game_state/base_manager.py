@@ -114,7 +114,9 @@ class BaseManager:
 
         encoded_data = {k: self._encode_for_valkey(v) for k, v in data.items()}
         await self._valkey.hset(key, encoded_data)
-        await self._valkey.expire(key, ttl)
+        # Only set TTL if > 0; ttl=0 means permanent storage (no expiration)
+        if ttl > 0:
+            await self._valkey.expire(key, ttl)
 
     async def _get_from_valkey(self, key: str) -> Optional[Dict[str, Any]]:
         if not self._valkey:
@@ -163,11 +165,13 @@ class BaseManager:
 
         while True:
             result = await self._valkey.scan(cursor, match=pattern, count=100)
-            cursor = result[0]  # bytes cursor
+            next_cursor = result[0]  # bytes cursor
             found = result[1]   # list of key bytes
             keys.extend(self._decode_bytes(k) for k in found)
-            if cursor == b"0":
+            # cursor b"0" or "0" means we've completed the full scan
+            if next_cursor == b"0" or next_cursor == "0":
                 break
+            cursor = next_cursor.decode() if isinstance(next_cursor, bytes) else str(next_cursor)
 
         return keys
 

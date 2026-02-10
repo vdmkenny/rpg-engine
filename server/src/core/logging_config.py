@@ -7,14 +7,43 @@ Configures formatters, handlers, and loggers for various components.
 
 import logging
 import logging.config
-import os
 import sys
 from typing import Dict, Any
 
+from .config import settings
+
+
+class ExtraFieldsFormatter(logging.Formatter):
+    """Custom formatter that includes extra fields in log output."""
+    
+    def format(self, record):
+        # Get the base formatted message
+        formatted = super().format(record)
+        
+        # Extract extra fields (attributes not in the standard LogRecord)
+        standard_attrs = {
+            'name', 'msg', 'args', 'levelname', 'levelno', 'pathname', 'filename',
+            'module', 'lineno', 'funcName', 'created', 'msecs', 'relativeCreated',
+            'thread', 'threadName', 'processName', 'process', 'getMessage',
+            'exc_info', 'exc_text', 'stack_info', 'message', 'asctime'
+        }
+        
+        extra_fields = {}
+        for attr, value in record.__dict__.items():
+            if attr not in standard_attrs and not attr.startswith('_'):
+                extra_fields[attr] = value
+        
+        # Append extra fields to the formatted message
+        if extra_fields:
+            extra_str = ' | '.join(f"{k}={v}" for k, v in extra_fields.items())
+            return f"{formatted} [{extra_str}]"
+        
+        return formatted
+
 
 def get_log_level() -> str:
-    """Get the log level from environment variables."""
-    return os.getenv("LOG_LEVEL", "INFO").upper()
+    """Get the log level from settings."""
+    return settings.LOG_LEVEL.upper()
 
 
 def get_logging_config() -> Dict[str, Any]:
@@ -26,7 +55,7 @@ def get_logging_config() -> Dict[str, Any]:
     structured output with proper formatting.
     """
     log_level = get_log_level()
-    environment = os.getenv("ENVIRONMENT", "development").lower()
+    environment = settings.ENVIRONMENT.lower()
 
     # Choose formatter based on environment and availability
     if environment == "production":
@@ -40,8 +69,8 @@ def get_logging_config() -> Dict[str, Any]:
             formatter_class = "logging.Formatter"
             formatter_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s [JSON logger not available]"
     else:
-        # Human-readable formatting for development/testing
-        formatter_class = "logging.Formatter"
+        # Human-readable formatting for development/testing with extra fields
+        formatter_class = "server.src.core.logging_config.ExtraFieldsFormatter"
         formatter_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
     config = {
@@ -54,7 +83,7 @@ def get_logging_config() -> Dict[str, Any]:
                 "datefmt": "%Y-%m-%d %H:%M:%S",
             },
             "detailed": {
-                "class": formatter_class,
+                "class": "server.src.core.logging_config.ExtraFieldsFormatter",
                 "format": "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s",
                 "datefmt": "%Y-%m-%d %H:%M:%S",
             },
@@ -148,7 +177,7 @@ def setup_logging() -> None:
         "Logging configured",
         extra={
             "log_level": get_log_level(),
-            "environment": os.getenv("ENVIRONMENT", "development"),
+            "environment": settings.ENVIRONMENT,
         },
     )
 

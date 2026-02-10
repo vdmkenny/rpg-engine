@@ -13,9 +13,9 @@ common_path = Path(__file__).parent.parent / "common" / "src"
 if str(common_path) not in sys.path:
     sys.path.insert(0, str(common_path))
 
-from client.src.client import Client
-from client.src.logging_config import setup_logging
-from client.src.config import get_config
+from .client import Client
+from .logging_config import setup_logging
+from .config import get_config
 
 
 def main():

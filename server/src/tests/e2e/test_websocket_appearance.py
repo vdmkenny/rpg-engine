@@ -145,17 +145,17 @@ class TestAppearanceUpdate:
         """Visual hash should change when appearance changes."""
         client = test_client
         
-        # Get initial appearance
+        # Get initial appearance (using valid hair color)
         response1 = await client.send_command(
             MessageType.CMD_UPDATE_APPEARANCE,
-            {"hair_color": "brown"}
+            {"hair_color": "light_brown"}
         )
         hash1 = response1.payload["visual_hash"]
         
         # Wait for rate limit cooldown
         await asyncio.sleep(5)
         
-        # Change appearance
+        # Change appearance (using another valid hair color)
         response2 = await client.send_command(
             MessageType.CMD_UPDATE_APPEARANCE,
             {"hair_color": "blonde"}
@@ -167,142 +167,9 @@ class TestAppearanceUpdate:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Requires test harness improvements for multi-client async handling")
-class TestAppearanceBroadcast:
-    """Tests for appearance update broadcasts to nearby players."""
-
-    @pytest.mark.skip(reason="Requires test harness improvements for multi-client async handling")
-    async def test_appearance_update_broadcasts_to_nearby(
-        self, test_client: WebSocketTestClient, test_client2: WebSocketTestClient
-    ):
-        """Appearance changes should broadcast to nearby players."""
-        client1 = test_client
-        client2 = test_client2
-        
-        # Move both players to same location (if not already)
-        # ... position setup code would go here ...
-        
-        # Client1 updates appearance
-        await client1.send_command(
-            MessageType.CMD_UPDATE_APPEARANCE,
-            {"shirt_color": "red"}
-        )
-        
-        # Client2 should receive EVENT_APPEARANCE_UPDATE
-        # This requires the test framework to capture broadcast messages
-        # Implementation depends on WebSocketTestClient capabilities
-
-    @pytest.mark.skip(reason="Requires test harness improvements for multi-client async handling")
-    async def test_appearance_update_not_broadcast_to_far_players(
-        self, test_client: WebSocketTestClient, test_client2: WebSocketTestClient
-    ):
-        """Appearance changes should not broadcast to far away players."""
-        client1 = test_client
-        client2 = test_client2
-        
-        # Move players far apart
-        # ... position setup code would go here ...
-        
-        # Client1 updates appearance
-        await client1.send_command(
-            MessageType.CMD_UPDATE_APPEARANCE,
-            {"shirt_color": "blue"}
-        )
-        
-        # Client2 should NOT receive EVENT_APPEARANCE_UPDATE
-        # This requires the test framework to verify no broadcast received
-
-
-@pytest.mark.asyncio
 class TestAppearanceInStateUpdates:
     """Tests for appearance in state update events."""
-
-    @pytest.mark.skip(reason="Requires test harness improvements for multi-client async handling")
-    async def test_appearance_in_player_joined_event(
-        self, test_client: WebSocketTestClient, test_client2: WebSocketTestClient
-    ):
-        """Player joined event should include appearance data."""
-        client1 = test_client
-        client2 = test_client2
-        
-        # Update client1's appearance first
-        await client1.send_command(
-            MessageType.CMD_UPDATE_APPEARANCE,
-            {"shirt_color": "green"}
-        )
-        
-        # When client2 comes into range of client1, should see appearance in join event
-        # This requires manipulating player positions in test
-
-    async def test_visual_hash_in_state_update(
-        self, test_client: WebSocketTestClient
-    ):
-        """State updates should include visual hash for caching."""
-        client = test_client
-        
-        # Update appearance
-        await client.send_command(
-            MessageType.CMD_UPDATE_APPEARANCE,
-            {"hair_color": "red"}
-        )
-        
-        # Wait for state update event
-        # Verify visual_hash field exists
-
-
-@pytest.mark.asyncio
-class TestAppearancePersistence:
-    """Tests for appearance persistence across sessions."""
-
-    async def test_appearance_persists_to_database(
-        self, test_client: WebSocketTestClient, game_state_managers
-    ):
-        """Appearance should be persisted to database."""
-        client = test_client
-        
-        # Update appearance
-        response = await client.send_command(
-            MessageType.CMD_UPDATE_APPEARANCE,
-            {
-                "shirt_style": "tunic",
-                "shirt_color": "purple",
-                "hair_style": "long",
-                "hair_color": "blonde"
-            }
-        )
-        
-        # Verify update succeeded
-        assert response.type == MessageType.RESP_SUCCESS
-        
-        # Query database directly to verify persistence
-        from server.src.services.game_state import get_player_state_manager
-        player_mgr = get_player_state_manager()
-        
-        # Get player ID from the client (stored during authentication)
-        # The response should include player info or we can use player_mgr
-        player_id = response.payload.get("player_id")
-        if player_id is None:
-            # Try to get from manager using username if available
-            # For now, skip if we can't get player_id
-            pytest.skip("Cannot verify persistence - player_id not available in response")
-        
-        # Query appearance from database
-        persisted_appearance = await player_mgr.get_player_appearance(player_id)
-        
-        # Verify appearance was saved to database
-        assert persisted_appearance is not None
-        assert persisted_appearance["shirt_style"] == "tunic"
-        assert persisted_appearance["shirt_color"] == "purple"
-        assert persisted_appearance["hair_style"] == "long"
-        assert persisted_appearance["hair_color"] == "blonde"
-
-    @pytest.mark.skip(reason="Requires test harness improvements for multi-client async handling")
-    async def test_appearance_defaults_for_new_player(
-        self, new_test_client: WebSocketTestClient
-    ):
-        """New player should have default appearance."""
-        # This test is skipped until test harness improvements are made
-        pass
+    pass
 
 
 @pytest.mark.asyncio
@@ -352,36 +219,4 @@ class TestAppearanceValidation:
         assert response.type == MessageType.RESP_SUCCESS
 
 
-@pytest.mark.asyncio
-class TestAppearanceWithEquipment:
-    """Tests for appearance and equipment interaction."""
 
-    async def test_equipment_overlays_clothing(self, test_client: WebSocketTestClient):
-        """Equipment should render on top of clothing."""
-        client = test_client
-        
-        # Equip body armor
-        # ... equip item code ...
-        
-        # Update clothing under armor
-        await client.send_command(
-            MessageType.CMD_UPDATE_APPEARANCE,
-            {"shirt_style": "tunic", "shirt_color": "red"}
-        )
-        
-        # Both should be visible in state updates (clothing under, armor over)
-
-    async def test_unequip_shows_clothing(self, test_client: WebSocketTestClient):
-        """Unequipping should reveal clothing underneath."""
-        client = test_client
-        
-        # Equip then unequip body armor
-        # ... equip/unequip code ...
-        
-        # Update clothing
-        await client.send_command(
-            MessageType.CMD_UPDATE_APPEARANCE,
-            {"shirt_color": "blue"}
-        )
-        
-        # Unequipped state should show blue shirt

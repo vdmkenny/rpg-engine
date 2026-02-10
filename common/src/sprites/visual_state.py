@@ -68,68 +68,6 @@ class EquippedVisuals:
     boots_tint: Optional[str] = None
     ammo_tint: Optional[str] = None
 
-    # Legacy field aliases for backward compatibility during migration
-    @property
-    def main_hand(self) -> Optional[str]:
-        """Alias for weapon slot."""
-        return self.weapon
-
-    @property
-    def off_hand(self) -> Optional[str]:
-        """Alias for shield slot."""
-        return self.shield
-
-    @property
-    def back(self) -> Optional[str]:
-        """Alias for cape slot."""
-        return self.cape
-
-    @property
-    def hands(self) -> Optional[str]:
-        """Alias for gloves slot."""
-        return self.gloves
-
-    @property
-    def feet(self) -> Optional[str]:
-        """Alias for boots slot."""
-        return self.boots
-
-    @property
-    def belt(self) -> Optional[str]:
-        """Legacy belt slot - maps to body."""
-        return None
-
-    # Tint property aliases for backward compatibility
-    @property
-    def main_hand_tint(self) -> Optional[str]:
-        """Alias for weapon_tint."""
-        return self.weapon_tint
-
-    @property
-    def off_hand_tint(self) -> Optional[str]:
-        """Alias for shield_tint."""
-        return self.shield_tint
-
-    @property
-    def back_tint(self) -> Optional[str]:
-        """Alias for cape_tint."""
-        return self.cape_tint
-
-    @property
-    def hands_tint(self) -> Optional[str]:
-        """Alias for gloves_tint."""
-        return self.gloves_tint
-
-    @property
-    def feet_tint(self) -> Optional[str]:
-        """Alias for boots_tint."""
-        return self.boots_tint
-
-    @property
-    def belt_tint(self) -> Optional[str]:
-        """Legacy belt tint slot - returns None."""
-        return None
-
     def to_dict(self) -> dict:
         """
         Convert to dictionary, excluding None values.
@@ -166,13 +104,6 @@ class EquippedVisuals:
         """
         Create EquippedVisuals from a dictionary.
 
-        Handles backward compatibility with old slot names:
-        - main_hand -> weapon
-        - off_hand -> shield
-        - back -> cape
-        - hands -> gloves
-        - feet -> boots
-
         Args:
             data: Dictionary with equipment slot -> sprite ID mappings.
                   May also include *_tint fields for tint colors.
@@ -183,29 +114,24 @@ class EquippedVisuals:
         if data is None:
             return cls()
 
-        # Handle backward compatibility for slot names
-        def get_slot_value(old_key: str, new_key: str) -> Optional[str]:
-            """Get value with old key as fallback."""
-            return data.get(new_key) or data.get(old_key)
-
         return cls(
             head=data.get("head"),
-            cape=get_slot_value("back", "cape"),
-            weapon=get_slot_value("main_hand", "weapon"),
+            cape=data.get("cape"),
+            weapon=data.get("weapon"),
             body=data.get("body"),
-            shield=get_slot_value("off_hand", "shield"),
+            shield=data.get("shield"),
             legs=data.get("legs"),
-            gloves=get_slot_value("hands", "gloves"),
-            boots=get_slot_value("feet", "boots"),
+            gloves=data.get("gloves"),
+            boots=data.get("boots"),
             ammo=data.get("ammo"),
             head_tint=data.get("head_tint"),
-            cape_tint=get_slot_value("back_tint", "cape_tint"),
-            weapon_tint=get_slot_value("main_hand_tint", "weapon_tint"),
+            cape_tint=data.get("cape_tint"),
+            weapon_tint=data.get("weapon_tint"),
             body_tint=data.get("body_tint"),
-            shield_tint=get_slot_value("off_hand_tint", "shield_tint"),
+            shield_tint=data.get("shield_tint"),
             legs_tint=data.get("legs_tint"),
-            gloves_tint=get_slot_value("hands_tint", "gloves_tint"),
-            boots_tint=get_slot_value("feet_tint", "boots_tint"),
+            gloves_tint=data.get("gloves_tint"),
+            boots_tint=data.get("boots_tint"),
             ammo_tint=data.get("ammo_tint"),
         )
     
@@ -250,22 +176,22 @@ class EquippedVisuals:
         
         return cls(
             head=get_sprite_id("head"),
-            cape=get_sprite_id("cape") or get_sprite_id("back"),
-            weapon=get_sprite_id("weapon") or get_sprite_id("main_hand"),
+            cape=get_sprite_id("cape"),
+            weapon=get_sprite_id("weapon"),
             body=get_sprite_id("body"),
-            shield=get_sprite_id("shield") or get_sprite_id("off_hand"),
+            shield=get_sprite_id("shield"),
             legs=get_sprite_id("legs"),
-            gloves=get_sprite_id("gloves") or get_sprite_id("hands"),
-            boots=get_sprite_id("boots") or get_sprite_id("feet"),
+            gloves=get_sprite_id("gloves"),
+            boots=get_sprite_id("boots"),
             ammo=get_sprite_id("ammo"),
             head_tint=get_tint("head"),
-            cape_tint=get_tint("cape") or get_tint("back"),
-            weapon_tint=get_tint("weapon") or get_tint("main_hand"),
+            cape_tint=get_tint("cape"),
+            weapon_tint=get_tint("weapon"),
             body_tint=get_tint("body"),
-            shield_tint=get_tint("shield") or get_tint("off_hand"),
+            shield_tint=get_tint("shield"),
             legs_tint=get_tint("legs"),
-            gloves_tint=get_tint("gloves") or get_tint("hands"),
-            boots_tint=get_tint("boots") or get_tint("feet"),
+            gloves_tint=get_tint("gloves"),
+            boots_tint=get_tint("boots"),
             ammo_tint=get_tint("ammo"),
         )
 

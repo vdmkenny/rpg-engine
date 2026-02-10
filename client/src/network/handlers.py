@@ -26,9 +26,10 @@ logger = get_logger(__name__)
 class MessageHandlers:
     """Container for all message handlers."""
     
-    def __init__(self, game_state: "ClientGameState"):
+    def __init__(self, game_state: "ClientGameState", connection=None):
         self.game_state = game_state
         self.event_bus = get_event_bus()
+        self.connection = connection
     
     # =================================================================
     # EVENT HANDLERS
@@ -36,40 +37,99 @@ class MessageHandlers:
     
     async def handle_welcome(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:
         """Handle welcome event with initial player data."""
-        logger.info(f"Welcome received: {payload.get('username', 'unknown')}")
+        # Extract player data from nested structure
+        player_data = payload.get("player", {})
         
-        self.game_state.player_id = payload.get("player_id")
-        self.game_state.username = payload.get("username")
-        self.game_state.position = payload.get("position", {})
-        self.game_state.map_id = payload.get("map_id")
-        self.game_state.current_hp = payload.get("current_hp", 100)
-        self.game_state.max_hp = payload.get("max_hp", 100)
-        self.game_state.facing_direction = payload.get("facing_direction", "DOWN")
+        # Set player identity
+        self.game_state.player_id = player_data.get("id")
+        self.game_state.username = player_data.get("username")
         
-        # Update visual state if provided
-        if "visual_state" in payload:
-            self.game_state.visual_state = payload["visual_state"]
+        # Set position
+        position = player_data.get("position", {})
+        if position:
+            self.game_state.position = position
+            self.game_state.map_id = position.get("map_id")
+        
+        # Set HP
+        hp_data = player_data.get("hp", {})
+        self.game_state.current_hp = hp_data.get("current_hp", 100)
+        self.game_state.max_hp = hp_data.get("max_hp", 100)
+        
+        # Set visual state if provided
+        if "visual_hash" in player_data:
+            self.game_state.visual_hash = player_data["visual_hash"]
+        if "visual_state" in player_data:
+            self.game_state.visual_state = player_data["visual_state"]
+
+            # Preload player paperdoll sprites
+            try:
+                from ..rendering.sprite_manager import get_sprite_manager
+                from ..rendering.paperdoll_renderer import PaperdollRenderer
+                sprite_manager = get_sprite_manager()
+                paperdoll = PaperdollRenderer(sprite_manager)
+                # Preload in background - don't block welcome processing
+                import asyncio
+                asyncio.create_task(
+                    paperdoll.preload_character(
+                        player_data["visual_state"],
+                        player_data.get("visual_hash", "default")
+                    )
+                )
+                logger.debug("Started preloading character sprites")
+            except Exception as e:
+                logger.warning(f"Failed to start sprite preloading: {e}")
+
+        logger.info(f"Welcome received: {self.game_state.username} at position ({self.game_state.position.get('x')}, {self.game_state.position.get('y')})")
+        
+        # IMPORTANT: Load tilesets for the map
+        if self.game_state.map_id:
+            from ..tileset_manager import get_tileset_manager
+            tileset_manager = get_tileset_manager()
+            try:
+                logger.info(f"Loading tilesets for map: {self.game_state.map_id}")
+                await tileset_manager.load_map_tilesets(self.game_state.map_id)
+                logger.info(f"Tilesets loaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to load tilesets: {e}")
+        
+        # Request map chunks around current position (handles reconnects)
+        if self.connection and self.game_state.position:
+            from .message_sender import MessageSender
+            sender = MessageSender()
+            x = self.game_state.position.get("x", 0)
+            y = self.game_state.position.get("y", 0)
+            try:
+                logger.info(f"Requesting map chunks at ({x}, {y})")
+                await sender.query_map_chunks(x, y)
+            except Exception as e:
+                logger.error(f"Failed to request map chunks: {e}")
         
         self.event_bus.emit(EventType.GAME_STARTED, {"player_id": self.game_state.player_id})
     
     async def handle_chunk_update(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:
-        """Handle chunk update when crossing chunk boundaries."""
+        """Handle chunk update from server."""
         chunks = payload.get("chunks", [])
-        player_position = payload.get("player_position", {})
-        
-        logger.debug(f"Received {len(chunks)} chunks")
-        
+        map_id = payload.get("map_id", "unknown")
+
+        logger.info(f"Received chunk update: {len(chunks)} chunks for map {map_id}")
+
         for chunk in chunks:
             chunk_x = chunk.get("chunk_x")
             chunk_y = chunk.get("chunk_y")
-            tiles = chunk.get("tiles", [])
-            
-            if chunk_x is not None and chunk_y is not None:
+            tiles = chunk.get("tiles")
+
+            logger.debug(f"Processing chunk ({chunk_x}, {chunk_y}) with {len(tiles) if tiles else 0} rows")
+
+            if chunk_x is not None and chunk_y is not None and tiles:
                 self.game_state.chunks[(chunk_x, chunk_y)] = tiles
-        
-        if player_position:
-            self.game_state.position = player_position
-        
+                # Log first tile format for debugging
+                if tiles and tiles[0]:
+                    first_tile = tiles[0][0]
+                    logger.debug(f"First tile format: {type(first_tile).__name__} - {first_tile if not isinstance(first_tile, dict) else list(first_tile.keys())}")
+                logger.info(f"Stored chunk ({chunk_x}, {chunk_y}) with {len(tiles)} rows")
+            else:
+                logger.warning(f"Invalid chunk data: chunk_x={chunk_x}, chunk_y={chunk_y}, has_tiles={tiles is not None}")
+
         self.event_bus.emit(EventType.CHUNK_RECEIVED, {"count": len(chunks)})
     
     async def handle_state_update(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:
@@ -266,7 +326,7 @@ class MessageHandlers:
     async def handle_success_response(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:
         """Handle success response."""
         message = payload.get("message", "Success")
-        data = payload.get("data", {})
+        data = payload.get("data", payload)
         logger.debug(f"Success: {message}")
         
         # Update game state based on response data

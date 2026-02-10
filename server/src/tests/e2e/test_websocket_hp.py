@@ -18,122 +18,6 @@ from server.src.tests.websocket_test_utils import WebSocketTestClient
 from server.src.services.test_data_service import TestDataService
 
 
-class TestWelcomeHPFields:
-    """Tests that EVENT_WELCOME message includes HP information using modern approach."""
-
-    @pytest.mark.asyncio
-    async def test_welcome_includes_current_hp(self, test_client: WebSocketTestClient):
-        """EVENT_WELCOME message should include current_hp field - verified through client state."""
-        # The test_client fixture already handles authentication and welcome message processing
-        # We verify HP information is properly accessible through WebSocket commands
-        
-        # Try to get inventory to verify connection works (HP is handled implicitly)
-        try:
-            await test_client.get_inventory()
-        except Exception as e:
-            # If inventory not implemented, that's fine - connection is verified
-            error_msg = str(e).lower()
-            if "not implemented" in error_msg or "timeout" in error_msg or "unknown" in error_msg:
-                pass  # Expected for unimplemented features
-            else:
-                raise  # Unexpected error
-        
-        # Test passes if we can successfully connect and authenticate
-        # HP fields are verified during fixture setup
-
-    @pytest.mark.asyncio
-    async def test_welcome_includes_max_hp(self, test_client: WebSocketTestClient):
-        """EVENT_WELCOME message should include max_hp field - verified through client state.""" 
-        # Similar test - connection success indicates welcome message was properly processed
-        try:
-            await test_client.get_inventory()
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "not implemented" in error_msg or "timeout" in error_msg or "unknown" in error_msg:
-                pass  # Expected for unimplemented features
-            else:
-                raise  # Unexpected error
-
-    @pytest.mark.asyncio
-    async def test_welcome_current_hp_does_not_exceed_max_hp(self, test_client: WebSocketTestClient):
-        """EVENT_WELCOME message current_hp should not exceed max_hp - verified through client state."""
-        # Test passes if authentication succeeds (HP validation happens in fixture)
-        try:
-            await test_client.get_inventory()
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "not implemented" in error_msg or "timeout" in error_msg or "unknown" in error_msg:
-                pass  # Expected for unimplemented features
-            else:
-                raise  # Unexpected error
-
-    @pytest.mark.asyncio
-    async def test_new_player_starts_with_full_hp(self, test_client: WebSocketTestClient):
-        """New player should start with full HP (current_hp == max_hp) - verified through client state."""
-        # Test passes if authentication succeeds (HP validation happens in fixture)
-        try:
-            await test_client.get_inventory()
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "not implemented" in error_msg or "timeout" in error_msg or "unknown" in error_msg:
-                pass  # Expected for unimplemented features
-            else:
-                raise  # Unexpected error
-
-
-class TestHPInValkey:
-    """Tests for HP storage and persistence in Valkey using modern approach."""
-
-    @pytest.mark.asyncio
-    async def test_hp_stored_in_valkey_after_connect(self, test_client: WebSocketTestClient):
-        """HP should be stored in Valkey after WebSocket connection - verified through successful connection."""
-        # The test_client fixture already handles connection and HP initialization
-        # We verify HP functionality through successful WebSocket operations
-        
-        try:
-            await test_client.get_inventory()
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "not implemented" in error_msg or "timeout" in error_msg or "unknown" in error_msg:
-                pass  # Expected for unimplemented features
-            else:
-                raise  # Unexpected error
-        
-        # Test passes if WebSocket connection and operations work (HP managed internally)
-
-    @pytest.mark.asyncio
-    async def test_hp_persists_after_reconnect(self, test_client: WebSocketTestClient):
-        """HP should persist in Valkey after reconnecting - verified through connection persistence."""
-        # The test_client fixture handles persistence through GSM/Valkey
-        # Multiple operations verify that state persists correctly
-        
-        try:
-            # Multiple operations test persistence
-            await test_client.get_inventory()
-            await test_client.get_inventory()
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "not implemented" in error_msg or "timeout" in error_msg or "unknown" in error_msg:
-                pass  # Expected for unimplemented features
-            else:
-                raise  # Unexpected error
-
-    @pytest.mark.asyncio
-    async def test_welcome_hp_reflects_equipment_bonus(self, test_client: WebSocketTestClient):
-        """HP calculations should work correctly with equipment - verified through successful connection."""
-        # The test_client fixture handles HP calculations including any equipment effects
-        # Connection success indicates HP calculations are working properly
-        
-        try:
-            await test_client.get_inventory()
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "not implemented" in error_msg or "timeout" in error_msg or "unknown" in error_msg:
-                pass  # Expected for unimplemented features
-            else:
-                raise  # Unexpected error
-
-
 class TestHPMessageTypes:
     """Tests for HP-related message types using modern approach."""
 
@@ -146,15 +30,15 @@ class TestHPMessageTypes:
         assert hasattr(MessageType, 'EVENT_PLAYER_RESPAWN'), "EVENT_PLAYER_RESPAWN message type should exist"
 
     def test_game_state_update_exists(self):
-        """EVENT_GAME_STATE_UPDATE message type should exist for HP updates."""
-        assert hasattr(MessageType, 'EVENT_GAME_STATE_UPDATE'), "EVENT_GAME_STATE_UPDATE message type should exist"
+        """EVENT_STATE_UPDATE message type should exist for HP updates."""
+        assert hasattr(MessageType, 'EVENT_STATE_UPDATE'), "EVENT_STATE_UPDATE message type should exist"
 
 
 class TestDeathSequence:
     """Tests for player death and respawn sequence using service layer."""
 
     @pytest.mark.asyncio
-    async def test_death_sequence_calls_died_callback(self, session, gsm):
+    async def test_death_sequence_calls_died_callback(self, session, game_state_managers):
         """Death sequence should trigger died callback and respawn logic."""
         from server.src.services.test_data_service import TestDataService, PlayerConfig
         from server.src.services.hp_service import HpService
@@ -200,7 +84,7 @@ class TestDeathSequence:
         assert post_respawn_hp > 0, "Player should have positive HP after respawn"
 
     @pytest.mark.asyncio
-    async def test_death_sequence_without_callback(self, session, gsm):
+    async def test_death_sequence_without_callback(self, session, game_state_managers):
         """Death sequence should work even without external callbacks."""
         from server.src.services.test_data_service import TestDataService, PlayerConfig
         from server.src.services.hp_service import HpService

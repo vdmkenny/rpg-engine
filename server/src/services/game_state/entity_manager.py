@@ -6,7 +6,8 @@ Entity definitions are reference data; instances are runtime-only.
 """
 
 import traceback
-from typing import Any, Dict, List, Optional, Set
+from enum import Enum
+from typing import Any, Dict, List, Optional, Set, Union
 
 from glide import GlideClient, RangeByScore, ScoreBoundary
 from sqlalchemy.orm import sessionmaker
@@ -170,7 +171,7 @@ class EntityManager(BaseManager):
     async def set_entity_state(
         self,
         instance_id: int,
-        state: str,
+        state: Union[str, Enum],
         target_player_id: Optional[int] = None,
     ) -> None:
         """Set entity state and target."""
@@ -181,6 +182,9 @@ class EntityManager(BaseManager):
         data = await self._get_from_valkey(key)
 
         if data:
+            # Convert enum to string value for consistent serialization
+            if isinstance(state, Enum):
+                state = state.value
             data["state"] = state
             if target_player_id is not None:
                 data["target_player_id"] = target_player_id
@@ -252,7 +256,9 @@ class EntityManager(BaseManager):
             await self._valkey.srem(map_key, [str(instance_id)])
 
         # Queue for respawn
-        respawn_at = death_tick + respawn_delay_seconds
+        # Convert seconds to ticks for consistent units
+        respawn_delay_ticks = int(respawn_delay_seconds * settings.GAME_TICK_RATE)
+        respawn_at = death_tick + respawn_delay_ticks
         await self._valkey.zadd(
             ENTITY_RESPAWN_QUEUE_KEY, {str(instance_id): float(respawn_at)}
         )
@@ -305,7 +311,7 @@ class EntityManager(BaseManager):
         # Clear respawn queue
         await self._delete_from_valkey(ENTITY_RESPAWN_QUEUE_KEY)
 
-        logger.info(f"Cleared {len(all_instance_ids)} entity instances")
+        logger.info("Cleared entity instances", extra={"instance_count": len(all_instance_ids)})
 
     async def clear_player_as_entity_target(self, player_id: int) -> None:
         """Clear all entities targeting a specific player."""
@@ -381,6 +387,81 @@ class EntityManager(BaseManager):
                 )
 
         return respawn_list
+
+    async def store_spawn_metadata(
+        self,
+        instance_id: int,
+        entity_name: str,
+        entity_type: str,
+        spawn_x: int,
+        spawn_y: int,
+        wander_radius: int,
+        spawn_point_id: int,
+        aggro_radius: Optional[int] = None,
+        disengage_radius: Optional[int] = None,
+    ) -> None:
+        """
+        Store spawn metadata for an entity instance.
+        
+        This is a public API to avoid direct Valkey access from services.
+        """
+        if not self._valkey or not settings.USE_VALKEY:
+            return
+        
+        key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
+        current_data = await self._get_from_valkey(key)
+        
+        if current_data:
+            current_data["entity_name"] = entity_name
+            current_data["entity_type"] = entity_type
+            current_data["spawn_x"] = spawn_x
+            current_data["spawn_y"] = spawn_y
+            current_data["wander_radius"] = wander_radius
+            current_data["spawn_point_id"] = spawn_point_id
+            if aggro_radius is not None:
+                current_data["aggro_radius"] = aggro_radius
+            if disengage_radius is not None:
+                current_data["disengage_radius"] = disengage_radius
+            await self._cache_in_valkey(key, current_data, ENTITY_TTL)
+
+    async def get_time_based_respawn_queue(self, current_time: float) -> List[int]:
+        """
+        Get instance IDs ready to respawn based on timestamp.
+        
+        Returns list of instance IDs with respawn_time <= current_time.
+        This is a public API to avoid direct Valkey access from services.
+        """
+        if not self._valkey or not settings.USE_VALKEY:
+            return []
+        
+        score_query = RangeByScore(
+            start=ScoreBoundary(0, is_inclusive=True),
+            end=ScoreBoundary(current_time, is_inclusive=True),
+        )
+        ready_to_respawn = await self._valkey.zrange(
+            ENTITY_RESPAWN_QUEUE_KEY,
+            score_query,
+        )
+        
+        instance_ids = []
+        for instance_id_bytes in ready_to_respawn:
+            instance_id = int(
+                instance_id_bytes.decode() if isinstance(instance_id_bytes, bytes) else instance_id_bytes
+            )
+            instance_ids.append(instance_id)
+        
+        return instance_ids
+
+    async def remove_from_respawn_queue(self, instance_id: int) -> None:
+        """
+        Remove an entity from the respawn queue without finalizing death.
+        
+        This is a public API to avoid direct Valkey access from services.
+        """
+        if not self._valkey or not settings.USE_VALKEY:
+            return
+        
+        await self._valkey.zrem(ENTITY_RESPAWN_QUEUE_KEY, [str(instance_id)])
 
 
 # Singleton instance

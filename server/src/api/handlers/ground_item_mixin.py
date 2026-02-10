@@ -7,6 +7,8 @@ Handles dropping and picking up items from the ground.
 import traceback
 from typing import Any
 
+from fastapi import WebSocket
+
 from server.src.core.logging_config import get_logger
 from server.src.services.game_state import get_player_state_manager
 from server.src.services.ground_item_service import GroundItemService
@@ -25,7 +27,7 @@ logger = get_logger(__name__)
 class GroundItemHandlerMixin:
     """Handles CMD_ITEM_DROP and CMD_ITEM_PICKUP."""
     
-    websocket: Any
+    websocket: WebSocket
     username: str
     player_id: int
     
@@ -40,7 +42,7 @@ class GroundItemHandlerMixin:
             if not position:
                 await self._send_error_response(
                     message.id,
-                    ErrorCodes.INV_CANNOT_STACK,
+                    ErrorCodes.SYS_INTERNAL_ERROR,
                     ErrorCategory.SYSTEM,
                     "Could not determine player position"
                 )

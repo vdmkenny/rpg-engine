@@ -97,9 +97,9 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
         
         # Send initial skills data
         try:
-            logger.info(f"Fetching skills for player {player_id}")
+            logger.info("Fetching skills for player", extra={"player_id": player_id})
             player_skills = await SkillService.get_player_skills(player_id)
-            logger.info(f"Retrieved {len(player_skills)} skills from database")
+            logger.info("Retrieved skills from database", extra={"skill_count": len(player_skills)})
             
             # Format skills for client (convert from list to dict keyed by skill name)
             skills_dict = {}
@@ -131,7 +131,7 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
             
             packed_skills = msgpack.packb(skills_update.model_dump(), use_bin_type=True)
             await websocket.send_bytes(packed_skills)
-            logger.info(f"Skills sent successfully to player {player_id}")
+            logger.info("Skills sent successfully to player", extra={"player_id": player_id})
             
         except Exception as skills_error:
             logger.error(

@@ -84,7 +84,7 @@ class Renderer:
         
         # Render layers
         # 1. Map/chunks
-        self.map_renderer.render(self.game_state.chunks)
+        self.map_renderer.render(self.game_state.chunks, self.game_state.map_id)
         
         # 2. Ground items
         self.entity_renderer.render_ground_items(self.game_state.ground_items)
@@ -98,7 +98,15 @@ class Renderer:
         # 5. Own player (centered on screen)
         player_x = self.game_state.position.get("x", 0)
         player_y = self.game_state.position.get("y", 0)
-        self.entity_renderer.render_player(player_x, player_y, self.game_state.visual_hash)
+        self.entity_renderer.render_player(
+            player_x, 
+            player_y, 
+            visual_hash=self.game_state.visual_hash,
+            visual_state=self.game_state.visual_state,
+            facing_direction=self.game_state.facing_direction,
+            is_moving=getattr(self.game_state, 'is_moving', False),
+            move_progress=getattr(self.game_state, 'move_progress', 0.0)
+        )
         
         # 6. Effects (hit splats, floating text)
         self.entity_renderer.render_effects(self.game_state.hit_splats, self.game_state.floating_messages)

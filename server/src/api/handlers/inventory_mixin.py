@@ -7,6 +7,8 @@ Handles inventory management operations like moving and sorting items.
 import traceback
 from typing import Any
 
+from fastapi import WebSocket
+
 from server.src.core.logging_config import get_logger
 from server.src.core.items import InventorySortType
 from server.src.services.inventory_service import InventoryService
@@ -25,7 +27,7 @@ logger = get_logger(__name__)
 class InventoryHandlerMixin:
     """Handles CMD_INVENTORY_MOVE and CMD_INVENTORY_SORT."""
     
-    websocket: Any
+    websocket: WebSocket
     username: str
     player_id: int
     
@@ -65,7 +67,7 @@ class InventoryHandlerMixin:
             )
             await self._send_error_response(
                 message.id,
-                ErrorCodes.INV_INVENTORY_FULL,
+                ErrorCodes.SYS_INTERNAL_ERROR,
                 ErrorCategory.SYSTEM,
                 "Inventory move failed"
             )
@@ -118,7 +120,7 @@ class InventoryHandlerMixin:
             )
             await self._send_error_response(
                 message.id,
-                ErrorCodes.INV_INVENTORY_FULL,
+                ErrorCodes.SYS_INTERNAL_ERROR,
                 ErrorCategory.SYSTEM,
                 "Inventory sort failed"
             )

@@ -96,9 +96,9 @@ class TestCombatIntegration:
         
         await asyncio.sleep(ENTITY_SPAWN_WAIT)
         
-        # Attack until entity dies
+        # Attack until entity dies (respecting combat cooldown of 0.6s)
         entity_died = False
-        for attempt in range(100):
+        for attempt in range(20):  # Reduced attempts since we wait properly
             try:
                 response = await test_client.send_command(
                     MessageType.CMD_ATTACK,
@@ -128,11 +128,15 @@ class TestCombatIntegration:
                 if "dead" in str(e).lower():
                     entity_died = True
                     break
+                # Rate limit is expected, wait and retry
+                if "rate limit" in str(e).lower():
+                    await asyncio.sleep(0.7)  # Wait for combat cooldown (0.6s + buffer)
+                    continue
                 raise
             
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.7)  # Wait for combat cooldown between attacks
         
-        assert entity_died, "Entity did not die after 100 attacks"
+        assert entity_died, "Entity did not die after multiple attacks"
     
     async def test_attack_out_of_range_fails(self, spawned_test_entities, test_client: WebSocketTestClient):
         """Test attack fails when target is out of range."""
@@ -205,7 +209,7 @@ class TestCombatIntegration:
         await asyncio.sleep(ENTITY_SPAWN_WAIT)
         
         hit_with_damage = False
-        for attempt in range(50):
+        for attempt in range(20):  # Reduced attempts since we wait properly
             try:
                 response = await test_client.send_command(
                     MessageType.CMD_ATTACK,
@@ -236,11 +240,15 @@ class TestCombatIntegration:
             except ErrorResponseError as e:
                 if "dead" in str(e).lower():
                     pytest.fail("Entity died before we could verify XP gain")
+                # Rate limit is expected, wait and retry
+                if "rate limit" in str(e).lower():
+                    await asyncio.sleep(0.7)  # Wait for combat cooldown (0.6s + buffer)
+                    continue
                 raise
             
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.7)  # Wait for combat cooldown between attacks
         
-        assert hit_with_damage, "No successful hit after 50 attempts"
+        assert hit_with_damage, "No successful hit after multiple attempts"
     
     async def test_attack_nonexistent_entity_fails(self, test_client: WebSocketTestClient):
         """Test attack on non-existent entity fails."""

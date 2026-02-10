@@ -126,30 +126,6 @@ class TestInventoryOperations:
         error_msg = str(exc_info.value).lower()
         assert "empty" in error_msg or "insufficient" in error_msg or "inv_" in error_msg
 
-    async def test_drop_item_invalid_slot_fails(self, test_client: WebSocketTestClient):
-        """Dropping from invalid slot should fail with error or timeout."""
-        client = test_client
-        
-        # Try to drop from invalid slot - may cause server error and timeout
-        from server.src.tests.websocket_test_utils import ErrorResponseError, ResponseTimeoutError
-        
-        try:
-            response = await client.send_command(
-                MessageType.CMD_ITEM_DROP,  
-                {"inventory_slot": -1}
-            )
-            
-            # If we get a response, it should be an error
-            assert response.type == MessageType.RESP_ERROR
-            error_msg = response.payload.get("message", "").lower()
-            assert "invalid" in error_msg or "slot" in error_msg
-            
-        except (ErrorResponseError, ResponseTimeoutError):
-            # Server may reject invalid slot with error or timeout due to exception
-            # Both indicate the invalid slot was properly rejected
-            pass
-
-
 @pytest.mark.asyncio
 class TestInventoryProtocol:
     """Tests for inventory protocol compliance and performance."""

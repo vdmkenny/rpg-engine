@@ -792,20 +792,6 @@ async def game_state_managers(fake_valkey: FakeValkey, setup_test_db) -> AsyncGe
 
 
 @pytest_asyncio.fixture(scope="function")
-async def gsm(fake_valkey: FakeValkey, game_state_managers) -> AsyncGenerator[None, None]:
-    """
-    Legacy alias for game_state_managers fixture.
-    
-    Maintained for backward compatibility with existing tests.
-    Tests can call individual manager getters (get_player_state_manager, etc.)
-    to access the initialized managers.
-    """
-    # Yield nothing - game_state_managers handles initialization
-    # Tests should use get_player_state_manager(), get_inventory_manager(), etc.
-    yield
-
-
-@pytest_asyncio.fixture(scope="function")
 async def items_synced(game_state_managers) -> None:
     """
     Global fixture to ensure items are synced to database using ReferenceDataManager.
@@ -881,10 +867,12 @@ def create_test_player(
         y: int = 10, 
         map_id: str = "samplemap",
         current_hp: int = 10,
+        role = None,
         **extra_fields
     ) -> Player:
         from server.src.core.security import get_password_hash
         from server.src.models.player import Player
+        from server.src.core.constants import PlayerRole
         from server.src.services.game_state import get_player_state_manager, get_skills_manager
         
         # Create player record using the same session as HTTP endpoints
@@ -897,7 +885,8 @@ def create_test_player(
             x=x,
             y=y,
             map_id=map_id,
-            current_hp=current_hp
+            current_hp=current_hp,
+            role=role if role else PlayerRole.PLAYER
         )
         
         # Use the SAME session that HTTP endpoints use (from session fixture)
@@ -1063,8 +1052,8 @@ def create_offline_player(session: AsyncSession) -> Callable[..., Awaitable[Play
     async def _create_offline_player(
         player_id: int,
         username: str = None,
-        x_coord: int = 50, 
-        y_coord: int = 50,
+        x: int = 50, 
+        y: int = 50,
         map_id: str = "test_map",
         current_hp: int = 10,
         **extra_fields
@@ -1079,8 +1068,8 @@ def create_offline_player(session: AsyncSession) -> Callable[..., Awaitable[Play
             id=player_id,
             username=username,
             hashed_password=get_password_hash("test_password"),
-            x_coord=x_coord,
-            y_coord=y_coord, 
+            x=x,
+            y=y, 
             map_id=map_id,
             current_hp=current_hp,
             **extra_fields
@@ -1320,6 +1309,17 @@ async def test_client(
                 
                 if chat_response.type != MessageType.EVENT_CHAT_MESSAGE:
                     raise Exception(f"Expected welcome chat message but got {chat_response.type}")
+                
+                # Consume skills state update message with timeout
+                skills_response_bytes = await asyncio.wait_for(
+                    websocket.receive_bytes(),
+                    timeout=5.0
+                )
+                skills_response_data = msgpack.unpackb(skills_response_bytes, raw=False)
+                skills_response = WSMessage(**skills_response_data)
+                
+                if skills_response.type != MessageType.EVENT_STATE_UPDATE:
+                    raise Exception(f"Expected skills state update but got {skills_response.type}")
                 
                 # Create WebSocket test client wrapper
                 client = WebSocketTestClient(websocket)

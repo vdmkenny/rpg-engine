@@ -6,6 +6,8 @@ Handles attack and auto-retaliate commands.
 
 from typing import Any
 
+from fastapi import WebSocket
+
 import msgpack
 from pydantic import ValidationError
 
@@ -34,20 +36,22 @@ from common.src.protocol import (
 
 logger = get_logger(__name__)
 
+# Module-level singleton rate limiter instance
+_combat_rate_limiter = OperationRateLimiter()
+
 
 class CombatHandlerMixin:
     """Handles CMD_ATTACK and CMD_TOGGLE_AUTO_RETALIATE."""
     
-    websocket: Any
+    websocket: WebSocket
     username: str
     player_id: int
     
     async def _handle_cmd_attack(self, message: WSMessage) -> None:
         """Handle CMD_ATTACK - player attacks entity or player."""
         try:
-            operation_rate_limiter = OperationRateLimiter()
             combat_cooldown = game_config.get("game", {}).get("security", {}).get("combat_attack_cooldown", 0.6)
-            if not operation_rate_limiter.check_rate_limit(
+            if not _combat_rate_limiter.check_rate_limit(
                 self.username,
                 "combat_attack",
                 combat_cooldown
@@ -214,8 +218,11 @@ class CombatHandlerMixin:
                 
                 await player_mgr.set_player_combat_state(
                     self.player_id,
-                    payload.target_type.value,
-                    int(payload.target_id)
+                    {
+                        "target_type": payload.target_type.value,
+                        "target_id": int(payload.target_id),
+                        "auto_retaliate": False
+                    }
                 )
                 
                 logger.debug(

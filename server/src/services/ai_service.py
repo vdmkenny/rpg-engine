@@ -149,17 +149,35 @@ class AIService:
         Returns:
             EntityCombatEvent if an attack occurred, None otherwise.
         """
-        instance_id = entity.get("id")
+        instance_id = entity.get("instance_id")
+        if instance_id is None:
+            return None
+            
         state_str = entity.get("state", "idle")
         
-        # Skip dead/dying entities
-        if state_str in ("dead", "dying"):
+        # Skip dead/dying entities (handle both string and enum values)
+        if state_str in ("dead", "dying", EntityState.DEAD, EntityState.DYING):
             return None
         
-        state = EntityState(state_str)
+        # Convert string state to enum, or use enum directly
+        if isinstance(state_str, EntityState):
+            state = state_str
+        else:
+            state = EntityState(state_str)
         
         # Get entity definition for behavior settings
-        entity_name = entity.get("entity_name", "")
+        # Resolve entity name from entity_id via reference data
+        entity_id = entity.get("entity_id")
+        if entity_id is None:
+            return None
+            
+        from .game_state import get_reference_data_manager
+        ref_mgr = get_reference_data_manager()
+        entity_def = await ref_mgr.get_entity_definition_by_id(entity_id)
+        if not entity_def:
+            return None
+            
+        entity_name = entity_def.get("name", "")
         entity_enum = get_entity_by_name(entity_name)
         if not entity_enum:
             return None
@@ -656,9 +674,8 @@ class AIService:
                 await AIService._transition_to_returning(entity_mgr, instance_id, timers)
             
             # Get player username for the combat event
-            defender_name = await PlayerService.get_username_by_player_id(target_player_id)
-            if not defender_name:
-                defender_name = "Unknown"
+            player_data = await PlayerService.get_player_by_id(target_player_id)
+            defender_name = player_data.username if player_data else "Unknown"
             
             # Return combat event for broadcasting
             return EntityCombatEvent(

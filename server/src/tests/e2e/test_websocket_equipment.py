@@ -123,8 +123,8 @@ class TestEquipmentWebSocket:
             assert e.error_code
             assert e.error_message
             
-            # Should be equipment-related error
-            assert e.error_code.startswith("EQ_") or e.error_code.startswith("INVENTORY_")
+            # Should be equipment-related error (server uses lowercase)
+            assert e.error_code.startswith("eq_") or e.error_code.startswith("inventory_")
             
             print("✅ Equipment error handling with structured responses working correctly")
     

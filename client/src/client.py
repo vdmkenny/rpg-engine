@@ -1,41 +1,34 @@
 """
-Main client orchestrator.
+RPG Client v2.0 - Proper screen-based architecture.
 
-Coordinates all systems: rendering, input, network, and game state.
-This replaces the monolithic rpg_client.py with a clean architecture.
+Screen flow: Server Select -> Login/Register -> Game
 """
 
 import asyncio
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
-# Add common module to path
-common_path = Path(__file__).parent.parent / "common" / "src"
-if str(common_path) not in sys.path:
-    sys.path.insert(0, str(common_path))
+# Setup paths
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "common" / "src"))
 
-try:
-    import aiohttp
-    import pygame
-except ImportError:
-    pass  # Will be imported when running
+import aiohttp
+import pygame
 
 from client.src.config import get_config
 from client.src.logging_config import setup_logging, get_logger
-from client.src.core import get_state_machine, GameState, get_event_bus, EventType
-from client.src.game.client_state import get_game_state
+from client.src.game.client_state import get_game_state, ClientGameState
 from client.src.network.connection import get_connection_manager
 from client.src.network.handlers import register_all_handlers
 from client.src.network.message_sender import get_message_sender
-from client.src.input.input_manager import InputManager, InputAction
 from client.src.rendering.renderer import Renderer
-
-import sys
-from pathlib import Path
-common_path = Path(__file__).parent.parent / "common" / "src"
-if str(common_path) not in sys.path:
-    sys.path.insert(0, str(common_path))
+from client.src.ui.screens import ServerSelectScreen, LoginScreen, GameScreen
+from client.src.ui.colors import Colors
+from client.src.game_states import GameState
+from client.src.core import get_event_bus, EventType, Event
 
 from protocol import Direction
 
@@ -43,305 +36,680 @@ logger = get_logger(__name__)
 
 
 class Client:
-    """Main client orchestrator."""
+    """Main RPG client with proper screen flow."""
+    
+    # Server list - configurable
+    SERVERS = [
+        {
+            "name": "Local Server",
+            "host": "localhost",
+            "port": 8000,
+            "description": "Development server",
+        },
+    ]
     
     def __init__(self):
         self.config = get_config()
-        self.state_machine = get_state_machine()
-        self.event_bus = get_event_bus()
         self.game_state = get_game_state()
         self.connection = get_connection_manager()
         self.message_sender = get_message_sender()
         
-        self._running = False
-        self.renderer: Optional[Renderer] = None
-        self.input_manager: Optional[InputManager] = None
+        # Pygame setup
+        pygame.init()
+        self.screen = pygame.display.set_mode((
+            self.config.display.width,
+            self.config.display.height
+        ))
+        pygame.display.set_caption(self.config.display.title)
+        self.clock = pygame.time.Clock()
+        
+        # Network
         self.http_session: Optional[aiohttp.ClientSession] = None
+        self.jwt_token: Optional[str] = None
+        self.selected_server_index = 0
         
-        self._jwt_token: Optional[str] = None
+        # Movement tracking
+        self.keys_pressed: set = set()
+        self.last_move_time: float = 0.0
+        self.move_cooldown: float = self.config.game.move_cooldown  # 0.15s
         
-        self._setup_event_listeners()
-        self._setup_input_handlers()
+        # State
+        self.state = GameState.SERVER_SELECT
+        self._running = False
+        
+        # UI callbacks
+        self._setup_ui_callbacks()
+        
+        # Screens
+        self.server_select_screen: Optional[ServerSelectScreen] = None
+        self.login_screen: Optional[LoginScreen] = None
+        self.game_screen: Optional[GameScreen] = None
+        self.renderer: Optional[Renderer] = None
+        
+        # Status checking
+        self.server_status = {}
+        self.last_status_check = 0
+        
+        # Subscribe to GAME_STARTED event to handle reconnections
+        self._setup_event_handlers()
     
-    def _setup_event_listeners(self):
-        """Setup internal event listeners."""
-        self.event_bus.subscribe(EventType.CONNECTING, self._on_connecting)
-        self.event_bus.subscribe(EventType.CONNECTED, self._on_connected)
-        self.event_bus.subscribe(EventType.DISCONNECTED, self._on_disconnected)
-        self.event_bus.subscribe(EventType.AUTHENTICATED, self._on_authenticated)
-        self.event_bus.subscribe(EventType.AUTH_FAILED, self._on_auth_failed)
-        self.event_bus.subscribe(EventType.CONNECTION_ERROR, self._on_connection_error)
+    def _setup_event_handlers(self):
+        """Subscribe to events for handling game state changes."""
+        event_bus = get_event_bus()
+        event_bus.subscribe(EventType.GAME_STARTED, self._on_game_started)
+        logger.debug("Subscribed to GAME_STARTED event")
     
-    def _setup_input_handlers(self):
-        """Setup input action handlers."""
-        # Will be set up after input_manager is created
-        pass
+    async def _on_game_started(self, event: Event):
+        """Handle game start - ensures renderer exists for reconnects."""
+        logger.info(f"Game started event received for player {event.data.get('player_id')}")
+        
+        # If no renderer (reconnect after logout), recreate it
+        if not self.renderer:
+            logger.info("Recreating renderer after reconnect")
+            self.renderer = Renderer()
+            self.game_screen = GameScreen(self.screen, self.renderer)
+            self._connect_ui_callbacks()
+            
+            # Transition to PLAYING state if we're in LOGIN
+            if self.state == GameState.LOGIN:
+                self.state = GameState.PLAYING
+                logger.info("Transitioned to PLAYING state after reconnect")
     
     async def run(self):
-        """Run the main client loop."""
+        """Main client loop."""
         self._running = True
         
-        # Setup logging
         setup_logging()
-        logger.info("RPG Client starting...")
+        logger.info("RPG Client v2.0 starting...")
         
-        # Initialize systems
+        # Initialize HTTP session
         self.http_session = aiohttp.ClientSession()
-        self.renderer = Renderer()
-        self.input_manager = InputManager()
-        self._setup_input_actions()
         
-        # Register network handlers
-        register_all_handlers(self.game_state)
+        # Initialize screens
+        self.server_select_screen = ServerSelectScreen(self.screen, self.SERVERS)
+        self.login_screen = LoginScreen(self.screen, is_register=False)
         
-        # Start in server select state
-        self.state_machine.transition_to(GameState.SERVER_SELECT)
-        
-        # Main loop
-        clock = pygame.time.Clock()
+        # Fetch initial server status
+        await self._refresh_server_status()
         
         try:
             while self._running:
-                delta_time = clock.tick(self.config.display.fps) / 1000.0
+                delta_time = self.clock.tick(self.config.display.fps) / 1000.0
                 
-                # Process input
-                if not self.input_manager.process_events():
+                # Process events
+                should_quit = False
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        should_quit = True
+                        break
+                    
+                    # Track key state for continuous movement
+                    if event.type == pygame.KEYDOWN:
+                        self.keys_pressed.add(event.key)
+                    elif event.type == pygame.KEYUP:
+                        self.keys_pressed.discard(event.key)
+                    
+                    action = self._handle_event(event)
+                    if action == "quit":
+                        should_quit = True
+                        break
+                    elif action:
+                        await self._process_action(action)
+                
+                if should_quit:
                     break
                 
-                # Update game state
+                # Update
                 self._update(delta_time)
                 
                 # Render
-                if self.renderer:
-                    self.renderer.update(delta_time)
-                    self.renderer.render()
+                self._draw()
                 
-                # Small yield to prevent blocking
+                pygame.display.flip()
                 await asyncio.sleep(0)
                 
         except KeyboardInterrupt:
-            logger.info("Received keyboard interrupt")
+            logger.info("Keyboard interrupt received")
         except Exception as e:
             logger.error(f"Error in main loop: {e}", exc_info=True)
         finally:
             await self.shutdown()
     
-    def _setup_input_actions(self):
-        """Setup input action handlers."""
-        self.input_manager.register_action_handler(InputAction.MOVE_UP, self._on_move_up)
-        self.input_manager.register_action_handler(InputAction.MOVE_DOWN, self._on_move_down)
-        self.input_manager.register_action_handler(InputAction.MOVE_LEFT, self._on_move_left)
-        self.input_manager.register_action_handler(InputAction.MOVE_RIGHT, self._on_move_right)
-        self.input_manager.register_action_handler(InputAction.OPEN_INVENTORY, self._on_open_inventory)
-        self.input_manager.register_action_handler(InputAction.OPEN_EQUIPMENT, self._on_open_equipment)
-        self.input_manager.register_action_handler(InputAction.OPEN_STATS, self._on_open_stats)
-        self.input_manager.register_action_handler(InputAction.TOGGLE_CHAT, self._on_toggle_chat)
-        self.input_manager.register_action_handler(InputAction.HIDE_CHAT, self._on_hide_chat)
-        self.input_manager.register_action_handler(InputAction.CLOSE_PANELS, self._on_close_panels)
+    def _handle_event(self, event: pygame.event.Event) -> Optional[str]:
+        """Route events to appropriate screen handler."""
+        # Route to screen handlers first (so UI gets priority over global shortcuts)
+        if self.state == GameState.SERVER_SELECT and self.server_select_screen:
+            return self.server_select_screen.handle_event(event)
+        elif self.state in (GameState.LOGIN, GameState.REGISTER) and self.login_screen:
+            return self.login_screen.handle_event(event)
+        elif self.state == GameState.PLAYING and self.game_screen:
+            action = self.game_screen.handle_event(event, self.game_state)
+            if action:
+                return action
+
+        # Global shortcuts for panel toggling in PLAYING state (only if not consumed by UI)
+        if self.state == GameState.PLAYING:
+            # Check if chat input is focused - if so, only allow ESCAPE to close it
+            chat_focused = False
+            if self.renderer and self.renderer.ui_renderer:
+                chat_focused = self.renderer.ui_renderer.is_chat_input_active()
+
+            if event.type == pygame.KEYDOWN:
+                # ESCAPE always works (closes chat or panels)
+                if event.key == pygame.K_ESCAPE:
+                    return "close_panels"
+
+                # If chat is focused, don't process other shortcuts (let UI handle typing)
+                if chat_focused:
+                    return None
+
+                # Process global shortcuts only when chat is NOT focused
+                if event.key == pygame.K_i:
+                    return "toggle_inventory"
+                elif event.key == pygame.K_e:
+                    return "toggle_equipment"
+                elif event.key == pygame.K_s:
+                    return "toggle_stats"
+                elif event.key == pygame.K_c:
+                    return "toggle_chat"
+                elif event.key == pygame.K_t:
+                    return "start_chat"
+
+            # Handle world mouse interactions
+            if event.type == pygame.MOUSEBUTTONDOWN and self.renderer:
+                # Get mouse position in world coordinates
+                mouse_pos = pygame.mouse.get_pos()
+                camera = self.renderer.camera
+                world_x, world_y = camera.screen_to_world(mouse_pos[0], mouse_pos[1])
+                tile_x = int(world_x // self.config.game.tile_size)
+                tile_y = int(world_y // self.config.game.tile_size)
+
+                # Check if click was on UI (don't handle world clicks if clicking UI)
+                if self.renderer.ui_renderer:
+                    ui_rects = [
+                        self.renderer.ui_renderer.side_panel.rect,
+                        self.renderer.ui_renderer.chat_window.rect,
+                        self.renderer.ui_renderer.minimap,
+                    ]
+                    # Convert minimap center/radius to rect for hit testing
+                    if hasattr(self.renderer.ui_renderer.minimap, 'x'):
+                        mm = self.renderer.ui_renderer.minimap
+                        mm_rect = pygame.Rect(
+                            mm.x - mm.radius,
+                            mm.y - mm.radius,
+                            mm.radius * 2,
+                            mm.radius * 2
+                        )
+                        ui_rects.append(mm_rect)
+
+                    # Check if click is on any UI element
+                    click_on_ui = any(rect.collidepoint(mouse_pos) for rect in ui_rects if hasattr(rect, 'collidepoint'))
+                    if click_on_ui:
+                        pass  # Let UI handle it
+                    else:
+                        # Handle world click
+                        if event.button == 1:  # Left click - attack or pickup
+                            action = self._handle_world_left_click(tile_x, tile_y)
+                            if action:
+                                return action
+                        elif event.button == 3:  # Right click - context menu
+                            action = self._handle_world_right_click(tile_x, tile_y)
+                            if action:
+                                return action
+
+        return None
     
-    def _update(self, delta_time: float):
-        """Update game state."""
-        # Update current state
-        current_state = self.state_machine.current_state
+    def _handle_world_left_click(self, tile_x: int, tile_y: int) -> Optional[str]:
+        """Handle left click on the game world."""
+        # Check for entities at this tile
+        for entity_id, entity in self.game_state.entities.items():
+            if entity.x == tile_x and entity.y == tile_y:
+                # Attack the entity
+                entity_type = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
+                asyncio.create_task(self.message_sender.attack(entity_type, entity_id))
+                return None
         
-        # State-specific updates
-        if current_state == GameState.PLAYING:
-            # Clean up expired hit splats
-            self.game_state.cleanup_hit_splats()
-    
-    # =========================================================================
-    # Input Action Handlers
-    # =========================================================================
-    
-    def _on_move_up(self):
-        if self.state_machine.is_in_game:
-            asyncio.create_task(self.message_sender.move(Direction.UP))
-    
-    def _on_move_down(self):
-        if self.state_machine.is_in_game:
-            asyncio.create_task(self.message_sender.move(Direction.DOWN))
-    
-    def _on_move_left(self):
-        if self.state_machine.is_in_game:
-            asyncio.create_task(self.message_sender.move(Direction.LEFT))
-    
-    def _on_move_right(self):
-        if self.state_machine.is_in_game:
-            asyncio.create_task(self.message_sender.move(Direction.RIGHT))
-    
-    def _on_open_inventory(self):
-        if self.renderer:
-            self.renderer.ui_renderer.toggle_panel("inventory")
-    
-    def _on_open_equipment(self):
-        if self.renderer:
-            self.renderer.ui_renderer.toggle_panel("equipment")
-    
-    def _on_open_stats(self):
-        if self.renderer:
-            self.renderer.ui_renderer.toggle_panel("stats")
-    
-    def _on_toggle_chat(self):
-        if self.input_manager:
-            self.input_manager.start_chat_input()
-    
-    def _on_hide_chat(self):
-        if self.renderer:
-            self.renderer.ui_renderer.toggle_panel("chat")
-    
-    def _on_close_panels(self):
-        if self.renderer:
-            self.renderer.ui_renderer.hide_all_panels()
-    
-    # =========================================================================
-    # Event Handlers
-    # =========================================================================
-    
-    def _on_connecting(self, event):
-        """Handle connecting event."""
-        logger.info("Connecting to server...")
-    
-    def _on_connected(self, event):
-        """Handle connected event."""
-        logger.info("Connected to server")
-    
-    def _on_disconnected(self, event):
-        """Handle disconnected event."""
-        logger.info("Disconnected from server")
-        self.game_state.is_connected = False
-        self.game_state.is_authenticated = False
-        self.state_machine.transition_to(GameState.SERVER_SELECT)
-    
-    def _on_authenticated(self, event):
-        """Handle authenticated event."""
-        logger.info("Successfully authenticated")
-        self.game_state.is_authenticated = True
+        # Check for other players at this tile
+        for player_id, player in self.game_state.other_players.items():
+            pos = player.get("position", {})
+            if pos.get("x") == tile_x and pos.get("y") == tile_y:
+                # Attack the player
+                asyncio.create_task(self.message_sender.attack("player", player_id))
+                return None
         
-        # Query initial data
-        asyncio.create_task(self.message_sender.query_inventory())
-        asyncio.create_task(self.message_sender.query_equipment())
-        asyncio.create_task(self.message_sender.query_stats())
+        # Check for ground items at this tile
+        for item_id, item in self.game_state.ground_items.items():
+            if item.get("x") == tile_x and item.get("y") == tile_y:
+                # Pick up the item
+                asyncio.create_task(self.message_sender.item_pickup(item_id))
+                return None
         
-        # Request map chunks around current position
-        x = self.game_state.position.get("x", 0)
-        y = self.game_state.position.get("y", 0)
-        asyncio.create_task(self.message_sender.query_map_chunks(x, y))
+        return None
+    
+    def _handle_world_right_click(self, tile_x: int, tile_y: int) -> Optional[str]:
+        """Handle right click on the game world - show context menu."""
+        from client.src.rendering.ui_panels import ContextMenuItem
         
-        # Transition to playing state
-        self.state_machine.transition_to(GameState.PLAYING)
-    
-    def _on_auth_failed(self, event):
-        """Handle authentication failure."""
-        error = event.data.get("error", "Unknown error")
-        logger.error(f"Authentication failed: {error}")
-        self.state_machine.transition_to(GameState.LOGIN, {"error": error})
-    
-    def _on_connection_error(self, event):
-        """Handle connection error."""
-        error = event.data.get("error", "Unknown error")
-        logger.error(f"Connection error: {error}")
-    
-    # =========================================================================
-    # Public API
-    # =========================================================================
-    
-    async def login(self, username: str, password: str) -> bool:
-        """
-        Login and get JWT token.
+        menu_items = []
+        menu_x, menu_y = pygame.mouse.get_pos()
         
-        Args:
-            username: Player username
-            password: Player password
+        # Check for entities at this tile
+        for entity_id, entity in self.game_state.entities.items():
+            if entity.x == tile_x and entity.y == tile_y:
+                entity_name = entity.name
+                entity_type = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
+                menu_items.append(ContextMenuItem(
+                    f"Attack {entity_name}",
+                    "attack_entity",
+                    (255, 100, 100),  # Red
+                    (entity_type, entity_id)
+                ))
+                menu_items.append(ContextMenuItem(
+                    f"Examine {entity_name}",
+                    "examine_entity",
+                    (100, 200, 255),  # Cyan
+                    entity
+                ))
+        
+        # Check for other players at this tile
+        for player_id, player in self.game_state.other_players.items():
+            pos = player.get("position", {})
+            if pos.get("x") == tile_x and pos.get("y") == tile_y:
+                username = player.get("username", "Unknown")
+                menu_items.append(ContextMenuItem(
+                    f"Attack {username}",
+                    "attack_player",
+                    (255, 100, 100),  # Red
+                    ("player", player_id)
+                ))
+                menu_items.append(ContextMenuItem(
+                    f"Examine {username}",
+                    "examine_player",
+                    (100, 200, 255),  # Cyan
+                    player
+                ))
+        
+        # Check for ground items at this tile
+        for item_id, item in self.game_state.ground_items.items():
+            if item.get("x") == tile_x and item.get("y") == tile_y:
+                item_name = item.get("name", "Unknown Item")
+                menu_items.append(ContextMenuItem(
+                    f"Take {item_name}",
+                    "pickup",
+                    Colors.TEXT_WHITE,
+                    item_id
+                ))
+                menu_items.append(ContextMenuItem(
+                    f"Examine {item_name}",
+                    "examine_item",
+                    (100, 200, 255),  # Cyan
+                    item
+                ))
+        
+        # Show context menu if we have items
+        if menu_items and self.renderer:
+            def on_menu_select(item):
+                if item.action.startswith("attack"):
+                    target_type, target_id = item.data
+                    asyncio.create_task(self.message_sender.attack(target_type, target_id))
+                elif item.action == "pickup":
+                    asyncio.create_task(self.message_sender.item_pickup(item.data))
             
-        Returns:
-            True if login successful
-        """
+            self.renderer.ui_renderer.context_menu.show(
+                menu_x, menu_y, menu_items, on_menu_select
+            )
+        
+        return None
+    
+    async def _process_action(self, action: str):
+        """Process actions from screen handlers."""
+        if action.startswith("select_server:"):
+            idx = int(action.split(":")[1])
+            self.selected_server_index = idx
+            await self._select_server()
+        
+        elif action == "refresh_status":
+            await self._refresh_server_status()
+            
+        elif action == "submit":
+            if self.state == GameState.LOGIN:
+                await self._attempt_login()
+            elif self.state == GameState.REGISTER:
+                await self._attempt_register()
+                
+        elif action == "switch_mode":
+            if self.state == GameState.LOGIN:
+                self.state = GameState.REGISTER
+                self.login_screen.is_register = True
+            else:
+                self.state = GameState.LOGIN
+                self.login_screen.is_register = False
+            self.login_screen.status_message = ""
+        
+        elif action == "toggle_inventory":
+            if self.renderer:
+                self.renderer.ui_renderer.toggle_panel("inventory")
+        
+        elif action == "toggle_equipment":
+            if self.renderer:
+                self.renderer.ui_renderer.toggle_panel("equipment")
+        
+        elif action == "toggle_stats":
+            if self.renderer:
+                self.renderer.ui_renderer.toggle_panel("stats")
+        
+        elif action == "toggle_chat":
+            if self.renderer:
+                self.renderer.ui_renderer.toggle_panel("chat")
+        
+        elif action == "close_panels":
+            if self.renderer:
+                self.renderer.ui_renderer.hide_all_panels()
+        
+        elif action == "start_chat":
+            if self.renderer:
+                self.renderer.ui_renderer.set_chat_input_active(True)
+        
+        elif action == "chat_send":
+            # Chat message was sent from UI
+            if self.renderer and self.renderer.ui_renderer.is_chat_input_active():
+                # Get the message from chat window and send it
+                chat_window = self.renderer.ui_renderer.chat_window
+                if chat_window.input_text.strip():
+                    asyncio.create_task(self.message_sender.chat_send(chat_window.input_text))
+                    chat_window.input_text = ""
+                    chat_window.input_cursor_pos = 0
+
+        elif action == "logout":
+            # Logout requested from UI
+            await self._handle_logout()
+
+    def _setup_ui_callbacks(self):
+        """Setup UI interaction callbacks."""
+        # These will be connected once the renderer is initialized
+        self._ui_callbacks_setup = False
+    
+    def _connect_ui_callbacks(self):
+        """Connect UI callbacks to message sender."""
+        if self._ui_callbacks_setup or not self.renderer:
+            return
+        
+        ui_renderer = self.renderer.ui_renderer
+        
+        # Inventory actions
+        def on_inventory_action(action: str, slot: int):
+            if action == "equip":
+                asyncio.create_task(self.message_sender.item_equip(slot))
+            elif action == "drop":
+                asyncio.create_task(self.message_sender.item_drop(slot))
+            elif action == "use":
+                # Use item - could be implemented based on item type
+                pass
+        
+        # Equipment actions  
+        def on_equipment_action(action: str, slot: str):
+            if action == "unequip":
+                asyncio.create_task(self.message_sender.item_unequip(slot))
+        
+        # World actions
+        def on_world_action(action: str, data: any):
+            if action == "attack":
+                target_type, target_id = data
+                asyncio.create_task(self.message_sender.attack(target_type, target_id))
+            elif action == "pickup":
+                ground_item_id = data
+                asyncio.create_task(self.message_sender.item_pickup(ground_item_id))
+        
+        ui_renderer.on_inventory_action = on_inventory_action
+        ui_renderer.on_equipment_action = on_equipment_action
+        ui_renderer.on_world_action = on_world_action
+
+        # Setup logout callback
+        def on_logout():
+            asyncio.create_task(self._handle_logout())
+
+        ui_renderer.set_logout_callback(on_logout)
+
+        # Setup inventory sort callback
+        def on_inventory_sort(criteria: str):
+            asyncio.create_task(self.message_sender.inventory_sort(criteria))
+
+        ui_renderer.set_inventory_sort_callback(on_inventory_sort)
+
+        self._ui_callbacks_setup = True
+    
+    async def _refresh_server_status(self):
+        """Fetch server status for all servers."""
+        for i, server in enumerate(self.SERVERS):
+            try:
+                url = f"http://{server['host']}:{server['port']}/status"
+                async with self.http_session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                    if resp.status == 200:
+                        self.server_status[i] = await resp.json()
+                    else:
+                        self.server_status[i] = {"status": "error", "error": f"HTTP {resp.status}"}
+            except Exception as e:
+                self.server_status[i] = {"status": "error", "error": str(e)}
+        
+        # Update screen with status
+        if self.server_select_screen:
+            self.server_select_screen.server_status = self.server_status
+    
+    async def _select_server(self):
+        """Select a server and proceed to login."""
+        server = self.SERVERS[self.selected_server_index]
+        logger.info(f"Selected server: {server['name']}")
+        
+        # Update config with selected server
+        self.config.server.host = server['host']
+        self.config.server.port = server['port']
+        
+        self.state = GameState.LOGIN
+        self.login_screen.status_message = ""
+    
+    async def _attempt_login(self):
+        """Attempt login with credentials."""
+        username, password, _ = self.login_screen.get_credentials()
+        
+        if not username or not password:
+            self.login_screen.set_status("Please enter username and password", Colors.TEXT_RED)
+            return
+        
+        self.login_screen.set_status("Logging in...", Colors.TEXT_WHITE)
+        
         try:
             url = f"{self.config.server.base_url}/auth/login"
-            payload = {"username": username, "password": password}
+            async with self.http_session.post(url, data={"username": username, "password": password}) as resp:
+                if resp.status != 200:
+                    error = await resp.text()
+                    self.login_screen.set_status(f"Login failed: {error}", Colors.TEXT_RED)
+                    return
+                
+                data = await resp.json()
+                self.jwt_token = data.get("access_token")
             
-            async with self.http_session.post(url, json=payload) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    self._jwt_token = data.get("access_token")
-                    
-                    if self._jwt_token:
-                        # Store username in game state
-                        self.game_state.username = username
-                        
-                        # Transition to connecting state
-                        self.state_machine.transition_to(GameState.CONNECTING)
-                        
-                        # Connect to WebSocket
-                        success = await self.connection.connect(self._jwt_token)
-                        return success
-                else:
-                    error_text = await response.text()
-                    logger.error(f"Login failed: {error_text}")
-                    return False
-                    
+            if not self.jwt_token:
+                self.login_screen.set_status("No access token received", Colors.TEXT_RED)
+                return
+            
+            # IMPORTANT: Register handlers BEFORE connecting so welcome event can be processed
+            register_all_handlers(self.game_state)
+            
+            # IMPORTANT: Set auth token for tileset manager BEFORE connecting
+            from client.src.tileset_manager import get_tileset_manager
+            tileset_manager = get_tileset_manager()
+            tileset_manager.set_auth_token(self.jwt_token)
+
+            # Set auth token for sprite manager for paperdoll sprites
+            from client.src.rendering.sprite_manager import get_sprite_manager
+            sprite_manager = get_sprite_manager()
+            sprite_manager.set_auth_token(self.jwt_token)
+            
+            # Connect WebSocket
+            self.login_screen.set_status("Connecting...", Colors.TEXT_WHITE)
+            success = await self.connection.connect(self.jwt_token)
+            
+            if success:
+                self.game_state.username = username
+                self.game_state.is_authenticated = True
+                
+                # Initialize game screen
+                self.renderer = Renderer()
+                self.game_screen = GameScreen(self.screen, self.renderer)
+                
+                # Connect UI callbacks for interactions
+                self._connect_ui_callbacks()
+                
+                # Request initial data from server
+                self.login_screen.set_status("Loading game data...", Colors.TEXT_WHITE)
+                await self.message_sender.query_inventory()
+                await self.message_sender.query_equipment()
+                await self.message_sender.query_stats()
+                
+                # Request map chunks around current position
+                x = self.game_state.position.get("x", 0)
+                y = self.game_state.position.get("y", 0)
+                await self.message_sender.query_map_chunks(x, y)
+                
+                self.state = GameState.PLAYING
+                logger.info("Login successful, entering game")
+            else:
+                self.login_screen.set_status("WebSocket connection failed", Colors.TEXT_RED)
+                
         except Exception as e:
             logger.error(f"Login error: {e}")
-            return False
-        
-        return False
+            self.login_screen.set_status(f"Connection error: {e}", Colors.TEXT_RED)
     
-    async def register(self, username: str, password: str) -> bool:
-        """
-        Register a new account.
+    async def _attempt_register(self):
+        """Attempt registration."""
+        username, password, email = self.login_screen.get_credentials()
         
-        Args:
-            username: Desired username
-            password: Desired password
-            
-        Returns:
-            True if registration successful
-        """
+        if not username or not password:
+            self.login_screen.set_status("Please fill all fields", Colors.TEXT_RED)
+            return
+        
+        self.login_screen.set_status("Registering...", Colors.TEXT_WHITE)
+        
         try:
             url = f"{self.config.server.base_url}/auth/register"
-            payload = {"username": username, "password": password}
+            payload = {"username": username, "password": password, "email": email or ""}
             
-            async with self.http_session.post(url, json=payload) as response:
-                if response.status == 201:
-                    logger.info("Registration successful")
-                    return True
+            async with self.http_session.post(url, json=payload) as resp:
+                if resp.status == 201:
+                    self.login_screen.set_status("Registration successful! Please login.", Colors.TEXT_GREEN)
+                    self.state = GameState.LOGIN
+                    self.login_screen.is_register = False
                 else:
-                    error_text = await response.text()
-                    logger.error(f"Registration failed: {error_text}")
-                    return False
+                    error = await resp.text()
+                    self.login_screen.set_status(f"Registration failed: {error}", Colors.TEXT_RED)
                     
         except Exception as e:
             logger.error(f"Registration error: {e}")
-            return False
+            self.login_screen.set_status(f"Connection error: {e}", Colors.TEXT_RED)
     
-    async def logout(self):
-        """Logout and disconnect."""
+    def _update(self, delta_time: float):
+        """Update game state."""
+        if self.state == GameState.PLAYING and self.game_state.is_authenticated:
+            # Process continuous movement
+            self._process_movement()
+            
+            # Clean up expired effects
+            self.game_state.cleanup_hit_splats()
+            
+            # Update camera
+            if self.renderer:
+                self.renderer.update(delta_time)
+    
+    def _process_movement(self):
+        """Process held keys and send movement commands."""
+        current_time = time.time()
+        if current_time - self.last_move_time < self.move_cooldown:
+            return
+        
+        # Determine direction from held keys (priority: UP > DOWN > LEFT > RIGHT)
+        direction = None
+        if pygame.K_w in self.keys_pressed or pygame.K_UP in self.keys_pressed:
+            direction = Direction.UP
+        elif pygame.K_s in self.keys_pressed or pygame.K_DOWN in self.keys_pressed:
+            direction = Direction.DOWN
+        elif pygame.K_a in self.keys_pressed or pygame.K_LEFT in self.keys_pressed:
+            direction = Direction.LEFT
+        elif pygame.K_d in self.keys_pressed or pygame.K_RIGHT in self.keys_pressed:
+            direction = Direction.RIGHT
+        
+        if direction:
+            # Schedule async move command
+            asyncio.create_task(self.message_sender.move(direction))
+            self.last_move_time = current_time
+    
+    def _draw(self):
+        """Render current screen."""
+        if self.state == GameState.SERVER_SELECT:
+            self.server_select_screen.draw()
+        elif self.state in (GameState.LOGIN, GameState.REGISTER):
+            self.login_screen.draw()
+        elif self.state == GameState.PLAYING:
+            if self.game_screen and self.renderer:
+                self.game_screen.draw(self.game_state)
+        
+        # Debug: Show current state
+        debug_font = pygame.font.SysFont("monospace", 12)
+        state_text = f"State: {self.state.value}"
+        text_surface = debug_font.render(state_text, True, (255, 255, 0))
+        self.screen.blit(text_surface, (10, 10))
+
+    async def _handle_logout(self):
+        """Handle logout - disconnect and return to login screen."""
+        logger.info("Logging out...")
+
+        # Disconnect WebSocket
         await self.connection.disconnect()
-        self._jwt_token = None
-        self.game_state.clear()
-        self.state_machine.transition_to(GameState.SERVER_SELECT)
-    
+
+        # Clean up game state
+        from .game.client_state import reset_game_state
+        reset_game_state()
+        self.game_state = get_game_state()
+
+        # Clean up renderer resources (but don't quit pygame - we need display for login)
+        if self.renderer:
+            # Just clear references, don't call cleanup() which quits pygame
+            self.renderer = None
+            self.game_screen = None
+
+        # Reset auth
+        self.jwt_token = None
+        self._ui_callbacks_setup = False
+
+        # Return to login screen
+        self.state = GameState.LOGIN
+        if self.login_screen:
+            self.login_screen.set_status("Logged out successfully", Colors.TEXT_GREEN)
+            self.login_screen.username = ""
+            self.login_screen.password = ""
+            self.login_screen.email = ""
+            self.login_screen.active_field = "username"
+
+        logger.info("Logout complete")
+
     async def shutdown(self):
-        """Shutdown the client gracefully."""
+        """Clean shutdown."""
         logger.info("Shutting down client...")
         self._running = False
         
-        # Disconnect from server
         await self.connection.disconnect()
         
-        # Cleanup pygame
         if self.renderer:
             self.renderer.cleanup()
         
-        # Close HTTP session
         if self.http_session:
             await self.http_session.close()
         
+        pygame.quit()
         logger.info("Client shutdown complete")
 
 
 async def main():
-    """Main entry point."""
+    """Entry point."""
     client = Client()
     await client.run()
 

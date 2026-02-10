@@ -44,7 +44,7 @@ class GameConfig(BaseModel):
     """Game-specific settings."""
     tile_size: int = Field(default=32, description="Size of each tile in pixels")
     chunk_size: int = Field(default=16, description="Chunk size in tiles")
-    move_cooldown: float = Field(default=0.15, description="Movement cooldown in seconds")
+    move_cooldown: float = Field(default=0.17, description="Movement cooldown in seconds")
     move_duration: float = Field(default=0.2, description="Movement animation duration in seconds")
     chunk_request_distance: int = Field(default=8, description="Distance in tiles before requesting new chunks")
 

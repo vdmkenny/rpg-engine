@@ -7,6 +7,8 @@ Handles player movement with collision detection and rate limiting.
 import traceback
 from typing import Any
 
+from fastapi import WebSocket
+
 from server.src.core.logging_config import get_logger
 from server.src.core.metrics import metrics
 from server.src.services.game_state import get_player_state_manager
@@ -26,7 +28,7 @@ logger = get_logger(__name__)
 class MovementHandlerMixin:
     """Handles CMD_MOVE for player movement."""
     
-    websocket: Any
+    websocket: WebSocket
     username: str
     player_id: int
     
@@ -42,7 +44,7 @@ class MovementHandlerMixin:
                 )
                 await self._send_error_response(
                     message.id,
-                    ErrorCodes.MOVE_RATE_LIMITED,
+                    ErrorCodes.SYS_INTERNAL_ERROR,
                     ErrorCategory.SYSTEM,
                     "Player not properly initialized - please reconnect"
                 )
@@ -98,7 +100,7 @@ class MovementHandlerMixin:
                     details = {"current_position": movement_result.get("current_position")}
                     suggested_action = None
                 else:
-                    error_code = ErrorCodes.MOVE_RATE_LIMITED
+                    error_code = ErrorCodes.SYS_INTERNAL_ERROR
                     error_category = ErrorCategory.SYSTEM
                     error_message = f"Movement failed: {reason}"
                     details = {"current_position": movement_result.get("current_position")}
@@ -127,7 +129,7 @@ class MovementHandlerMixin:
             
             await self._send_error_response(
                 message.id,
-                ErrorCodes.MOVE_RATE_LIMITED,
+                ErrorCodes.SYS_INTERNAL_ERROR,
                 ErrorCategory.SYSTEM,
                 "Movement processing failed"
             )

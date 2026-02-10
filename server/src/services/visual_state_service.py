@@ -107,9 +107,18 @@ class VisualStateService:
             # Get appearance from PlayerService (uses GSM internally)
             appearance = await PlayerService.get_player_appearance(player_id)
             
-            # Get equipped items
-            equipment = await EquipmentService.get_equipment_raw(player_id)
-            equipped_items = VisualStateService._build_equipped_items_map(equipment, ref_mgr)
+            # Get equipped items - convert EquipmentData to format expected by _build_equipped_items_map
+            equipment_data = await EquipmentService.get_equipment(player_id)
+            # Convert EquipmentSlotData list to dict format expected by _build_equipped_items_map
+            equipment_list = []
+            if equipment_data and equipment_data.slots:
+                for slot_data in equipment_data.slots:
+                    if slot_data and slot_data.item:
+                        equipment_list.append({
+                            "slot": slot_data.slot.value,
+                            "item_id": slot_data.item.item_id
+                        })
+            equipped_items = VisualStateService._build_equipped_items_map(equipment_list, ref_mgr)
             
             # Build visual state
             visual_state = VisualStateService._build_visual_state(appearance, equipped_items)

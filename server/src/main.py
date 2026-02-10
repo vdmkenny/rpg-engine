@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
     # Initialize and load all maps asynchronously
     map_manager = get_map_manager()
     await map_manager.load_maps()
-    logger.info(f"Loaded {len(map_manager.maps)} maps")
+    logger.info("Maps loaded", extra={"map_count": len(map_manager.maps)})
     
     # Initialize Valkey connection
     valkey = await get_valkey()
@@ -66,9 +66,9 @@ async def lifespan(app: FastAPI):
         
         # Load item metadata cache (permanent cache for reference data)
         items_cached = await ref_manager.load_item_cache_from_db()
-        logger.info(f"Loaded {items_cached} items to cache")
+        logger.info("Items cached", extra={"item_count": items_cached})
     except Exception as e:
-        logger.warning(f"Could not load item cache: {e}")
+        logger.warning("Could not load item cache", extra={"error": str(e)})
         
     # Sync entities to database (mirroring code definitions)
     try:
@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
         await EntityService.sync_entities_to_db()
         logger.info("Entities synced to database")
     except Exception as e:
-        logger.warning(f"Could not sync entities to database: {e}")
+        logger.warning("Could not sync entities to database", extra={"error": str(e)})
     
     # Clear stale entity instances and spawn entities from Tiled maps
     try:
@@ -93,16 +93,16 @@ async def lifespan(app: FastAPI):
             spawned = await EntitySpawnService.spawn_map_entities(player_mgr, entity_mgr, map_id)
             total_spawned += spawned
         
-        logger.info(f"Spawned {total_spawned} entity instances from Tiled maps")
+        logger.info("Entities spawned", extra={"entity_count": total_spawned})
     except Exception as e:
-        logger.warning(f"Could not spawn entity instances: {e}")
+        logger.warning("Could not spawn entity instances", extra={"error": str(e)})
     
     # Load ground items from database to Valkey
     try:
         ground_items_loaded = await ground_item_mgr.load_ground_items_from_db()
-        logger.info(f"Loaded {ground_items_loaded} ground items from database to Valkey")
+        logger.info("Ground items loaded", extra={"item_count": ground_items_loaded})
     except Exception as e:
-        logger.warning(f"Could not load ground items from database: {e}")
+        logger.warning("Could not load ground items from database", extra={"error": str(e)})
     
     # Start game loop
     _game_loop_task = asyncio.create_task(
@@ -153,9 +153,9 @@ async def lifespan(app: FastAPI):
         if active_players:
             sync_coordinator = get_batch_sync_coordinator()
             await sync_coordinator.sync_all_on_shutdown()
-            logger.info(f"Synced {len(active_players)} active players to database on shutdown")
+            logger.info("Players synced on shutdown", extra={"player_count": len(active_players)})
     except Exception as e:
-        logger.error(f"Error syncing players on shutdown: {e}", exc_info=True)
+        logger.error("Error syncing players on shutdown", extra={"error": str(e)}, exc_info=True)
     
     # Sync ground items from Valkey to database before shutdown
     try:
@@ -164,7 +164,7 @@ async def lifespan(app: FastAPI):
             await db.commit()
         logger.info("Synced ground items to database")
     except Exception as e:
-        logger.warning(f"Could not sync ground items to database: {e}")
+        logger.warning("Could not sync ground items to database", extra={"error": str(e)})
     
     # Cancel game loop
     if _game_loop_task:
@@ -229,7 +229,7 @@ def read_version():
 
 
 @app.get("/status", summary="Get server status and capacity", tags=["Status"])
-def get_server_status():
+async def get_server_status():
     """
     Returns server status including capacity information.
     Shows real player count even if over maximum capacity (admin overrides).
@@ -238,7 +238,7 @@ def get_server_status():
     
     from server.src.services.game_state import get_player_state_manager
     player_mgr = get_player_state_manager()
-    current_players = player_mgr.get_active_player_count()
+    current_players = await player_mgr.get_active_player_count()
     max_players = settings.MAX_PLAYERS
     
     # Update Prometheus metrics

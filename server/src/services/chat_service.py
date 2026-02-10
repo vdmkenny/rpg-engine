@@ -12,7 +12,7 @@ from common.src.protocol import ChatChannel
 
 from ..core.logging_config import get_logger
 from ..core.config import settings
-from ..schemas.player import PlayerRole
+from ..core.constants import PlayerRole
 from .player_service import PlayerService
 
 logger = get_logger(__name__)
@@ -236,6 +236,13 @@ class ChatService:
             # Each chunk is 16x16 tiles, so radius * 16 gives tile range
             local_chat_range = settings.CHAT_LOCAL_CHUNK_RADIUS * 16
             
+            # Get sender's position for distance calculation
+            sender = await PlayerService.get_player_by_id(sender_id)
+            if not sender:
+                return []
+            
+            sender_x, sender_y = sender.x, sender.y
+            
             # Get nearby players within local chat range
             nearby_players = await PlayerService.get_nearby_players(
                 sender_id, local_chat_range
@@ -243,10 +250,12 @@ class ChatService:
 
             recipients = []
             for player in nearby_players:
+                # Calculate Manhattan distance from sender
+                distance = abs(player.x - sender_x) + abs(player.y - sender_y)
                 recipients.append({
                     "player_id": player.player_id,
                     "username": player.username,
-                    "distance": abs(player.x - 0) + abs(player.y - 0)  # Distance from sender
+                    "distance": distance
                 })
 
             logger.debug(

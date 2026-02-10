@@ -13,6 +13,8 @@ from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
 from server.src.schemas.player import PlayerData, Direction, AnimationState
 
+from .base_manager import BaseManager
+
 logger = get_logger(__name__)
 
 # Valkey key patterns
@@ -28,82 +30,11 @@ TIER1_TTL = 300  # 5 minutes - frequently accessed
 TIER2_TTL = 600  # 10 minutes
 
 
-class PlayerStateManager:
+class PlayerStateManager(BaseManager):
     """Manages player state with Valkey caching."""
 
     def __init__(self, session_factory=None, valkey=None):
-        self._session_factory = session_factory
-        self._valkey = valkey
-
-    def _db_session(self):
-        """Create a database session."""
-        return self._session_factory()
-
-    async def _commit_if_not_test_session(self, db):
-        """Commit if this is not a test session."""
-        await db.commit()
-
-    def _utc_timestamp(self) -> float:
-        """Get current UTC timestamp."""
-        return time()
-
-    def _decode_bytes(self, value: Any) -> Any:
-        """Decode bytes to string."""
-        if isinstance(value, bytes):
-            return value.decode('utf-8')
-        return value
-
-    def _decode_from_valkey(self, value: Any, type_func=None) -> Any:
-        """Decode value from Valkey."""
-        if value is None:
-            return None
-        decoded = self._decode_bytes(value)
-        if type_func and decoded is not None:
-            try:
-                return type_func(decoded)
-            except (ValueError, TypeError):
-                return decoded
-        return decoded
-
-    async def _cache_in_valkey(
-        self, key: str, data: Dict[str, Any], ttl: int
-    ) -> None:
-        """Cache data in Valkey."""
-        if not self._valkey or not settings.USE_VALKEY:
-            return
-
-        import json
-        encoded_data = {k: json.dumps(v) if isinstance(v, (dict, list)) else str(v) for k, v in data.items()}
-        await self._valkey.hset(key, encoded_data)
-        await self._valkey.expire(key, ttl)
-
-    async def _get_from_valkey(self, key: str) -> Optional[Dict[str, Any]]:
-        """Get data from Valkey."""
-        if not self._valkey or not settings.USE_VALKEY:
-            return None
-
-        raw = await self._valkey.hgetall(key)
-        if not raw:
-            return None
-
-        import json
-        result = {}
-        for k, v in raw.items():
-            decoded_key = self._decode_bytes(k)
-            decoded_value = self._decode_bytes(v)
-            # Try to parse JSON strings back into dicts/lists
-            if isinstance(decoded_value, str):
-                try:
-                    decoded_value = json.loads(decoded_value)
-                except json.JSONDecodeError:
-                    pass  # Keep as string if not valid JSON
-            result[decoded_key] = decoded_value
-        return result
-
-    async def _refresh_ttl(self, key: str, ttl: int) -> None:
-        """Refresh TTL for a key."""
-        if self._valkey and settings.USE_VALKEY:
-            await self._valkey.expire(key, ttl)
+        super().__init__(valkey, session_factory)
 
     # =========================================================================
     # Online Player Registry
@@ -160,7 +91,7 @@ class PlayerStateManager:
 
         while True:
             result = await self._valkey.scan(cursor, match=pattern, count=100)
-            cursor = result[0]  # bytes cursor
+            next_cursor = result[0]
             keys = result[1]   # list of key bytes
             for key in keys:
                 key_str = self._decode_bytes(key)
@@ -171,8 +102,10 @@ class PlayerStateManager:
                         player_ids.append(player_id)
                     except (ValueError, IndexError):
                         continue
-            if cursor == b"0":
+            # cursor "0" (or b"0") means we've completed the full scan
+            if next_cursor == b"0" or next_cursor == "0":
                 break
+            cursor = next_cursor.decode() if isinstance(next_cursor, bytes) else str(next_cursor)
 
         return player_ids
 
@@ -254,6 +187,8 @@ class PlayerStateManager:
             if max_hp is not None:
                 existing_data["max_hp"] = max_hp
             await self._cache_in_valkey(key, existing_data, TIER1_TTL)
+            # Mark as dirty for batch sync
+            await self._valkey.sadd(DIRTY_POSITIONS_KEY, [str(player_id)])
         else:
             # Create new cache entry (requires max_hp)
             if max_hp is None:
@@ -269,6 +204,8 @@ class PlayerStateManager:
                 "max_hp": max_hp,
             }
             await self._cache_in_valkey(key, data, TIER1_TTL)
+            # Mark as dirty for batch sync
+            await self._valkey.sadd(DIRTY_POSITIONS_KEY, [str(player_id)])
 
     # =========================================================================
     # Player Record Management
@@ -461,9 +398,9 @@ class PlayerStateManager:
                 }
             return None
         except Exception as e:
-            logger.error(
-                "Error getting player position",
-                extra={"player_id": player_id, "error": str(e)}
+            logger.warning(
+                "Player position not available: %s", str(e),
+                extra={"player_id": player_id}
             )
             return None
 
@@ -549,6 +486,10 @@ class PlayerStateManager:
                 position.get("last_movement_time", self._utc_timestamp()),
                 tz=timezone.utc
             )
+            # Also sync current HP from Valkey to database
+            state = await self.get_player_full_state(player_id)
+            if state:
+                player.current_hp = state.get("current_hp", player.current_hp)
             logger.debug(
                 "Synced player position to database",
                 extra={
@@ -556,6 +497,7 @@ class PlayerStateManager:
                     "x": player.x,
                     "y": player.y,
                     "map_id": player.map_id,
+                    "current_hp": player.current_hp if state else None,
                 }
             )
 
@@ -794,33 +736,6 @@ class PlayerStateManager:
             PLAYER_COMBAT_STATE_KEY.format(player_id=player_id),
         ]
         await self._valkey.delete(keys)
-
-    # =========================================================================
-    # Auto-load helper
-    # =========================================================================
-
-    async def auto_load_with_ttl(
-        self,
-        key: str,
-        load_fn: callable,
-        ttl: int,
-        decoder: Optional[Dict[str, type]] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """Auto-load data from loader function with TTL."""
-        data = await self._get_from_valkey(key)
-
-        if data is None:
-            data = await load_fn()
-            if data:
-                await self._cache_in_valkey(key, data, ttl)
-
-        if data and decoder:
-            for k, type_func in decoder.items():
-                if k in data:
-                    data[k] = self._decode_from_valkey(data[k], type_func)
-
-        return data
-
 
 # Singleton instance
 _player_state_manager: Optional[PlayerStateManager] = None

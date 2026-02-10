@@ -7,6 +7,8 @@ Handles chat message processing and broadcasting.
 import traceback
 from typing import Any
 
+from fastapi import WebSocket
+
 from pydantic import ValidationError
 
 from server.src.core.logging_config import get_logger
@@ -25,7 +27,7 @@ logger = get_logger(__name__)
 class ChatHandlerMixin:
     """Handles CMD_CHAT_SEND for chat messages."""
     
-    websocket: Any
+    websocket: WebSocket
     username: str
     player_id: int
     
@@ -89,7 +91,7 @@ class ChatHandlerMixin:
             )
             await self._send_error_response(
                 message.id,
-                ErrorCodes.CHAT_PERMISSION_DENIED,
+                ErrorCodes.SYS_INTERNAL_ERROR,
                 ErrorCategory.SYSTEM,
                 "Chat processing failed"
             )

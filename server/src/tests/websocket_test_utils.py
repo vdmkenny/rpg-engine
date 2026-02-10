@@ -62,7 +62,7 @@ class ErrorResponseError(WebSocketTestError):
     """Raised when server returns an error response"""
     def __init__(self, error_payload: Dict[str, Any]):
         self.error_code = error_payload.get("error_code", "UNKNOWN")
-        self.error_message = error_payload.get("message", "Unknown error")
+        self.error_message = error_payload.get("error", "Unknown error")
         self.error_details = error_payload.get("details", {})
         self.error_category = error_payload.get("category", "system")
         super().__init__(f"{self.error_code}: {self.error_message}")

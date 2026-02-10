@@ -286,7 +286,7 @@ class TestItemServiceSync:
     """Test item synchronization to database."""
 
     @pytest.mark.asyncio
-    async def test_sync_items_creates_all_items(self, session: AsyncSession, gsm):
+    async def test_sync_items_creates_all_items(self, session: AsyncSession, game_state_managers):
         """sync_items_to_db should ensure all items exist in the database."""
         await ItemService.sync_items_to_db()
 
@@ -305,7 +305,7 @@ class TestItemServiceSync:
             assert item_type.name.lower() in item_names
 
     @pytest.mark.asyncio
-    async def test_sync_items_is_idempotent(self, session: AsyncSession, gsm):
+    async def test_sync_items_is_idempotent(self, session: AsyncSession, game_state_managers):
         """Calling sync_items_to_db multiple times should not create duplicates."""
         # Get initial count
         from sqlalchemy import select
@@ -328,7 +328,7 @@ class TestItemServiceSync:
             assert item_type.name.lower() in item_names
 
     @pytest.mark.asyncio
-    async def test_synced_items_have_correct_stats(self, session: AsyncSession, gsm):
+    async def test_synced_items_have_correct_stats(self, session: AsyncSession, game_state_managers):
         """Synced items should have correct stats from definitions."""
         await ItemService.sync_items_to_db()
 
@@ -342,7 +342,7 @@ class TestItemServiceLookup:
     """Test item lookup operations."""
 
     @pytest.mark.asyncio
-    async def test_get_item_by_name(self, session: AsyncSession, gsm):
+    async def test_get_item_by_name(self, session: AsyncSession, game_state_managers):
         """get_item_by_name should return the correct item."""
         await ItemService.sync_items_to_db()
 
@@ -351,7 +351,7 @@ class TestItemServiceLookup:
         assert item.display_name == "Bronze Shortsword"
 
     @pytest.mark.asyncio
-    async def test_get_item_by_name_case_insensitive(self, session: AsyncSession, gsm):
+    async def test_get_item_by_name_case_insensitive(self, session: AsyncSession, game_state_managers):
         """get_item_by_name should be case-insensitive."""
         await ItemService.sync_items_to_db()
 
@@ -363,7 +363,7 @@ class TestItemServiceLookup:
 
     @pytest.mark.asyncio
     async def test_get_item_by_name_returns_none_for_invalid(
-        self, session: AsyncSession, gsm
+        self, session: AsyncSession, game_state_managers
     ):
         """get_item_by_name should return None for invalid names."""
         await ItemService.sync_items_to_db()
@@ -372,7 +372,7 @@ class TestItemServiceLookup:
         assert item is None
 
     @pytest.mark.asyncio
-    async def test_get_item_by_id(self, session: AsyncSession, gsm):
+    async def test_get_item_by_id(self, session: AsyncSession, game_state_managers):
         """get_item_by_id should return the correct item."""
         await ItemService.sync_items_to_db()
 
@@ -384,7 +384,7 @@ class TestItemServiceLookup:
         assert item_by_id.id == item.id
 
     @pytest.mark.asyncio
-    async def test_get_item_by_id_returns_none_for_invalid(self, session: AsyncSession, gsm):
+    async def test_get_item_by_id_returns_none_for_invalid(self, session: AsyncSession, game_state_managers):
         """get_item_by_id should return None for invalid IDs."""
         await ItemService.sync_items_to_db()
 
@@ -395,7 +395,7 @@ class TestItemToInfo:
     """Test item_to_info conversion."""
 
     @pytest.mark.asyncio
-    async def test_item_to_info_includes_all_fields(self, session: AsyncSession, gsm):
+    async def test_item_to_info_includes_all_fields(self, session: AsyncSession, game_state_managers):
         """item_to_info should return all expected fields."""
         await ItemService.sync_items_to_db()
 
@@ -415,7 +415,7 @@ class TestItemToInfo:
         assert info.value == item.value
 
     @pytest.mark.asyncio
-    async def test_item_to_info_includes_stats(self, session: AsyncSession, gsm):
+    async def test_item_to_info_includes_stats(self, session: AsyncSession, game_state_managers):
         """item_to_info should include all stat bonuses."""
         await ItemService.sync_items_to_db()
 
@@ -430,7 +430,7 @@ class TestItemToInfo:
         assert info.stats.health_bonus == item.health_bonus
 
     @pytest.mark.asyncio
-    async def test_item_to_info_includes_rarity_color(self, session: AsyncSession, gsm):
+    async def test_item_to_info_includes_rarity_color(self, session: AsyncSession, game_state_managers):
         """item_to_info should include rarity color for UI display."""
         await ItemService.sync_items_to_db()
 
@@ -454,7 +454,7 @@ class TestSQLAlchemyModelCompatibility:
     """Test type compatibility between SQLAlchemy models and Pydantic schemas."""
 
     @pytest.mark.asyncio
-    async def test_item_model_primitive_types(self, session: AsyncSession, gsm):
+    async def test_item_model_primitive_types(self, session: AsyncSession, game_state_managers):
         """Test that Item model fields are primitive types, not Column objects."""
         await ItemService.sync_items_to_db()
         
@@ -471,7 +471,7 @@ class TestSQLAlchemyModelCompatibility:
         assert isinstance(item.max_stack_size, int)
 
     @pytest.mark.asyncio
-    async def test_item_stat_fields_are_integers(self, session: AsyncSession, gsm):
+    async def test_item_stat_fields_are_integers(self, session: AsyncSession, game_state_managers):
         """Test that item stat fields are integers."""
         await ItemService.sync_items_to_db()
         

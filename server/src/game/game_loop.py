@@ -35,12 +35,10 @@ from server.src.services.visibility_service import get_visibility_service
 from server.src.services.visual_registry import get_visual_registry
 from server.src.services.ai_service import AIService
 from server.src.services.entity_spawn_service import EntitySpawnService
-from server.src.core.database import AsyncSessionLocal
 from server.src.core.entities import EntityState
 from common.src.protocol import (
     WSMessage,
     MessageType,
-    GameUpdateEventPayload,
     CombatTargetType,
     PROTOCOL_VERSION,
 )
@@ -49,7 +47,7 @@ from common.src.sprites import (
     AppearanceData,
     EquippedVisuals,
 )
-from server.src.schemas.item import EquipmentData, GroundItem
+from server.src.schemas.item import EquipmentData
 
 logger = get_logger(__name__)
 
@@ -449,7 +447,7 @@ async def _process_auto_attacks(
             # Calculate ticks since last attack
             last_attack_tick = combat_state["last_attack_tick"]
             attack_speed = combat_state["attack_speed"]
-            ticks_required = int(attack_speed * 20)  # Convert seconds to ticks
+            ticks_required = int(attack_speed * settings.GAME_TICK_RATE)  # Convert seconds to ticks
             
             ticks_since_last_attack = tick_counter - last_attack_tick
             
@@ -753,7 +751,7 @@ async def _handle_player_death(
             elif message_type == "EVENT_PLAYER_RESPAWN":
                 msg_type = MessageType.EVENT_PLAYER_RESPAWN
             else:
-                logger.warning(f"Unknown death broadcast message type: {message_type}")
+                logger.warning("Unknown death broadcast message type", extra={"message_type": message_type})
                 return
             
             event_message = WSMessage(
@@ -883,7 +881,6 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 
                 # map_connections is now {player_id: websocket}
                 player_ids = list(map_connections.keys())
-                logger.debug(f"[GAMELOOP] Processing map {map_id} with {len(player_ids)} players: {player_ids}")
                 
                 player_mgr = get_player_state_manager()
                 entity_mgr = get_entity_manager()
@@ -947,12 +944,21 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         player_positions[player_id] = (x, y)
 
                 # Execute batch HP regeneration updates via HpService
+                # Filter out dying players - they should not regenerate HP
                 if hp_updates:
-                    await HpService.batch_regenerate_hp(hp_updates)
+                    valid_hp_updates = [
+                        (player_id, new_hp) 
+                        for player_id, new_hp in hp_updates 
+                        if not await state.is_player_dying(player_id)
+                    ]
+                    if valid_hp_updates:
+                        await HpService.batch_regenerate_hp(valid_hp_updates)
 
+                # Fetch all entity instances once for this map (reused for visibility)
+                all_map_entity_instances = await entity_mgr.get_map_entities(map_id)
+                
                 # Process dying entities (death animation completion)
-                entity_instances = await entity_mgr.get_map_entities(map_id)
-                for entity in entity_instances:
+                for entity in all_map_entity_instances:
                     if entity.get("state") == EntityState.DYING.value:
                         death_tick = int(entity.get("death_tick", 0))
                         if current_tick >= death_tick:
@@ -1015,28 +1021,23 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
 
                 # For each connected player, compute and send their personalized diff
                 for player_id in player_ids:
-                    logger.debug(f"[GAMELOOP] Processing player: {player_id}")
                     if player_id not in player_positions:
-                        logger.debug(f"[GAMELOOP] Player {player_id} not in player_positions, skipping")
                         continue
                         
                     websocket = map_connections.get(player_id)
                     if not websocket:
-                        logger.debug(f"[GAMELOOP] No websocket for {player_id}, skipping")
                         continue
                     
                     player_x, player_y = player_positions[player_id]
-                    logger.debug(f"[GAMELOOP] Player {player_id} at ({player_x}, {player_y})")
                     
                     # Get player entities currently visible to this player
                     current_visible_players = get_visible_players(
                         player_x, player_y, all_player_data, player_id
                     )
                     
-                    # Get entity instances visible to this player
-                    entity_instances = await entity_mgr.get_map_entities(map_id)
+                    # Get entity instances visible to this player (reuse already fetched data)
                     current_visible_entities = get_visible_npc_entities(
-                        player_x, player_y, entity_instances
+                        player_x, player_y, all_map_entity_instances
                     )
                     
                     # Get ground items visible to this player
@@ -1091,7 +1092,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     if own_player_data:
                         combined_visible_entities[f"player_{player_id}"] = own_player_data
                     else:
-                        logger.warning(f"[DEBUG] own_player_data is None for {player_id}")
+                        logger.warning("own_player_data is None for player", extra={"player_id": player_id})
                     
                     # Add other players with 'player_' prefix to avoid ID conflicts with ground items
                     for other_player_id, player_data in current_visible_players.items():
@@ -1119,19 +1120,20 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 # Track broadcast for metrics
                 game_state_broadcasts_total.labels(map_id=map_id).inc()
 
-            # Track loop duration
+            # Track loop duration and calculate precise sleep time
             loop_duration = time.time() - loop_start_time
             game_loop_duration_seconds.observe(loop_duration)
 
-            await asyncio.sleep(tick_interval)
+            # Sleep for remaining tick time to maintain consistent tick rate
+            sleep_time = max(0, tick_interval - loop_duration)
+            await asyncio.sleep(sleep_time)
 
         except Exception as e:
             logger.error(
-                "Error in game loop",
+                f"Error in game loop: {e}\n{traceback.format_exc()}",
                 extra={
                     "error": str(e), 
                     "error_type": type(e).__name__,
-                    "traceback": traceback.format_exc(),
                     "tick_interval": tick_interval
                 },
             )

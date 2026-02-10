@@ -112,12 +112,12 @@ class UpdateType(str, Enum):
     DELTA = "delta"
 
 
-class UpdateScope(str, Enum):
-    """Distribution scope for state updates"""
-    PERSONAL = "personal"
-    NEARBY = "nearby"
-    MAP = "map"
-    GLOBAL = "global"
+class BroadcastTarget(str, Enum):
+    """Message distribution targets"""
+    PERSONAL = "personal"        # Only to the specific player
+    NEARBY = "nearby"           # To players in visible range
+    MAP = "map"                 # To all players on the same map  
+    GLOBAL = "global"           # To all connected players
 
 
 class InventorySortCriteria(str, Enum):
@@ -376,8 +376,6 @@ class ItemUnequipPayload(BaseModel):
 
 class AttackPayload(BaseModel):
     """Payload for CMD_ATTACK"""
-    model_config = ConfigDict(use_enum_values=True)
-
     target_type: CombatTargetType = Field(..., description="Type of target (entity or player)")
     target_id: Union[int, str] = Field(..., description="Entity instance ID (int) or player username (str)")
 
@@ -450,9 +448,12 @@ class ErrorResponsePayload(BaseModel):
     """Payload for RESP_ERROR"""
     model_config = ConfigDict(use_enum_values=True)
 
+    error_code: str = Field(..., description="Machine-readable error code")
     error: str = Field(..., description="Error message")
     category: ErrorCategory = Field(ErrorCategory.SYSTEM, description="Error category")
     details: Optional[Dict[str, Any]] = Field(None, description="Additional error details")
+    retry_after: Optional[float] = Field(None, description="Seconds to wait before retry")
+    suggested_action: Optional[str] = Field(None, description="Suggested action to resolve the error")
 
 
 class DataResponsePayload(BaseModel):
@@ -484,7 +485,7 @@ class GameUpdateEventPayload(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
     update_type: UpdateType = Field(UpdateType.DELTA, description="Update type (full or delta)")
-    scope: UpdateScope = Field(UpdateScope.PERSONAL, description="Update distribution scope")
+    scope: BroadcastTarget = Field(BroadcastTarget.PERSONAL, description="Update distribution scope")
     sequence: int = Field(..., description="Update sequence number")
     timestamp: int = Field(..., description="Server timestamp in milliseconds")
     entities: List[Dict[str, Any]] = Field(default_factory=list, description="Visible entity updates")

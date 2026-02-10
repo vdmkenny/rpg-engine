@@ -7,6 +7,8 @@ Handles equipping and unequipping items.
 import traceback
 from typing import Any
 
+from fastapi import WebSocket
+
 from server.src.core.logging_config import get_logger
 from server.src.core.items import EquipmentSlot
 from server.src.services.equipment_service import EquipmentService
@@ -25,7 +27,7 @@ logger = get_logger(__name__)
 class EquipmentHandlerMixin:
     """Handles CMD_ITEM_EQUIP and CMD_ITEM_UNEQUIP."""
     
-    websocket: Any
+    websocket: WebSocket
     username: str
     player_id: int
     
@@ -65,7 +67,7 @@ class EquipmentHandlerMixin:
             )
             await self._send_error_response(
                 message.id,
-                ErrorCodes.EQ_REQUIREMENTS_NOT_MET,
+                ErrorCodes.SYS_INTERNAL_ERROR,
                 ErrorCategory.SYSTEM,
                 "Item equip failed"
             )

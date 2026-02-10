@@ -53,40 +53,49 @@ class BatchSyncCoordinator:
             from sqlalchemy.ext.asyncio import AsyncSession
 
             async with self._session_factory() as db:
-                # Sync positions
+                # Collect dirty items first
                 dirty_positions = await self._player.get_dirty_positions()
+                dirty_inventories = await self._inventory.get_dirty_inventories()
+                dirty_equipment = await self._equipment.get_dirty_equipment()
+                dirty_skills = await self._skills.get_dirty_skills()
+
+                # Sync positions
                 for player_id in dirty_positions:
                     await self._player.sync_player_position_to_db(player_id, db)
-                    await self._player.clear_dirty_position(player_id)
                     stats["positions"] += 1
 
                 # Sync inventories
-                dirty_inventories = await self._inventory.get_dirty_inventories()
                 for player_id in dirty_inventories:
                     await self._inventory.sync_inventory_to_db(player_id, db)
-                    await self._inventory.clear_dirty_inventory(player_id)
                     stats["inventories"] += 1
 
                 # Sync equipment
-                dirty_equipment = await self._equipment.get_dirty_equipment()
                 for player_id in dirty_equipment:
                     await self._equipment.sync_equipment_to_db(player_id, db)
-                    await self._equipment.clear_dirty_equipment(player_id)
                     stats["equipment"] += 1
 
                 # Sync skills
-                dirty_skills = await self._skills.get_dirty_skills()
                 for player_id in dirty_skills:
                     await self._skills.sync_skills_to_db(player_id, db)
-                    await self._skills.clear_dirty_skills(player_id)
                     stats["skills"] += 1
 
                 # Sync ground items
                 await self._ground_items.sync_ground_items_to_db(db)
 
+                # Commit first, then clear dirty flags
                 await db.commit()
 
-                logger.debug(f"Batch sync completed: {stats}")
+                # Only clear dirty flags after successful commit
+                for player_id in dirty_positions:
+                    await self._player.clear_dirty_position(player_id)
+                for player_id in dirty_inventories:
+                    await self._inventory.clear_dirty_inventory(player_id)
+                for player_id in dirty_equipment:
+                    await self._equipment.clear_dirty_equipment(player_id)
+                for player_id in dirty_skills:
+                    await self._skills.clear_dirty_skills(player_id)
+
+                logger.debug("Batch sync completed", extra={"stats": stats})
                 return stats
 
         except Exception as e:
@@ -118,9 +127,20 @@ class BatchSyncCoordinator:
                 # Sync ground items
                 await self._ground_items.sync_ground_items_to_db(db)
 
+                # Commit first, then clear dirty flags
                 await db.commit()
 
-                logger.info(f"Shutdown sync completed for {stats['players']} players")
+                # Only clear dirty flags after successful commit
+                for player_id in online_players:
+                    await self._player.clear_dirty_position(player_id)
+                    await self._inventory.clear_dirty_inventory(player_id)
+                    await self._equipment.clear_dirty_equipment(player_id)
+                    await self._skills.clear_dirty_skills(player_id)
+
+                logger.info(
+                    "Shutdown sync completed",
+                    extra={"player_count": stats["players"]}
+                )
                 return stats
 
         except Exception as e:
@@ -129,6 +149,121 @@ class BatchSyncCoordinator:
                 extra={"error": str(e), "traceback": traceback.format_exc()},
             )
             raise
+
+    async def sync_single_player(self, player_id: int, db) -> Dict[str, Any]:
+        """
+        Sync all data for a single player to database immediately.
+        
+        Used for logout, periodic saves, or manual admin saves.
+        This method does NOT commit the transaction - caller is responsible for that.
+        
+        Args:
+            player_id: Player ID to sync
+            db: Database session (provided by caller)
+            
+        Returns:
+            Dict with sync results and any errors
+        """
+        results = {
+            "success": True,
+            "errors": [],
+            "synced": {"position": False, "inventory": False, "equipment": False, "skills": False}
+        }
+        
+        # Track if we need to clear dirty flags (only on success)
+        synced_position = False
+        synced_inventory = False
+        synced_equipment = False
+        synced_skills = False
+        
+        # Sync position
+        try:
+            await self._player.sync_player_position_to_db(player_id, db)
+            results["synced"]["position"] = True
+            synced_position = True
+        except Exception as e:
+            results["success"] = False
+            results["errors"].append(f"Position sync failed: {str(e)}")
+            logger.error("Position sync failed", extra={"player_id": player_id, "error": str(e)})
+        
+        # Sync inventory
+        try:
+            await self._inventory.sync_inventory_to_db(player_id, db)
+            results["synced"]["inventory"] = True
+            synced_inventory = True
+        except Exception as e:
+            results["success"] = False
+            results["errors"].append(f"Inventory sync failed: {str(e)}")
+            logger.error("Inventory sync failed", extra={"player_id": player_id, "error": str(e)})
+        
+        # Sync equipment
+        try:
+            await self._equipment.sync_equipment_to_db(player_id, db)
+            results["synced"]["equipment"] = True
+            synced_equipment = True
+        except Exception as e:
+            results["success"] = False
+            results["errors"].append(f"Equipment sync failed: {str(e)}")
+            logger.error("Equipment sync failed", extra={"player_id": player_id, "error": str(e)})
+        
+        # Sync skills
+        try:
+            await self._skills.sync_skills_to_db(player_id, db)
+            results["synced"]["skills"] = True
+            synced_skills = True
+        except Exception as e:
+            results["success"] = False
+            results["errors"].append(f"Skills sync failed: {str(e)}")
+            logger.error("Skills sync failed", extra={"player_id": player_id, "error": str(e)})
+        
+        # Only clear dirty flags if all syncs were successful
+        if results["success"]:
+            if synced_position:
+                await self._player.clear_dirty_position(player_id)
+            if synced_inventory:
+                await self._inventory.clear_dirty_inventory(player_id)
+            if synced_equipment:
+                await self._equipment.clear_dirty_equipment(player_id)
+            if synced_skills:
+                await self._skills.clear_dirty_skills(player_id)
+            logger.debug("Successfully synced all data for player", extra={"player_id": player_id})
+        else:
+            logger.warning(
+                "Partial sync for player",
+                extra={"player_id": player_id, "synced": results["synced"], "errors": results["errors"]}
+            )
+        
+        return results
+
+    async def sync_and_commit_player(self, player_id: int) -> Dict[str, Any]:
+        """
+        Sync all data for a single player to database with internal session management.
+        
+        This method manages its own database session, making it suitable for use
+        from service layer without violating GSM architecture. Commits are handled
+        internally.
+        
+        Args:
+            player_id: Player ID to sync
+            
+        Returns:
+            Dict with sync results and any errors
+        """
+        if not self._session_factory:
+            logger.warning("No session factory available for sync")
+            return {"success": False, "errors": ["No database connection"], "synced": {}}
+        
+        try:
+            async with self._session_factory() as db:
+                results = await self.sync_single_player(player_id, db)
+                await db.commit()
+                return results
+        except Exception as e:
+            logger.error(
+                "Failed to sync and commit player",
+                extra={"player_id": player_id, "error": str(e), "traceback": traceback.format_exc()}
+            )
+            return {"success": False, "errors": [f"Commit failed: {str(e)}"], "synced": {}}
 
 
 # Singleton instance

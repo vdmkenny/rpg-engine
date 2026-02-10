@@ -22,8 +22,8 @@ class TestAppearanceData:
         assert appearance.body_type == BodyType.MALE
         assert appearance.skin_tone == SkinTone.LIGHT
         assert appearance.head_type == HeadType.HUMAN_MALE
-        assert appearance.hair_style == HairStyle.SHORT
-        assert appearance.hair_color == HairColor.BROWN
+        assert appearance.hair_style == HairStyle.BUZZCUT
+        assert appearance.hair_color == HairColor.DARK_BROWN
         assert appearance.eye_color == EyeColor.BROWN
         
         # Clothing defaults
@@ -36,7 +36,7 @@ class TestAppearanceData:
         
         # Facial hair defaults
         assert appearance.facial_hair_style == FacialHairStyle.NONE
-        assert appearance.facial_hair_color == HairColor.BROWN
+        assert appearance.facial_hair_color == HairColor.DARK_BROWN
 
     def test_appearance_serialization(self):
         """Appearance should serialize to dict correctly."""
@@ -101,7 +101,7 @@ class TestAppearanceData:
         )
         
         # Original unchanged
-        assert base.hair_color == HairColor.BROWN
+        assert base.hair_color == HairColor.DARK_BROWN
         assert base.shirt_color == ClothingColor.WHITE
         
         # Modified has new values
@@ -132,7 +132,7 @@ class TestAppearanceData:
         
         assert appearance.body_type == BodyType.FEMALE
         assert appearance.skin_tone == SkinTone.LIGHT  # Default
-        assert appearance.hair_style == HairStyle.SHORT  # Default
+        assert appearance.hair_style == HairStyle.BUZZCUT  # Default
 
     def test_appearance_none_dict(self):
         """from_dict should handle None with defaults."""

@@ -71,5 +71,5 @@ class Entity(Base):
     # Other Bonuses
     speed_bonus: Mapped[int] = mapped_column(Integer, default=0)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Entity(name='{self.name}', display_name='{self.display_name}')>"

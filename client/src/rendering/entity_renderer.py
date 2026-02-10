@@ -1,15 +1,26 @@
 """
 Entity renderer.
 
-Renders players, NPCs, monsters, ground items, and effects.
+Renders players, NPCs, monsters, ground items, and effects using paperdoll sprites or fallback shapes.
 """
 
 import pygame
 from typing import Dict, Any, List, Tuple, Union, Optional
 import time
+import sys
+from pathlib import Path
 
+# Setup paths for protocol imports
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "common" / "src"))
+
+from protocol import Direction
 from ..config import get_config
+from ..ui.colors import Colors
 from .camera import Camera
+from .paperdoll_renderer import PaperdollRenderer
+from .sprite_manager import get_sprite_manager
 
 
 class EntityRenderer:
@@ -23,12 +34,16 @@ class EntityRenderer:
         # Animation timing
         self.move_animation_duration = 0.2  # seconds
         
-        # Colors
+        # Colors (fallback when sprites not loaded)
         self.player_color = (0, 150, 255)  # Blue
         self.other_player_color = (255, 200, 0)  # Yellow
         self.npc_color = (0, 200, 100)  # Green
         self.monster_color = (200, 50, 50)  # Red
         self.item_color = (255, 215, 0)  # Gold
+        
+        # Paperdoll rendering
+        sprite_manager = get_sprite_manager()
+        self.paperdoll_renderer = PaperdollRenderer(sprite_manager)
     
     def update(self, delta_time: float) -> None:
         """Update entity animations."""
@@ -51,37 +66,95 @@ class EntityRenderer:
             self._render_entity_at(x, y, color, entity.get("name", "?"))
     
     def render_other_players(self, other_players: Dict[int, Dict[str, Any]]) -> None:
-        """Render other players."""
+        """Render other players with paperdoll sprites."""
         for player_id, player in other_players.items():
             x = player.get("position", {}).get("x", 0)
             y = player.get("position", {}).get("y", 0)
             username = player.get("username", "?")
+            visual_hash = player.get("visual_hash")
+            visual_state = player.get("visual_state")
             
-            self._render_entity_at(x, y, self.other_player_color, username)
+            screen_x, screen_y = self.camera.tile_to_screen(x, y)
+            if not self.camera.is_on_screen(x * self.tile_size, y * self.tile_size, margin=self.tile_size):
+                continue
+            
+            # Render with paperdoll sprite
+            sprite = None
+            if visual_state and visual_hash:
+                try:
+                    direction = Direction[player.get("facing_direction", "DOWN").upper()]
+                    sprite = self.paperdoll_renderer.get_idle_frame(
+                        visual_state,
+                        visual_hash,
+                        direction,
+                        render_size=48  # Larger sprite size (48px)
+                    )
+                except Exception as e:
+                    import logging
+                    logging.warning(f"Error rendering other player {username} sprite: {e}")
+            
+            # Blit sprite (required - no fallback)
+            # Position sprite so character's feet are at the bottom-center of the tile
+            # LPC sprites have the character at the bottom of the frame
+            if sprite:
+                # Center horizontally, align bottom with tile bottom
+                sprite_x = int(screen_x + (self.tile_size - sprite.get_width()) // 2)
+                sprite_y = int(screen_y + self.tile_size - sprite.get_height())
+                self.screen.blit(sprite, (sprite_x, sprite_y))
+            
+            # Draw username label above entity
+            font = pygame.font.SysFont("sans-serif", 9)
+            text = font.render(username[:15], True, (255, 255, 255))
+            text_rect = text.get_rect(center=(screen_x + self.tile_size / 2, screen_y - 5))
+            self.screen.blit(text, text_rect)
     
-    def render_player(self, x: int, y: int, visual_hash: Optional[str] = None) -> None:
-        """Render the local player at the center of the screen."""
+    def render_player(self, x: int, y: int, visual_hash: Optional[str] = None, visual_state: Optional[Dict[str, Any]] = None, facing_direction: str = "DOWN", is_moving: bool = False, move_progress: float = 0.0) -> None:
+        """Render the local player at the center of the screen using paperdoll sprites."""
         # Player is always at the center of the camera view
         center_x = self.screen.get_width() // 2
         center_y = self.screen.get_height() // 2
         
-        # Draw player circle
-        size = self.tile_size - 4
-        rect = pygame.Rect(
-            center_x - size // 2,
-            center_y - size // 2,
-            size,
-            size
-        )
+        # Render with paperdoll sprites
+        sprite = None
+        if visual_state and visual_hash:
+            try:
+                # Determine which animation to use
+                if is_moving:
+                    # Use walk animation with progress
+                    direction = Direction[facing_direction.upper()]
+                    sprite = self.paperdoll_renderer.get_walk_frame(
+                        visual_state,
+                        visual_hash,
+                        direction,
+                        progress=move_progress,
+                        render_size=48  # Larger sprite size (48px)
+                    )
+                else:
+                    # Use idle animation
+                    direction = Direction[facing_direction.upper()]
+                    sprite = self.paperdoll_renderer.get_idle_frame(
+                        visual_state,
+                        visual_hash,
+                        direction,
+                        render_size=48  # Larger sprite size (48px)
+                    )
+            except Exception as e:
+                # Log error but continue rendering
+                import logging
+                logging.error(f"Error rendering player sprite: {e}")
         
-        pygame.draw.ellipse(self.screen, self.player_color, rect)
-        pygame.draw.ellipse(self.screen, (255, 255, 255), rect, 2)
-        
-        # Draw "ME" label
-        font = pygame.font.SysFont("sans-serif", 10, bold=True)
-        text = font.render("ME", True, (255, 255, 255))
-        text_rect = text.get_rect(center=(center_x, center_y))
-        self.screen.blit(text, text_rect)
+        # Render sprite (required - no fallback to circles)
+        # Position sprite so character's feet are at the bottom-center of the tile
+        if sprite:
+            # Center horizontally, align bottom with tile bottom
+            sprite_x = int(center_x + (self.tile_size - sprite.get_width()) // 2)
+            sprite_y = int(center_y + self.tile_size - sprite.get_height())
+            self.screen.blit(sprite, (sprite_x, sprite_y))
+        else:
+            # Sprite unavailable - draw placeholder text instead of circle
+            font = pygame.font.SysFont("monospace", 10)
+            text = font.render("(Loading...)", True, Colors.TEXT_GRAY)
+            self.screen.blit(text, (center_x - text.get_width() // 2, center_y - text.get_height() // 2))
     
     def render_ground_items(self, ground_items: Dict[str, Dict[str, Any]]) -> None:
         """Render items on the ground."""

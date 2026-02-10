@@ -240,14 +240,14 @@ class TestAppearanceData:
             "skin_tone": "light",
             "head_type": "human/male",
             "hair_style": "short",
-            "hair_color": "brunette",
+            "hair_color": "dark_brown",
             "eye_color": "blue",
         }
         appearance = AppearanceData.from_dict(data)
         assert appearance.body_type == BodyType.MALE
         assert appearance.skin_tone == SkinTone.LIGHT
-        assert appearance.hair_style == HairStyle.SHORT
-        assert appearance.hair_color == HairColor.BRUNETTE
+        assert appearance.hair_style == HairStyle.BUZZCUT
+        assert appearance.hair_color == HairColor.DARK_BROWN
         assert appearance.eye_color == EyeColor.BLUE
     
     def test_from_dict_with_none(self):

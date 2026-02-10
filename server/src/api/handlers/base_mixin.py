@@ -8,6 +8,8 @@ import traceback
 from typing import Optional, Dict, Any
 
 import msgpack
+from fastapi import WebSocket
+from starlette.websockets import WebSocketState
 
 from server.src.core.logging_config import get_logger
 from server.src.core.metrics import metrics
@@ -35,7 +37,7 @@ class BaseHandlerMixin:
     - player_id: Player's database ID
     """
     
-    websocket: Any
+    websocket: WebSocket
     username: str
     player_id: int
     
@@ -54,8 +56,8 @@ class BaseHandlerMixin:
         await self._send_message(response)
     
     async def _send_error_response(
-        self, 
-        correlation_id: Optional[str], 
+        self,
+        correlation_id: Optional[str],
         error_code: str,
         error_category: ErrorCategory,
         message: str,
@@ -65,9 +67,12 @@ class BaseHandlerMixin:
     ) -> None:
         """Send RESP_ERROR with structured error information."""
         error_payload = ErrorResponsePayload(
+            error_code=error_code,
             error=message,
             category=error_category,
-            details=details
+            details=details,
+            retry_after=retry_after,
+            suggested_action=suggested_action
         )
         
         response = WSMessage(
@@ -104,18 +109,12 @@ class BaseHandlerMixin:
         
         # Check connection state before sending
         if hasattr(self.websocket, 'client_state'):
-            if self.websocket.client_state == 3:  # CLOSED
+            if self.websocket.client_state == WebSocketState.DISCONNECTED:
                 logger.warning(
                     "Attempted to send on closed WebSocket",
                     extra={"username": self.username, "message_type": message.type}
                 )
                 raise ConnectionError("WebSocket connection is closed")
-            elif self.websocket.client_state == 2:  # CLOSING
-                logger.warning(
-                    "Attempted to send on closing WebSocket",
-                    extra={"username": self.username, "message_type": message.type}
-                )
-                raise ConnectionError("WebSocket connection is closing")
         
         try:
             await self.websocket.send_bytes(packed_message)

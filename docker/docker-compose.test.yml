@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.test
-    command: tail -f /dev/null # Keep container running for exec
+    command: uvicorn server.src.main:app --host 0.0.0.0 --port 8000
     depends_on:
       test_db:
         condition: service_healthy
@@ -17,6 +17,8 @@ services:
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
     volumes:
       - ../:/app
+    ports:
+      - "8000:8000"
     networks:
       - rpg_net
 

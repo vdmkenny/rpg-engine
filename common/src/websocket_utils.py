@@ -15,7 +15,7 @@ from collections import defaultdict
 import logging
 
 from .protocol import (
-    WSMessage, MessageType, ErrorCodes, ErrorCategory, ChatChannel,
+    WSMessage, MessageType, ErrorCodes, ErrorCategory, ChatChannel, BroadcastTarget,
     COMMAND_TYPES, QUERY_TYPES, EVENT_TYPES, RESPONSE_TYPES,
     get_expected_response_type, requires_correlation_id,
     create_success_response, create_error_response, create_data_response, create_event
@@ -115,16 +115,6 @@ class CorrelationManager:
 # =============================================================================
 # Broadcasting and Message Distribution
 # =============================================================================
-
-from enum import Enum
-
-class BroadcastTarget(str, Enum):
-    """Message distribution targets"""
-    PERSONAL = "personal"        # Only to the specific player
-    NEARBY = "nearby"           # To players in visible range
-    MAP = "map"                 # To all players on the same map  
-    GLOBAL = "global"           # To all connected players
-
 
 class StateUpdateManager:
     """Manages consolidated state updates with proper broadcast targeting"""
@@ -279,7 +269,7 @@ class RateLimit:
 
 # Rate limit configurations for different message types
 rate_limit_configs = {
-    MessageType.CMD_MOVE: RateLimit(1, 0.5, 0.5),
+    MessageType.CMD_MOVE: RateLimit(1, 0.15, 0.15),  # Match server config move_cooldown
     MessageType.CMD_INVENTORY_MOVE: RateLimit(1, 0.5, 0.5),
     MessageType.CMD_INVENTORY_SORT: RateLimit(1, 0.5, 0.5),
     MessageType.CMD_ITEM_EQUIP: RateLimit(1, 0.5, 0.5),
@@ -485,13 +475,13 @@ class BroadcastManager:
                 try:
                     await websocket.send_bytes(message_data)
                 except Exception as e:
-                    logger.warning(f"Failed to broadcast to nearby player: {e}")
+                    logger.warning("Failed to broadcast to nearby player", extra={"error": str(e)})
                     failed_sends.append(websocket)
                     
             return failed_sends
             
         except Exception as e:
-            logger.error(f"Error in broadcast_to_nearby: {e}")
+            logger.error("Error in broadcast_to_nearby", extra={"error": str(e)})
             return []
     
     async def broadcast_to_map(
@@ -522,13 +512,16 @@ class BroadcastManager:
                 try:
                     await conn.websocket.send_bytes(message_data)
                 except Exception as e:
-                    logger.warning(f"Failed to broadcast to map player {conn.username}: {e}")
+                    logger.warning(
+                        "Failed to broadcast to map player",
+                        extra={"username": conn.username, "error": str(e)}
+                    )
                     failed_sends.append(conn.websocket)
                     
             return failed_sends
             
         except Exception as e:
-            logger.error(f"Error in broadcast_to_map: {e}")
+            logger.error("Error in broadcast_to_map", extra={"error": str(e)})
             return []
             
     async def broadcast_globally(
@@ -558,13 +551,16 @@ class BroadcastManager:
                 try:
                     await conn.websocket.send_bytes(message_data)
                 except Exception as e:
-                    logger.warning(f"Failed to broadcast globally to {conn.username}: {e}")
+                    logger.warning(
+                        "Failed to broadcast globally",
+                        extra={"username": conn.username, "error": str(e)}
+                    )
                     failed_sends.append(conn.websocket)
                     
             return failed_sends
             
         except Exception as e:
-            logger.error(f"Error in broadcast_globally: {e}")
+            logger.error("Error in broadcast_globally", extra={"error": str(e)})
             return []
             
     async def broadcast_state_update(
@@ -679,7 +675,7 @@ async def broadcast_event(
         try:
             await ws.send(message_data)
         except Exception as e:
-            logger.warning(f"Failed to broadcast event to websocket: {e}")
+            logger.warning("Failed to broadcast event to websocket", extra={"error": str(e)})
             failed_sends.append(ws)
             
     return failed_sends  # Return failed websockets for cleanup

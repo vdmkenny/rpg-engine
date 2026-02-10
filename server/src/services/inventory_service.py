@@ -9,9 +9,6 @@ Supports both database-only and Valkey-first operations:
 
 from typing import Optional, TYPE_CHECKING
 
-from sqlalchemy import select, delete, func
-from sqlalchemy.orm import selectinload
-
 from ..core.config import settings
 from ..core.concurrency import PlayerLockManager, LockType
 from ..core.items import (

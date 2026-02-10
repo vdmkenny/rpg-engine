@@ -69,11 +69,16 @@ class MessageSender:
             {"from_slot": from_slot, "to_slot": to_slot}
         )
     
-    async def inventory_sort(self, sort_by: InventorySortCriteria = InventorySortCriteria.CATEGORY) -> bool:
+    async def inventory_sort(self, sort_by) -> bool:
         """Sort inventory by criteria."""
+        # Handle both enum and string values
+        if isinstance(sort_by, str):
+            sort_value = sort_by
+        else:
+            sort_value = sort_by.value
         return await self._send(
             MessageType.CMD_INVENTORY_SORT,
-            {"sort_by": sort_by.value}
+            {"sort_by": sort_value}
         )
     
     async def item_drop(self, inventory_slot: int, quantity: int = 1) -> bool:

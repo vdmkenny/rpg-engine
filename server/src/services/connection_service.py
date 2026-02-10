@@ -161,7 +161,7 @@ class ConnectionService:
 
     @staticmethod
     async def handle_player_disconnect(
-        username: str, player_map: Optional[str] = None, 
+        player_id: int, player_map: Optional[str] = None, 
         manager = None, operation_rate_limiter = None
     ) -> Dict[str, Any]:
         """
@@ -170,7 +170,7 @@ class ConnectionService:
         Saves player state, notifies nearby players, and cleans up resources.
 
         Args:
-            username: Disconnecting player username
+            player_id: Disconnecting player ID
             player_map: Player's current map (optional)
             manager: Connection manager instance (optional)
             operation_rate_limiter: Rate limiter instance (optional)
@@ -179,22 +179,9 @@ class ConnectionService:
             Dict with disconnection result
         """
         try:
-            # Get player_id from username
-            player = await PlayerService.get_player_by_username(username)
-            if not player:
-                logger.warning(
-                    "Player not found during disconnect",
-                    extra={"username": username}
-                )
-                return {
-                    "player_id": None,
-                    "username": username,
-                    "nearby_players_to_notify": [],
-                    "cleanup_completed": False,
-                    "error": "Player not found"
-                }
-            
-            player_id = player.id
+            # Get username for logging if available
+            player_mgr = get_player_state_manager()
+            username = await player_mgr.get_username_for_player(player_id)
 
             # Get nearby players before cleanup for notifications
             nearby_players = await PlayerService.get_nearby_players(
@@ -226,13 +213,12 @@ class ConnectionService:
             return disconnection_data
 
         except Exception as e:
-            # Try to get player_id for logging if possible
-            player_id = None
+            # Get username for logging if possible
+            username = None
             try:
-                player = await PlayerService.get_player_by_username(username)
-                if player:
-                    player_id = player.id
-            except:
+                player_mgr = get_player_state_manager()
+                username = await player_mgr.get_username_for_player(player_id)
+            except Exception:
                 pass
 
             logger.error(
@@ -245,18 +231,17 @@ class ConnectionService:
                 }
             )
             # Still try to clean up even on error
-            if player_id:
-                try:
-                    await ConnectionService._cleanup_connection_resources(player_id)
-                except Exception as cleanup_error:
-                    logger.error(
-                        "Error during cleanup after disconnect error",
-                        extra={
-                            "player_id": player_id,
-                            "cleanup_error": str(cleanup_error),
-                            "traceback": traceback.format_exc(),
-                        }
-                    )
+            try:
+                await ConnectionService._cleanup_connection_resources(player_id)
+            except Exception as cleanup_error:
+                logger.error(
+                    "Error during cleanup after disconnect error",
+                    extra={
+                        "player_id": player_id,
+                        "cleanup_error": str(cleanup_error),
+                        "traceback": traceback.format_exc(),
+                    }
+                )
             
             return {
                 "player_id": player_id,

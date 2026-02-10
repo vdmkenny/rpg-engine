@@ -120,7 +120,7 @@ class TestChatEdgeCases:
             pytest.fail("Expected ErrorResponseError for empty message")
         except ErrorResponseError as e:
             # Should receive error for empty message
-            assert e.error_code == "CHAT_MESSAGE_TOO_LONG"  # Server's actual error code
+            assert e.error_code == "chat_message_too_long"  # Server's actual error code
             assert "short" in e.error_message.lower()  # "Message too short"
 
     @pytest.mark.asyncio
@@ -137,7 +137,7 @@ class TestChatEdgeCases:
             )
 
         # Should receive error for empty/whitespace message (stripped to empty)
-        assert exc_info.value.error_code == "CHAT_MESSAGE_TOO_LONG"
+        assert exc_info.value.error_code == "chat_message_too_long"
         assert "short" in exc_info.value.error_message.lower() or "empty" in exc_info.value.error_message.lower()
 
 
@@ -190,30 +190,6 @@ class TestChatSecurity:
 @pytest.mark.integration
 class TestGlobalChatPermissions:
     """Tests for role-based global chat permissions."""
-
-    @pytest.mark.asyncio
-    async def test_admin_can_send_global_messages(self, test_client: WebSocketTestClient):
-        """
-        Admin role should be able to send global chat messages.
-        
-        Note: The test_client fixture creates a regular player, not an admin.
-        This test verifies that regular players are denied global chat.
-        A separate test with admin fixtures would be needed to test admin access.
-        """
-        from server.src.tests.websocket_test_utils import ErrorResponseError
-        import pytest
-        
-        # Test player is a regular player, so global chat should be denied
-        test_message = "Admin global message!"
-        
-        with pytest.raises(ErrorResponseError) as exc_info:
-            await test_client.send_command(
-                MessageType.CMD_CHAT_SEND,
-                {"channel": "global", "message": test_message},
-            )
-        
-        # Verify permission denied error
-        assert "permission" in exc_info.value.error_message.lower()
 
     @pytest.mark.asyncio
     async def test_regular_player_global_chat_denied(self, test_client: WebSocketTestClient):
@@ -295,8 +271,8 @@ class TestChatMessageLimits:
                 {"channel": "dm", "message": long_message, "recipient": "someone"},
             )
 
-        # Pydantic validation fails with CHAT_MESSAGE_TOO_LONG error
-        assert exc_info.value.error_code == "CHAT_MESSAGE_TOO_LONG"
+        # Pydantic validation fails with chat_message_too_long error
+        assert exc_info.value.error_code == "chat_message_too_long"
 
 
 @pytest.mark.integration

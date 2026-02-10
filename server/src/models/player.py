@@ -7,7 +7,7 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy import String, Boolean, DateTime, func, Enum as SAEnum, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
-from ..schemas.player import PlayerRole
+from ..core.constants import PlayerRole
 
 
 class Player(Base):
@@ -64,7 +64,7 @@ class Player(Base):
             kwargs.setdefault(key, value)
         super().__init__(**kwargs)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Player(id={self.id}, username='{self.username}')>"
 
     __table_args__ = {"extend_existing": True}

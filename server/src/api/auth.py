@@ -15,7 +15,6 @@ from server.src.core.security import create_access_token
 from server.src.schemas.player import PlayerCreate, PlayerData
 from server.src.schemas.token import Token
 from server.src.services.map_service import get_map_manager
-from server.src.services.skill_service import SkillService
 from server.src.services.player_service import PlayerService
 from server.src.services.authentication_service import AuthenticationService
 from server.src.services.game_state import get_player_state_manager

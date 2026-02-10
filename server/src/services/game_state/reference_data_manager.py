@@ -68,7 +68,7 @@ class ReferenceDataManager(BaseManager):
                     items_dict = {str(k): v for k, v in self._item_cache.items()}
                     await self._cache_in_valkey(ITEM_CACHE_KEY, items_dict, 0)  # No TTL
 
-                logger.info(f"Loaded {len(self._item_cache)} items into cache")
+                logger.info("Loaded items into cache", extra={"item_count": len(self._item_cache)})
                 return len(self._item_cache)
 
         except Exception as e:
@@ -160,7 +160,7 @@ class ReferenceDataManager(BaseManager):
             if self._valkey and settings.USE_VALKEY:
                 await self._cache_in_valkey(SKILL_CACHE_KEY, skills_data, 0)  # No TTL
 
-            logger.info(f"Loaded {len(skills_data)} skills into cache")
+            logger.info("Loaded skills into cache", extra={"skill_count": len(skills_data)})
             return len(skills_data)
 
     async def get_skill_id_by_name(self, skill_name: str) -> Optional[int]:
@@ -196,7 +196,7 @@ class ReferenceDataManager(BaseManager):
         """Sync HumanoidID and MonsterID enum definitions to database."""
         from server.src.core.humanoids import HumanoidID
         from server.src.core.monsters import MonsterID
-        from server.src.services.entity_service import EntityService
+        from server.src.core.entity_utils import entity_def_to_dict
         from server.src.models.entity import Entity
 
         if not self._session_factory:
@@ -208,7 +208,7 @@ class ReferenceDataManager(BaseManager):
 
             # Sync humanoids
             for humanoid_enum in HumanoidID:
-                entity_data = EntityService.entity_def_to_dict(
+                entity_data = entity_def_to_dict(
                     humanoid_enum.name, humanoid_enum.value
                 )
 
@@ -221,7 +221,7 @@ class ReferenceDataManager(BaseManager):
 
             # Sync monsters
             for monster_enum in MonsterID:
-                entity_data = EntityService.entity_def_to_dict(
+                entity_data = entity_def_to_dict(
                     monster_enum.name, monster_enum.value
                 )
 
@@ -238,7 +238,7 @@ class ReferenceDataManager(BaseManager):
             if self._valkey and settings.USE_VALKEY:
                 await self._cache_entity_definitions()
 
-            logger.info(f"Synced {count} entity definitions to database")
+            logger.info("Synced entity definitions to database", extra={"entity_count": count})
             return count
 
     async def sync_items_to_database(self) -> int:
@@ -331,7 +331,7 @@ class ReferenceDataManager(BaseManager):
             # Reload cache after sync
             await self.load_item_cache_from_db()
 
-            logger.info(f"Synced {count} item definitions to database")
+            logger.info("Synced item definitions to database", extra={"item_count": count})
             return count
 
     async def _cache_entity_definitions(self) -> None:

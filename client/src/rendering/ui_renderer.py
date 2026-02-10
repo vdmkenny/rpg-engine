@@ -1,321 +1,120 @@
 """
 UI renderer.
 
-Renders UI panels and overlays on top of the game world.
+Renders OSRS-style UI panels and overlays on top of the game world.
+Uses stone-themed panels with 3D borders matching classic OSRS aesthetic.
 """
 
 import pygame
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple, Callable
+
+from ..ui.colors import Colors
+from .ui_panels import TabbedSidePanel, ChatWindow, ContextMenu, ContextMenuItem, Tooltip
 
 
 class UIRenderer:
-    """Renders UI panels and overlays."""
+    """Renders UI panels and overlays using OSRS-style stone theme."""
     
     def __init__(self, screen: pygame.Surface):
         self.screen = screen
         
         # UI state
-        self.show_inventory = False
-        self.show_equipment = False
-        self.show_stats = False
         self.show_chat = True
         self.show_minimap = True
         
-        # Colors
-        self.panel_bg = (30, 30, 30, 200)
-        self.panel_border = (100, 100, 100)
-        self.text_color = (255, 255, 255)
+        # Create panels
+        screen_width = screen.get_width()
+        screen_height = screen.get_height()
+        
+        # Tabbed side panel (Inventory, Equipment, Stats, Settings) - right side
+        # Initialize without callback, will be set via property
+        self.side_panel = TabbedSidePanel(
+            screen_width - 204,
+            screen_height - 312 - 10,
+            on_logout=None
+        )
+        
+        # Chat window - bottom left
+        self.chat_window = ChatWindow(
+            10,
+            screen_height - 160,
+            400,
+            150
+        )
+        
+        # Minimap - top right
+        self.minimap = Minimap(
+            screen_width - 70,
+            70,
+            60
+        )
+        
+        # Context menu system
+        self.context_menu = ContextMenu()
+        
+        # Tooltip system
+        self.tooltip = Tooltip()
+        self.tooltip_target = None  # What the tooltip is currently showing for
+        
+        # Callbacks for interactions
+        self.on_inventory_action: Optional[Callable[[str, Any], None]] = None
+        self.on_equipment_action: Optional[Callable[[str, str], None]] = None
+        self.on_world_action: Optional[Callable[[str, Any], None]] = None
+        self.on_logout: Optional[Callable[[], None]] = None
+        self.on_inventory_sort: Optional[Callable[[str], None]] = None
+        
+        # Fonts
+        try:
+            self.font = pygame.font.Font("client/assets/fonts/RetroRPG.ttf", 24)
+            self.small_font = pygame.font.Font("client/assets/fonts/RetroRPG.ttf", 18)
+            self.tiny_font = pygame.font.Font("client/assets/fonts/RetroRPG.ttf", 14)
+        except:
+            self.font = pygame.font.Font(None, 24)
+            self.small_font = pygame.font.Font(None, 18)
+            self.tiny_font = pygame.font.Font(None, 14)
     
     def render(self, game_state: Any) -> None:
         """Render all UI elements."""
-        # Render minimap
+        # Render minimap (if enabled)
         if self.show_minimap:
-            self._render_minimap(game_state)
+            self.minimap.draw(self.screen, game_state)
         
-        # Render status orbs (HP, Prayer, Run)
-        self._render_status_orbs(game_state)
-        
-        # Render inventory panel
-        if self.show_inventory:
-            self._render_inventory(game_state)
-        
-        # Render equipment panel
-        if self.show_equipment:
-            self._render_equipment(game_state)
-        
-        # Render stats panel
-        if self.show_stats:
-            self._render_stats(game_state)
+        # Render side panel (always visible in game)
+        self.side_panel.inventory_items = {
+            k: {
+                "name": v.name,
+                "quantity": v.quantity,
+                "rarity": v.rarity,
+                "is_equippable": v.is_equippable
+            } for k, v in game_state.inventory.items()
+        }
+        self.side_panel.equipment_items = {
+            k: {"name": v.name} for k, v in game_state.equipment.items()
+        }
+        self.side_panel.skills = {
+            k: {
+                "level": v.level,
+                "xp": v.xp,
+                "xp_to_next": v.xp_to_next,
+                "category": getattr(v, 'category', 'other')
+            } for k, v in game_state.skills.items()
+        }
+        self.side_panel.total_level = game_state.total_level
+        self.side_panel.draw(self.screen)
         
         # Render chat
         if self.show_chat:
-            self._render_chat(game_state)
+            self.chat_window.draw(self.screen)
+        
+        # Render tooltip (on top of panels)
+        self.tooltip.draw(self.screen)
+        
+        # Render context menu (always on top)
+        self.context_menu.draw(self.screen)
         
         # Render server shutdown warning if active
         if game_state.server_shutdown_warning:
             self._render_shutdown_warning(game_state.server_shutdown_warning)
-    
-    def _render_minimap(self, game_state: Any) -> None:
-        """Render the circular minimap."""
-        size = 150
-        margin = 10
-        x = self.screen.get_width() - size - margin
-        y = margin
-        
-        # Draw background circle
-        center = (x + size // 2, y + size // 2)
-        radius = size // 2
-        
-        # Background
-        pygame.draw.circle(self.screen, (20, 20, 20), center, radius)
-        pygame.draw.circle(self.screen, (100, 100, 100), center, radius, 2)
-        
-        # Draw player dot (center)
-        pygame.draw.circle(self.screen, (0, 255, 0), center, 4)
-        
-        # Draw other players as dots
-        for player_id, player in game_state.other_players.items():
-            # Calculate relative position
-            px = player.get("position", {}).get("x", 0)
-            py = player.get("position", {}).get("y", 0)
-            
-            my_x = game_state.position.get("x", 0)
-            my_y = game_state.position.get("y", 0)
-            
-            rel_x = (px - my_x) * 2  # Scale factor
-            rel_y = (py - my_y) * 2
-            
-            dot_x = center[0] + rel_x
-            dot_y = center[1] + rel_y
-            
-            # Check if within circle
-            dist = ((dot_x - center[0]) ** 2 + (dot_y - center[1]) ** 2) ** 0.5
-            if dist < radius - 5:
-                pygame.draw.circle(self.screen, (255, 200, 0), (int(dot_x), int(dot_y)), 3)
-    
-    def _render_status_orbs(self, game_state: Any) -> None:
-        """Render HP, Prayer, and Run orbs."""
-        orb_size = 50
-        spacing = 10
-        margin = 10
-        
-        screen_width = self.screen.get_width()
-        
-        # HP Orb (bottom right, next to minimap)
-        hp_x = screen_width - orb_size - margin
-        hp_y = 170
-        
-        hp_percent = game_state.current_hp / max(1, game_state.max_hp)
-        self._render_orb(hp_x, hp_y, orb_size, hp_percent, (200, 50, 50), "HP")
-        
-        # Prayer orb (below HP)
-        prayer_x = hp_x
-        prayer_y = hp_y + orb_size + spacing
-        self._render_orb(prayer_x, prayer_y, orb_size, 1.0, (50, 100, 200), "Pray")
-        
-        # Run orb (below Prayer)
-        run_x = hp_x
-        run_y = prayer_y + orb_size + spacing
-        self._render_orb(run_x, run_y, orb_size, 1.0, (200, 200, 50), "Run")
-    
-    def _render_orb(self, x: int, y: int, size: int, fill_percent: float, color: tuple, label: str) -> None:
-        """Render a status orb."""
-        center = (x + size // 2, y + size // 2)
-        radius = size // 2
-        
-        # Background
-        pygame.draw.circle(self.screen, (30, 30, 30), center, radius)
-        
-        # Filled portion (arc)
-        if fill_percent > 0:
-            # Simplified: draw filled circle with color intensity
-            fill_color = (
-                int(color[0] * fill_percent + 30 * (1 - fill_percent)),
-                int(color[1] * fill_percent + 30 * (1 - fill_percent)),
-                int(color[2] * fill_percent + 30 * (1 - fill_percent))
-            )
-            pygame.draw.circle(self.screen, fill_color, center, radius - 2)
-        
-        # Border
-        pygame.draw.circle(self.screen, (150, 150, 150), center, radius, 2)
-        
-        # Label
-        font = pygame.font.SysFont("sans-serif", 10, bold=True)
-        text = font.render(label, True, (255, 255, 255))
-        text_rect = text.get_rect(center=center)
-        self.screen.blit(text, text_rect)
-    
-    def _render_inventory(self, game_state: Any) -> None:
-        """Render inventory panel."""
-        slot_size = 40
-        slots_per_row = 4
-        num_rows = 7
-        
-        panel_width = slots_per_row * slot_size + 30
-        panel_height = num_rows * slot_size + 50
-        
-        x = self.screen.get_width() - panel_width - 10
-        y = self.screen.get_height() - panel_height - 10
-        
-        # Draw panel background
-        panel_rect = pygame.Rect(x, y, panel_width, panel_height)
-        pygame.draw.rect(self.screen, (40, 40, 40), panel_rect, border_radius=5)
-        pygame.draw.rect(self.screen, (100, 100, 100), panel_rect, 2, border_radius=5)
-        
-        # Title
-        font = pygame.font.SysFont("sans-serif", 14, bold=True)
-        title = font.render("Inventory", True, (255, 255, 255))
-        self.screen.blit(title, (x + 10, y + 5))
-        
-        # Draw slots
-        slot_rects = []
-        for i in range(game_state.inventory_capacity):
-            row = i // slots_per_row
-            col = i % slots_per_row
-            
-            slot_x = x + 10 + col * slot_size
-            slot_y = y + 25 + row * slot_size
-            
-            slot_rect = pygame.Rect(slot_x, slot_y, slot_size - 2, slot_size - 2)
-            slot_rects.append(slot_rect)
-            
-            # Background
-            pygame.draw.rect(self.screen, (60, 60, 60), slot_rect, border_radius=2)
-            
-            # Border (highlight if item present)
-            if i in game_state.inventory:
-                pygame.draw.rect(self.screen, (150, 150, 150), slot_rect, 2, border_radius=2)
-                
-                # Draw item name (abbreviated)
-                item = game_state.inventory[i]
-                item_font = pygame.font.SysFont("sans-serif", 8)
-                name_text = item_font.render(item.name[:8], True, (255, 255, 255))
-                self.screen.blit(name_text, (slot_x + 2, slot_y + 2))
-                
-                # Draw quantity if > 1
-                if item.quantity > 1:
-                    qty_text = item_font.render(str(item.quantity), True, (255, 255, 0))
-                    self.screen.blit(qty_text, (slot_x + slot_size - 15, slot_y + slot_size - 12))
-            else:
-                pygame.draw.rect(self.screen, (80, 80, 80), slot_rect, 1, border_radius=2)
-    
-    def _render_equipment(self, game_state: Any) -> None:
-        """Render equipment panel."""
-        panel_width = 200
-        panel_height = 350
-        
-        x = self.screen.get_width() - panel_width - 10
-        y = (self.screen.get_height() - panel_height) // 2
-        
-        # Draw panel
-        panel_rect = pygame.Rect(x, y, panel_width, panel_height)
-        pygame.draw.rect(self.screen, (40, 40, 40), panel_rect, border_radius=5)
-        pygame.draw.rect(self.screen, (100, 100, 100), panel_rect, 2, border_radius=5)
-        
-        # Title
-        font = pygame.font.SysFont("sans-serif", 14, bold=True)
-        title = font.render("Equipment", True, (255, 255, 255))
-        self.screen.blit(title, (x + 10, y + 10))
-        
-        # Equipment slots
-        slot_names = [
-            "head", "cape", "neck", "ammunition",
-            "weapon", "body", "shield", "legs", "hands", "feet", "ring"
-        ]
-        
-        slot_y = y + 40
-        for slot_name in slot_names:
-            # Slot label
-            label_font = pygame.font.SysFont("sans-serif", 11)
-            label = label_font.render(slot_name.capitalize() + ":", True, (200, 200, 200))
-            self.screen.blit(label, (x + 10, slot_y))
-            
-            # Item name if equipped
-            if slot_name in game_state.equipment:
-                item = game_state.equipment[slot_name]
-                item_font = pygame.font.SysFont("sans-serif", 11, bold=True)
-                item_text = item_font.render(item.name, True, (255, 215, 0))
-                self.screen.blit(item_text, (x + 80, slot_y))
-            else:
-                empty_font = pygame.font.SysFont("sans-serif", 10, italic=True)
-                empty_text = empty_font.render("(empty)", True, (100, 100, 100))
-                self.screen.blit(empty_text, (x + 80, slot_y))
-            
-            slot_y += 25
-    
-    def _render_stats(self, game_state: Any) -> None:
-        """Render stats panel."""
-        panel_width = 200
-        panel_height = 400
-        
-        x = 10
-        y = (self.screen.get_height() - panel_height) // 2
-        
-        # Draw panel
-        panel_rect = pygame.Rect(x, y, panel_width, panel_height)
-        pygame.draw.rect(self.screen, (40, 40, 40), panel_rect, border_radius=5)
-        pygame.draw.rect(self.screen, (100, 100, 100), panel_rect, 2, border_radius=5)
-        
-        # Title
-        font = pygame.font.SysFont("sans-serif", 14, bold=True)
-        title = font.render(f"Stats (Lvl {game_state.combat_level})", True, (255, 255, 255))
-        self.screen.blit(title, (x + 10, y + 10))
-        
-        # Skills
-        skill_y = y + 40
-        skill_font = pygame.font.SysFont("sans-serif", 11)
-        
-        for skill_name, skill in sorted(game_state.skills.items()):
-            skill_text = f"{skill_name}: {skill.level}"
-            text = skill_font.render(skill_text, True, (200, 200, 200))
-            self.screen.blit(text, (x + 10, skill_y))
-            skill_y += 18
-        
-        # Totals
-        totals_y = skill_y + 10
-        totals_font = pygame.font.SysFont("sans-serif", 11, bold=True)
-        totals_text = f"Total: {game_state.total_level} | XP: {game_state.total_xp}"
-        text = totals_font.render(totals_text, True, (255, 255, 255))
-        self.screen.blit(text, (x + 10, totals_y))
-    
-    def _render_chat(self, game_state: Any) -> None:
-        """Render chat window."""
-        width = 400
-        height = 150
-        x = 10
-        y = self.screen.get_height() - height - 10
-        
-        # Draw background
-        chat_rect = pygame.Rect(x, y, width, height)
-        pygame.draw.rect(self.screen, (30, 30, 30, 200), chat_rect, border_radius=5)
-        pygame.draw.rect(self.screen, (80, 80, 80), chat_rect, 1, border_radius=5)
-        
-        # Messages
-        font = pygame.font.SysFont("sans-serif", 11)
-        msg_y = y + height - 20
-        
-        # Show last 6 messages
-        recent_messages = game_state.chat_history[-6:]
-        for msg in reversed(recent_messages):
-            channel = msg.get("channel", "local")
-            sender = msg.get("sender", "?")
-            message = msg.get("message", "")
-            
-            # Color based on channel
-            if channel == "global":
-                color = (255, 200, 100)
-            elif channel == "dm":
-                color = (200, 150, 255)
-            else:
-                color = (200, 200, 200)
-            
-            full_text = f"[{channel[0].upper()}] {sender}: {message}"
-            text_surface = font.render(full_text[:60], True, color)
-            self.screen.blit(text_surface, (x + 5, msg_y))
-            
-            msg_y -= 18
-            if msg_y < y + 5:
-                break
     
     def _render_shutdown_warning(self, warning: Dict[str, Any]) -> None:
         """Render server shutdown warning."""
@@ -343,14 +142,207 @@ class UIRenderer:
         text = text_font.render(info_text, True, (255, 200, 200))
         self.screen.blit(text, (x + 10, y + 45))
     
+    def handle_event(self, event: pygame.event.Event, game_state: Any = None) -> Optional[str]:
+        """Handle UI events."""
+        # Context menu has highest priority when visible
+        if self.context_menu.visible:
+            action = self.context_menu.handle_event(event)
+            if action:
+                return action
+            # If context menu is visible and we didn't handle the event, don't pass to other panels
+            return None
+        
+        # Pass events to panels
+        action = self.side_panel.handle_event(event)
+        if action:
+            return action
+        
+        action = self.chat_window.handle_event(event)
+        if action == "chat_send":
+            return "chat_send"
+        
+        # Handle right-click for context menus
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+            # Check inventory slots
+            if self.side_panel.active_tab == "inventory":
+                clicked_slot = self._get_inventory_slot_at(event.pos, game_state)
+                if clicked_slot is not None and clicked_slot in game_state.inventory:
+                    self._show_inventory_context_menu(event.pos, clicked_slot, game_state)
+                    return None
+            
+            # Check equipment slots
+            if self.side_panel.active_tab == "equipment":
+                clicked_slot = self._get_equipment_slot_at(event.pos)
+                if clicked_slot and clicked_slot in game_state.equipment:
+                    self._show_equipment_context_menu(event.pos, clicked_slot, game_state)
+                    return None
+        
+        # Handle left-click for inventory/equipment actions
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            # Check inventory slots
+            if self.side_panel.active_tab == "inventory":
+                clicked_slot = self._get_inventory_slot_at(event.pos, game_state)
+                if clicked_slot is not None:
+                    if clicked_slot in game_state.inventory:
+                        item = game_state.inventory[clicked_slot]
+                        if item.is_equippable and self.on_inventory_action:
+                            self.on_inventory_action("equip", clicked_slot)
+                    return None
+            
+            # Check equipment slots
+            if self.side_panel.active_tab == "equipment":
+                clicked_slot = self._get_equipment_slot_at(event.pos)
+                if clicked_slot and clicked_slot in game_state.equipment:
+                    if self.on_equipment_action:
+                        self.on_equipment_action("unequip", clicked_slot)
+                    return None
+        
+        # Handle hover for tooltips
+        if event.type == pygame.MOUSEMOTION and game_state:
+            self._update_tooltip(event.pos, game_state)
+        
+        return None
+    
+    def _get_inventory_slot_at(self, pos: Tuple[int, int], game_state: Any) -> Optional[int]:
+        """Get inventory slot index at screen position."""
+        if not self.side_panel or self.side_panel.active_tab != "inventory":
+            return None
+        
+        slot_size = 32
+        cols = 4
+        grid_width = cols * (slot_size + 2) - 2
+        content_rect = self.side_panel._get_content_rect()
+        start_x = content_rect.x + (content_rect.width - grid_width) // 2
+        start_y = content_rect.y + 8
+        
+        for slot in range(28):
+            col = slot % cols
+            row = slot // cols
+            slot_rect = pygame.Rect(start_x + col * (slot_size + 2), start_y + row * (slot_size + 2), slot_size, slot_size)
+            if slot_rect.collidepoint(pos):
+                return slot
+        return None
+    
+    def _get_equipment_slot_at(self, pos: Tuple[int, int]) -> Optional[str]:
+        """Get equipment slot name at screen position."""
+        if not self.side_panel or self.side_panel.active_tab != "equipment":
+            return None
+        
+        content_rect = self.side_panel._get_content_rect()
+        center_x = content_rect.centerx
+        content_y = content_rect.y + 8
+        slot_size = 34
+        
+        # Must match _draw_equipment_content() in ui_panels.py exactly
+        col_left = center_x - 55
+        col_mid = center_x - 17
+        col_right = center_x + 21
+        row_step = 38
+
+        slots = [
+            ("head", col_mid, content_y),
+            ("cape", col_left, content_y + row_step),
+            ("neck", col_mid, content_y + row_step),
+            ("ammunition", col_right, content_y + row_step),
+            ("weapon", col_left, content_y + 2 * row_step),
+            ("body", col_mid, content_y + 2 * row_step),
+            ("shield", col_right, content_y + 2 * row_step),
+            ("hands", col_left, content_y + 3 * row_step),
+            ("legs", col_mid, content_y + 3 * row_step),
+            ("ring", col_right, content_y + 3 * row_step),
+            ("boots", col_mid, content_y + 4 * row_step),
+        ]
+        
+        for slot_name, sx, sy in slots:
+            slot_rect = pygame.Rect(sx, sy, slot_size, slot_size)
+            if slot_rect.collidepoint(pos):
+                return slot_name
+        return None
+    
+    def _show_inventory_context_menu(self, pos: Tuple[int, int], slot: int, game_state: Any) -> None:
+        """Show context menu for inventory item."""
+        if slot not in game_state.inventory:
+            return
+        
+        item = game_state.inventory[slot]
+        items = [
+            ContextMenuItem(f"Use {item.name}", "use", Colors.TEXT_WHITE, slot),
+            ContextMenuItem(f"Examine {item.name}", "examine", Colors.TEXT_CYAN, slot),
+        ]
+        
+        if item.is_equippable:
+            items.insert(1, ContextMenuItem("Equip", "equip", Colors.TEXT_WHITE, slot))
+        
+        items.append(ContextMenuItem("Drop", "drop", Colors.TEXT_RED, slot))
+        
+        self.context_menu.show(pos[0], pos[1], items, self._on_inventory_menu_select)
+    
+    def _show_equipment_context_menu(self, pos: Tuple[int, int], slot: str, game_state: Any) -> None:
+        """Show context menu for equipped item."""
+        if slot not in game_state.equipment:
+            return
+        
+        item = game_state.equipment[slot]
+        items = [
+            ContextMenuItem("Unequip", "unequip", Colors.TEXT_WHITE, slot),
+            ContextMenuItem(f"Examine {item.name}", "examine", Colors.TEXT_CYAN, slot),
+        ]
+        
+        self.context_menu.show(pos[0], pos[1], items, self._on_equipment_menu_select)
+    
+    def _on_inventory_menu_select(self, item: ContextMenuItem) -> None:
+        """Handle inventory context menu selection."""
+        if self.on_inventory_action:
+            self.on_inventory_action(item.action, item.data)
+    
+    def _on_equipment_menu_select(self, item: ContextMenuItem) -> None:
+        """Handle equipment context menu selection."""
+        if self.on_equipment_action:
+            self.on_equipment_action(item.action, item.data)
+    
+    def _update_tooltip(self, pos: Tuple[int, int], game_state: Any) -> None:
+        """Update tooltip based on hover position."""
+        tooltip_data = None
+        
+        # Check inventory hover
+        if self.side_panel.active_tab == "inventory":
+            hovered_slot = self._get_inventory_slot_at(pos, game_state)
+            if hovered_slot is not None and hovered_slot in game_state.inventory:
+                item = game_state.inventory[hovered_slot]
+                tooltip_data = [
+                    (item.name, Colors.TEXT_YELLOW),
+                    (f"Quantity: {item.quantity}", Colors.TEXT_WHITE),
+                    (f"Rarity: {item.rarity.title()}", Colors.TEXT_CYAN),
+                ]
+                if item.is_equippable:
+                    tooltip_data.append(("Right-click for options", Colors.TEXT_GRAY))
+        
+        # Check equipment hover
+        if self.side_panel.active_tab == "equipment":
+            hovered_slot = self._get_equipment_slot_at(pos)
+            if hovered_slot and hovered_slot in game_state.equipment:
+                item = game_state.equipment[hovered_slot]
+                tooltip_data = [
+                    (item.name, Colors.TEXT_YELLOW),
+                    (f"Slot: {hovered_slot.title()}", Colors.TEXT_WHITE),
+                    ("Click to unequip", Colors.TEXT_GRAY),
+                ]
+        
+        if tooltip_data:
+            self.tooltip.show(pos[0] + 15, pos[1] + 15, tooltip_data)
+        else:
+            self.tooltip.hide()
+    
     def toggle_panel(self, panel_name: str) -> None:
         """Toggle a UI panel visibility."""
         if panel_name == "inventory":
-            self.show_inventory = not self.show_inventory
+            self.side_panel.active_tab = "inventory"
         elif panel_name == "equipment":
-            self.show_equipment = not self.show_equipment
+            self.side_panel.active_tab = "equipment"
         elif panel_name == "stats":
-            self.show_stats = not self.show_stats
+            self.side_panel.active_tab = "stats"
+        elif panel_name == "settings":
+            self.side_panel.active_tab = "settings"
         elif panel_name == "chat":
             self.show_chat = not self.show_chat
         elif panel_name == "minimap":
@@ -358,6 +350,109 @@ class UIRenderer:
     
     def hide_all_panels(self) -> None:
         """Hide all panels."""
-        self.show_inventory = False
-        self.show_equipment = False
-        self.show_stats = False
+        self.show_chat = False
+        self.show_minimap = False
+    
+    def set_chat_input_active(self, active: bool) -> None:
+        """Set whether chat input is active."""
+        self.chat_window.input_focused = active
+    
+    def is_chat_input_active(self) -> bool:
+        """Check if chat input is active."""
+        return self.chat_window.input_focused
+
+    def set_logout_callback(self, callback: Callable[[], None]) -> None:
+        """Set the logout callback."""
+        self.on_logout = callback
+        self.side_panel.on_logout = callback
+    
+    def set_inventory_sort_callback(self, callback: Callable[[str], None]) -> None:
+        """Set the inventory sort callback."""
+        self.on_inventory_sort = callback
+        self.side_panel.on_inventory_sort = callback
+
+
+class Minimap:
+    """Circular minimap showing player and nearby entities."""
+    
+    def __init__(self, x: int, y: int, radius: int = 60):
+        self.x = x
+        self.y = y
+        self.radius = radius
+    
+    def draw(self, screen: pygame.Surface, game_state: Any) -> None:
+        """Render minimap."""
+        # Draw stone-themed border (3 layers for 3D effect)
+        center = (self.x, self.y)
+        
+        # Outer dark border
+        pygame.draw.circle(screen, Colors.STONE_DARK, center, self.radius, 3)
+        # Inner highlight
+        pygame.draw.circle(screen, Colors.STONE_HIGHLIGHT, center, self.radius - 2, 1)
+        
+        # Black background
+        pygame.draw.circle(screen, Colors.MINIMAP_BG, center, self.radius - 4)
+        
+        # Draw dots for entities
+        # Scale: 3 pixels per tile
+        scale = 3
+        
+        # Other players (cyan)
+        for player_id, player in game_state.other_players.items():
+            px = player.get("position", {}).get("x", 0)
+            py = player.get("position", {}).get("y", 0)
+            
+            my_x = game_state.position.get("x", 0)
+            my_y = game_state.position.get("y", 0)
+            
+            dx = (px - my_x) * scale
+            dy = (py - my_y) * scale
+            
+            dot_x = center[0] + dx
+            dot_y = center[1] + dy
+            
+            # Check if within circle
+            dist = ((dot_x - center[0]) ** 2 + (dot_y - center[1]) ** 2) ** 0.5
+            if dist < self.radius - 8:
+                pygame.draw.circle(screen, Colors.MINIMAP_OTHER_PLAYER, (int(dot_x), int(dot_y)), 2)
+        
+        # NPCs (yellow)
+        for entity_id, entity in getattr(game_state, 'entities', {}).items():
+            if entity.get('entity_type') == 'npc':
+                ex = entity.get("x", 0)
+                ey = entity.get("y", 0)
+                
+                my_x = game_state.position.get("x", 0)
+                my_y = game_state.position.get("y", 0)
+                
+                dx = (ex - my_x) * scale
+                dy = (ey - my_y) * scale
+                
+                dot_x = center[0] + dx
+                dot_y = center[1] + dy
+                
+                dist = ((dot_x - center[0]) ** 2 + (dot_y - center[1]) ** 2) ** 0.5
+                if dist < self.radius - 8:
+                    pygame.draw.circle(screen, Colors.MINIMAP_NPC, (int(dot_x), int(dot_y)), 2)
+        
+        # Monsters (red)
+        for entity_id, entity in getattr(game_state, 'entities', {}).items():
+            if entity.get('entity_type') == 'monster':
+                ex = entity.get("x", 0)
+                ey = entity.get("y", 0)
+                
+                my_x = game_state.position.get("x", 0)
+                my_y = game_state.position.get("y", 0)
+                
+                dx = (ex - my_x) * scale
+                dy = (ey - my_y) * scale
+                
+                dot_x = center[0] + dx
+                dot_y = center[1] + dy
+                
+                dist = ((dot_x - center[0]) ** 2 + (dot_y - center[1]) ** 2) ** 0.5
+                if dist < self.radius - 8:
+                    pygame.draw.circle(screen, Colors.MINIMAP_MONSTER, (int(dot_x), int(dot_y)), 2)
+        
+        # Player dot (white, larger, in center)
+        pygame.draw.circle(screen, Colors.MINIMAP_PLAYER, center, 3)

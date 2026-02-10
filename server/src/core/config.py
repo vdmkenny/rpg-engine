@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     DEFAULT_MAP: str = game_config.get("game", {}).get("spawn", {}).get("map_id", "samplemap")
     DEFAULT_SPAWN_X: int = int(game_config.get("game", {}).get("spawn", {}).get("x", 25))
     DEFAULT_SPAWN_Y: int = int(game_config.get("game", {}).get("spawn", {}).get("y", 25))
-    COLLISION_LAYER_NAMES: List[str] = ["tree", "building", "water", "farm", "obstacles", "collision"]
+    COLLISION_LAYER_NAMES: List[str] = ["water", "building"]
 
     # Valkey settings from config.yml
     USE_VALKEY: bool = os.getenv(

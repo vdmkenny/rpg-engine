@@ -23,10 +23,6 @@ from ..schemas.item import (
     GroundItem,
     ItemInfo,
 )
-from ..schemas.service_results import (
-    GroundItemServiceResult,
-    ServiceErrorCodes
-)
 from .game_state import get_ground_item_manager, get_inventory_manager, get_equipment_manager
 from .inventory_service import InventoryService
 from .item_service import ItemService

@@ -13,10 +13,7 @@ from dataclasses import dataclass
 from ..core.logging_config import get_logger
 from ..core.security import get_password_hash
 from ..models.player import Player
-from ..schemas.service_results import (
-    TestDataServiceResult,
-    ServiceErrorCodes
-)
+from ..schemas.service_results import TestDataServiceResult
 from .item_service import ItemService
 from .player_service import PlayerService
 from .inventory_service import InventoryService
@@ -152,12 +149,14 @@ class TestDataService:
                 player_mgr = get_player_state_manager()
                 await player_mgr.register_online_player(player_id=player.id, username=username)
                 await player_mgr.set_player_full_state(
-                    player_id=player.id,
-                    x=config.x,
-                    y=config.y,
-                    map_id=config.map_id,
-                    current_hp=10,
-                    max_hp=10
+                    player.id,
+                    {
+                        "x": config.x,
+                        "y": config.y,
+                        "map_id": config.map_id,
+                        "current_hp": 10,
+                        "max_hp": 10
+                    }
                 )
             
             # Add items to inventory if specified
