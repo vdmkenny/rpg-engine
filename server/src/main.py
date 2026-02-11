@@ -7,7 +7,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 import msgpack
-from server.src.api import websockets, auth, assets
+from server.src.api import websockets, auth, assets, appearance
 from server.src.core.logging_config import setup_logging, get_logger
 from server.src.core.config import settings
 from server.src.core.metrics import init_metrics, get_metrics, get_metrics_content_type, metrics
@@ -272,3 +272,4 @@ async def get_server_status():
 app.include_router(websockets.router)
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(assets.router, prefix="/api", tags=["Assets"])
+app.include_router(appearance.router, prefix="/api", tags=["Appearance"])

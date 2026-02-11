@@ -9,11 +9,10 @@ import pygame
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import json
-import hashlib
-from datetime import datetime
+from client.src.logging_config import get_logger
+from client.src.config import get_config
 
-# Server configuration
-SERVER_BASE_URL = "http://localhost:8000"
+logger = get_logger(__name__)
 
 
 class TilesetManager:
@@ -42,17 +41,19 @@ class TilesetManager:
         self.auth_token = token
     
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create HTTP session with authentication headers."""
+        """Get or create HTTP session."""
         if self.session is None:
-            headers = {}
-            if self.auth_token:
-                headers["Authorization"] = f"Bearer {self.auth_token}"
-            
+            # Don't bake auth token into session - pass per-request instead (M6 fix)
             self.session = aiohttp.ClientSession(
-                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30)
             )
         return self.session
+    
+    def _get_auth_headers(self) -> dict:
+        """Get headers with current auth token for each request."""
+        if self.auth_token:
+            return {"Authorization": f"Bearer {self.auth_token}"}
+        return {}
     
     async def close(self):
         """Clean up resources."""
@@ -92,9 +93,9 @@ class TilesetManager:
         """
         try:
             session = await self._get_session()
-            url = f"{SERVER_BASE_URL}/api/maps/{map_id}/tilesets"
+            url = f"{get_config().server.base_url}/api/maps/{map_id}/tilesets"
             
-            async with session.get(url) as response:
+            async with session.get(url, headers=self._get_auth_headers()) as response:
                 if response.status == 200:
                     tilesets = await response.json()
                     
@@ -174,9 +175,9 @@ class TilesetManager:
         """
         try:
             session = await self._get_session()
-            url = f"{SERVER_BASE_URL}/api/tilesets/{image_filename}"
+            url = f"{get_config().server.base_url}/api/tilesets/{image_filename}"
             
-            async with session.get(url) as response:
+            async with session.get(url, headers=self._get_auth_headers()) as response:
                 if response.status == 200:
                     # Save to cache
                     cache_file = self.cache_dir / image_filename

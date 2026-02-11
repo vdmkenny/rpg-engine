@@ -9,12 +9,6 @@ from typing import Dict, List, Any, Optional, Tuple, Union
 from enum import Enum
 import time
 
-import sys
-from pathlib import Path
-common_path = Path(__file__).parent.parent.parent.parent / "common" / "src"
-if str(common_path) not in sys.path:
-    sys.path.insert(0, str(common_path))
-
 from protocol import Direction, ChatChannel
 from sprites.enums import EquipmentSlot
 
@@ -103,6 +97,14 @@ class ClientGameState:
         self.map_id: str = "default"
         self.facing_direction: str = "DOWN"
         
+        # Movement interpolation (for smooth walk animation)
+        self.is_moving: bool = False
+        self.move_progress: float = 0.0
+        self.move_start_x: int = 0
+        self.move_start_y: int = 0
+        self.move_target_x: int = 0
+        self.move_target_y: int = 0
+        
         # Combat stats
         self.current_hp: int = 100
         self.max_hp: int = 100
@@ -187,6 +189,39 @@ class ClientGameState:
         # Update facing direction
         if "direction" in data:
             entity.facing_direction = data["direction"]
+    
+    def update_other_player(self, player_id: int, data: Dict[str, Any]) -> None:
+        """Update other player position with smooth interpolation."""
+        if player_id not in self.other_players:
+            return  # Player not tracked yet
+        
+        player = self.other_players[player_id]
+        old_x = player.get("position", {}).get("x", 0)
+        old_y = player.get("position", {}).get("y", 0)
+        new_x = data.get("x", old_x)
+        new_y = data.get("y", old_y)
+        
+        # Detect movement and start interpolation
+        if new_x != old_x or new_y != old_y:
+            player["move_start_x"] = old_x
+            player["move_start_y"] = old_y
+            player["is_moving"] = True
+            player["move_progress"] = 0.0
+        
+        # Update position
+        player["position"] = {"x": new_x, "y": new_y}
+        
+        # Update other fields
+        if "current_hp" in data:
+            player["current_hp"] = data["current_hp"]
+        if "max_hp" in data:
+            player["max_hp"] = data["max_hp"]
+        if "facing_direction" in data:
+            player["facing_direction"] = data["facing_direction"]
+        if "visual_hash" in data:
+            player["visual_hash"] = data["visual_hash"]
+        if "visual_state" in data:
+            player["visual_state"] = data["visual_state"]
     
     def update_inventory(self, data: Dict[str, Any]) -> None:
         """Update inventory from server data."""

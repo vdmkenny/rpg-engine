@@ -194,7 +194,7 @@ class TestAppearancePresets:
         assert preset.hair_style == HairStyle.BALD
         assert preset.hair_color == HairColor.GRAY
         assert preset.eye_color == EyeColor.GRAY
-        assert preset.facial_hair_style == FacialHairStyle.BEARD_GRAY
+        assert preset.facial_hair_style == FacialHairStyle.BEARD
 
     def test_child_preset(self):
         """CHILD preset should have child body type."""
@@ -281,8 +281,6 @@ class TestFacialHairEnums:
         """FacialHairStyle should have expected values."""
         assert FacialHairStyle.NONE.value == "none"
         assert FacialHairStyle.STUBBLE.value == "stubble"
-        assert FacialHairStyle.BEARD_BLACK.value == "beard_black"
-        assert FacialHairStyle.BEARD_BLONDE.value == "beard_blonde"
-        assert FacialHairStyle.BEARD_BROWN.value == "beard_brown"
-        assert FacialHairStyle.MUSTACHE_BLACK.value == "mustache_black"
-        assert FacialHairStyle.GOATEE_BROWN.value == "goatee_brown"
+        assert FacialHairStyle.BEARD.value == "beard"
+        assert FacialHairStyle.MUSTACHE.value == "mustache"
+        assert FacialHairStyle.GOATEE.value == "goatee"

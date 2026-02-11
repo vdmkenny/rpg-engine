@@ -123,7 +123,7 @@ class TestAppearanceUpdate:
         response = await client.send_command(
             MessageType.CMD_UPDATE_APPEARANCE,
             {
-                "shirt_style": "tunic",
+                "shirt_style": "longsleeve2",
                 "shirt_color": "purple",
                 "pants_style": "shorts",
                 "pants_color": "blue",
@@ -134,7 +134,7 @@ class TestAppearanceUpdate:
         
         assert response.type == MessageType.RESP_SUCCESS
         appearance = response.payload["appearance"]
-        assert appearance["shirt_style"] == "tunic"
+        assert appearance["shirt_style"] == "longsleeve2"
         assert appearance["shirt_color"] == "purple"
         assert appearance["pants_style"] == "shorts"
         assert appearance["pants_color"] == "blue"

@@ -306,6 +306,9 @@ async def websocket_endpoint(
                 )
                 raise WebSocketDisconnect(code=status.WS_1006_ABNORMAL_CLOSURE)
             except Exception as e:
+                # RuntimeError from Starlette means the WebSocket is dead - treat as disconnect
+                if isinstance(e, RuntimeError) and "not connected" in str(e):
+                    raise WebSocketDisconnect(code=status.WS_1006_ABNORMAL_CLOSURE)
                 logger.error(
                     "Error in message loop",
                     extra={

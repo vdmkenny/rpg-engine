@@ -210,16 +210,14 @@ async def handle_player_join_broadcast(
             await websocket.send_bytes(packed_update)
         
         # Broadcast new player join to existing players
+        # Flatten payload to match PlayerJoinedEventPayload and client expectations
         player_joined = WSMessage(
             id=None,
             type=MessageType.EVENT_PLAYER_JOINED,
             payload={
-                "player": {
-                    "player_id": player_id,
-                    "username": username,
-                    "position": position,
-                    "type": "player"
-                }
+                "player_id": player_id,
+                "username": username,
+                "position": position.model_dump() if position else {},
             },
             version=PROTOCOL_VERSION
         )

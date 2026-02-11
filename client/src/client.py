@@ -5,15 +5,8 @@ Screen flow: Server Select -> Login/Register -> Game
 """
 
 import asyncio
-import sys
 import time
-from pathlib import Path
 from typing import Optional
-
-# Setup paths
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "common" / "src"))
 
 import aiohttp
 import pygame
@@ -29,6 +22,7 @@ from client.src.ui.screens import ServerSelectScreen, LoginScreen, GameScreen
 from client.src.ui.colors import Colors
 from client.src.game_states import GameState
 from client.src.core import get_event_bus, EventType, Event
+from client.src.chat import get_command_registry
 
 from protocol import Direction
 
@@ -90,6 +84,9 @@ class Client:
         self.server_status = {}
         self.last_status_check = 0
         
+        # Cached fonts for performance
+        self.debug_font = pygame.font.SysFont("monospace", 12)
+        
         # Subscribe to GAME_STARTED event to handle reconnections
         self._setup_event_handlers()
     
@@ -97,7 +94,8 @@ class Client:
         """Subscribe to events for handling game state changes."""
         event_bus = get_event_bus()
         event_bus.subscribe(EventType.GAME_STARTED, self._on_game_started)
-        logger.debug("Subscribed to GAME_STARTED event")
+        event_bus.subscribe(EventType.CHAT_MESSAGE_RECEIVED, self._on_chat_message_received)
+        logger.debug("Subscribed to GAME_STARTED and CHAT_MESSAGE_RECEIVED events")
     
     async def _on_game_started(self, event: Event):
         """Handle game start - ensures renderer exists for reconnects."""
@@ -106,7 +104,7 @@ class Client:
         # If no renderer (reconnect after logout), recreate it
         if not self.renderer:
             logger.info("Recreating renderer after reconnect")
-            self.renderer = Renderer()
+            self.renderer = Renderer(self.screen)
             self.game_screen = GameScreen(self.screen, self.renderer)
             self._connect_ui_callbacks()
             
@@ -114,7 +112,23 @@ class Client:
             if self.state == GameState.LOGIN:
                 self.state = GameState.PLAYING
                 logger.info("Transitioned to PLAYING state after reconnect")
-    
+
+    def _on_chat_message_received(self, event: Event):
+        """Handle incoming chat message - route to chat window."""
+        chat_data = event.data
+        sender = chat_data.get("sender", "Unknown")
+        message = chat_data.get("message", "")
+        channel = chat_data.get("channel", "local")
+
+        # Skip messages from self (already added locally with "You" prefix)
+        if sender == self.game_state.username:
+            return
+
+        # Add message to chat window (Fix D)
+        if self.renderer and self.renderer.ui_renderer:
+            chat_window = self.renderer.ui_renderer.chat_window
+            chat_window.add_message(channel, sender, message)
+
     async def run(self):
         """Main client loop."""
         self._running = True
@@ -177,6 +191,11 @@ class Client:
     
     def _handle_event(self, event: pygame.event.Event) -> Optional[str]:
         """Route events to appropriate screen handler."""
+        # For PLAYING state, capture chat focus BEFORE routing to UI (Fix 1: prevents ESC race condition)
+        chat_focused = False
+        if self.state == GameState.PLAYING and self.renderer and self.renderer.ui_renderer:
+            chat_focused = self.renderer.ui_renderer.is_chat_input_active()
+
         # Route to screen handlers first (so UI gets priority over global shortcuts)
         if self.state == GameState.SERVER_SELECT and self.server_select_screen:
             return self.server_select_screen.handle_event(event)
@@ -189,15 +208,15 @@ class Client:
 
         # Global shortcuts for panel toggling in PLAYING state (only if not consumed by UI)
         if self.state == GameState.PLAYING:
-            # Check if chat input is focused - if so, only allow ESCAPE to close it
-            chat_focused = False
-            if self.renderer and self.renderer.ui_renderer:
-                chat_focused = self.renderer.ui_renderer.is_chat_input_active()
-
             if event.type == pygame.KEYDOWN:
-                # ESCAPE always works (closes chat or panels)
+                # ESCAPE: defocus chat if active
                 if event.key == pygame.K_ESCAPE:
-                    return "close_panels"
+                    if chat_focused:
+                        # Just defocus chat input, don't hide the window
+                        self.renderer.ui_renderer.set_chat_input_active(False)
+                        return None
+                    # No panel hiding on Escape - modals are handled upstream in UIRenderer
+                    return None
 
                 # If chat is focused, don't process other shortcuts (let UI handle typing)
                 if chat_focused:
@@ -212,15 +231,22 @@ class Client:
                     return "toggle_stats"
                 elif event.key == pygame.K_c:
                     return "toggle_chat"
+                elif event.key == pygame.K_m:
+                    return "toggle_minimap"
                 elif event.key == pygame.K_t:
                     return "start_chat"
 
             # Handle world mouse interactions
             if event.type == pygame.MOUSEBUTTONDOWN and self.renderer:
-                # Get mouse position in world coordinates
+                # Get mouse position in display coordinates
                 mouse_pos = pygame.mouse.get_pos()
+                
+                # Convert display coordinates to game surface coordinates (account for zoom)
+                game_x, game_y = self.renderer.screen_to_game_coords(mouse_pos[0], mouse_pos[1])
+                
+                # Get world coordinates from game surface coordinates
                 camera = self.renderer.camera
-                world_x, world_y = camera.screen_to_world(mouse_pos[0], mouse_pos[1])
+                world_x, world_y = camera.screen_to_world(game_x, game_y)
                 tile_x = int(world_x // self.config.game.tile_size)
                 tile_y = int(world_y // self.config.game.tile_size)
 
@@ -229,9 +255,8 @@ class Client:
                     ui_rects = [
                         self.renderer.ui_renderer.side_panel.rect,
                         self.renderer.ui_renderer.chat_window.rect,
-                        self.renderer.ui_renderer.minimap,
                     ]
-                    # Convert minimap center/radius to rect for hit testing
+                    # Convert minimap center/radius to rect for hit testing (M7 fix)
                     if hasattr(self.renderer.ui_renderer.minimap, 'x'):
                         mm = self.renderer.ui_renderer.minimap
                         mm_rect = pygame.Rect(
@@ -402,23 +427,37 @@ class Client:
             if self.renderer:
                 self.renderer.ui_renderer.toggle_panel("chat")
         
-        elif action == "close_panels":
+        elif action == "toggle_minimap":
             if self.renderer:
-                self.renderer.ui_renderer.hide_all_panels()
+                self.renderer.ui_renderer.toggle_panel("minimap")
         
         elif action == "start_chat":
             if self.renderer:
                 self.renderer.ui_renderer.set_chat_input_active(True)
         
         elif action == "chat_send":
-            # Chat message was sent from UI
+            # Chat message was sent from UI (Fix C: read pending_message, not input_text)
             if self.renderer and self.renderer.ui_renderer.is_chat_input_active():
                 # Get the message from chat window and send it
                 chat_window = self.renderer.ui_renderer.chat_window
-                if chat_window.input_text.strip():
-                    asyncio.create_task(self.message_sender.chat_send(chat_window.input_text))
-                    chat_window.input_text = ""
-                    chat_window.input_cursor_pos = 0
+                if chat_window.pending_message and chat_window.pending_message.strip():
+                    message = chat_window.pending_message
+                    
+                    # Check if this is a slash command
+                    if message.startswith("/"):
+                        registry = get_command_registry()
+                        if registry.is_command(message):
+                            # Known command - handle it locally
+                            registry.try_handle(message)
+                        else:
+                            # Unknown command - show error in chat, don't send to server
+                            chat_window.add_message(chat_window.active_channel, "System", f"Unknown command: {message}")
+                        chat_window.pending_message = None
+                        return
+                    
+                    # Not a command - send as regular chat
+                    asyncio.create_task(self.message_sender.chat_send(message))
+                    chat_window.pending_message = None  # Clear after sending
 
         elif action == "logout":
             # Logout requested from UI
@@ -477,6 +516,107 @@ class Client:
         ui_renderer.set_inventory_sort_callback(on_inventory_sort)
 
         self._ui_callbacks_setup = True
+    
+    def _init_customisation_panel(self) -> None:
+        """Initialize the character customisation panel and register commands."""
+        from client.src.rendering.customisation_panel import CustomisationPanel
+        from client.src.chat import get_command_registry
+        
+        # Get paperdoll renderer from entity_renderer (it's already instantiated there)
+        paperdoll_renderer = self.renderer.entity_renderer.paperdoll_renderer
+        
+        # Create the customisation panel
+        customisation_panel = CustomisationPanel(
+            screen_width=self.screen.get_width(),
+            screen_height=self.screen.get_height(),
+            paperdoll_renderer=paperdoll_renderer,
+            on_apply=self._on_customisation_apply,
+            on_cancel=self._on_customisation_cancel,
+        )
+        
+        # Attach to UI renderer
+        self.renderer.ui_renderer.customisation_panel = customisation_panel
+        
+        # Register slash commands
+        registry = get_command_registry()
+        
+        # /customize - Open character customisation
+        def handle_customize(command_text: str) -> None:
+            asyncio.create_task(self._open_customisation_panel())
+            return None
+        
+        registry.register(
+            "customize",
+            handle_customize,
+            "Open character customisation panel"
+        )
+        
+        # /help - Show help modal
+        def handle_help(command_text: str) -> None:
+            if self.renderer and self.renderer.ui_renderer:
+                self.renderer.ui_renderer.show_help_modal()
+            return None
+        
+        registry.register(
+            "help",
+            handle_help,
+            "Show help modal with controls and commands"
+        )
+        
+        # /logout - Log out of the game
+        def handle_logout(command_text: str) -> None:
+            asyncio.create_task(self._handle_logout())
+            return None
+        
+        registry.register(
+            "logout",
+            handle_logout,
+            "Log out and return to login screen"
+        )
+        
+        logger.info("Customisation panel initialized and commands registered")
+    
+    async def _open_customisation_panel(self) -> None:
+        """Open the customisation panel by fetching options from server."""
+        if not self.renderer or not self.renderer.ui_renderer.customisation_panel:
+            logger.error("Customisation panel not initialized")
+            return
+        
+        panel = self.renderer.ui_renderer.customisation_panel
+        
+        # Fetch appearance options from server
+        try:
+            url = f"{self.config.server.base_url}/api/appearance/options"
+            headers = {"Authorization": f"Bearer {self.jwt_token}"}
+            
+            async with self.http_session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    panel.set_categories(data.get("categories", []))
+                else:
+                    logger.error(f"Failed to fetch appearance options: HTTP {resp.status}")
+                    # Still open panel with empty categories - will show loading state
+                    panel.set_categories([])
+        except Exception as e:
+            logger.error(f"Error fetching appearance options: {e}")
+            panel.set_categories([])
+        
+        # Set current appearance
+        appearance = self.game_state.appearance or {}
+        panel.set_current_appearance(appearance)
+        
+        # Show the panel
+        panel.show()
+    
+    def _on_customisation_apply(self, changes: dict) -> None:
+        """Handle customisation apply - send changes to server."""
+        if changes:
+            asyncio.create_task(self.message_sender.update_appearance(changes))
+            logger.info(f"Applying appearance changes: {list(changes.keys())}")
+    
+    def _on_customisation_cancel(self) -> None:
+        """Handle customisation cancel - discard changes."""
+        logger.debug("Customisation cancelled - changes discarded")
     
     async def _refresh_server_status(self):
         """Fetch server status for all servers."""
@@ -554,9 +694,15 @@ class Client:
                 self.game_state.is_authenticated = True
                 
                 # Initialize game screen
-                self.renderer = Renderer()
+                self.renderer = Renderer(self.screen)
                 self.game_screen = GameScreen(self.screen, self.renderer)
+
+                # Set username in chat window for prefix display (Fix B)
+                self.renderer.ui_renderer.chat_window.username = username
                 
+                # Initialize customisation panel
+                self._init_customisation_panel()
+
                 # Connect UI callbacks for interactions
                 self._connect_ui_callbacks()
                 
@@ -573,6 +719,11 @@ class Client:
                 
                 self.state = GameState.PLAYING
                 logger.info("Login successful, entering game")
+                
+                # Auto-open customisation panel for first-time players
+                if not self.game_state.appearance:
+                    asyncio.create_task(self._open_customisation_panel())
+                    logger.info("Auto-opening customisation panel for first-time player")
             else:
                 self.login_screen.set_status("WebSocket connection failed", Colors.TEXT_RED)
                 
@@ -616,16 +767,36 @@ class Client:
             # Clean up expired effects
             self.game_state.cleanup_hit_splats()
             
+            # Update movement interpolation
+            if self.game_state.is_moving:
+                self.game_state.move_progress += delta_time / self.config.game.move_duration
+                if self.game_state.move_progress >= 1.0:
+                    self.game_state.move_progress = 1.0
+                    self.game_state.is_moving = False
+                    # Snap position to target when animation completes
+                    self.game_state.position["x"] = self.game_state.move_target_x
+                    self.game_state.position["y"] = self.game_state.move_target_y
+            
             # Update camera
             if self.renderer:
                 self.renderer.update(delta_time)
+            
+            # Update customisation panel animation
+            if (self.renderer and 
+                self.renderer.ui_renderer.customisation_panel and 
+                self.renderer.ui_renderer.customisation_panel.is_visible()):
+                self.renderer.ui_renderer.customisation_panel.update(delta_time)
     
     def _process_movement(self):
         """Process held keys and send movement commands."""
+        # Skip movement if chat input is focused (Fix E)
+        if self.renderer and self.renderer.ui_renderer.is_chat_input_active():
+            return
+
         current_time = time.time()
         if current_time - self.last_move_time < self.move_cooldown:
             return
-        
+
         # Determine direction from held keys (priority: UP > DOWN > LEFT > RIGHT)
         direction = None
         if pygame.K_w in self.keys_pressed or pygame.K_UP in self.keys_pressed:
@@ -638,6 +809,8 @@ class Client:
             direction = Direction.RIGHT
         
         if direction:
+            # Update facing direction immediately for responsive rendering
+            self.game_state.facing_direction = direction.value
             # Schedule async move command
             asyncio.create_task(self.message_sender.move(direction))
             self.last_move_time = current_time
@@ -653,9 +826,8 @@ class Client:
                 self.game_screen.draw(self.game_state)
         
         # Debug: Show current state
-        debug_font = pygame.font.SysFont("monospace", 12)
         state_text = f"State: {self.state.value}"
-        text_surface = debug_font.render(state_text, True, (255, 255, 0))
+        text_surface = self.debug_font.render(state_text, True, (255, 255, 0))
         self.screen.blit(text_surface, (10, 10))
 
     async def _handle_logout(self):
@@ -669,7 +841,22 @@ class Client:
         from .game.client_state import reset_game_state
         reset_game_state()
         self.game_state = get_game_state()
-
+        
+        # Reset all singletons for clean logout state (M8 fix)
+        from .tileset_manager import get_tileset_manager
+        from .rendering.sprite_manager import get_sprite_manager
+        from .core import get_event_bus
+        from .network.connection import get_connection_manager
+        
+        # Close and reset tileset manager session
+        tileset_mgr = get_tileset_manager()
+        if tileset_mgr:
+            await tileset_mgr.close()
+        
+        # Clear other singletons
+        get_sprite_manager().clear_memory_cache()
+        # Note: EventBus handlers are not cleared - they persist across sessions
+        
         # Clean up renderer resources (but don't quit pygame - we need display for login)
         if self.renderer:
             # Just clear references, don't call cleanup() which quits pygame

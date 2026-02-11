@@ -5,6 +5,7 @@ Handles monster and NPC instances spawned in the world. Valkey-only (no DB persi
 Entity definitions are reference data; instances are runtime-only.
 """
 
+import time as time_mod
 import traceback
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Union
@@ -255,12 +256,11 @@ class EntityManager(BaseManager):
             map_key = MAP_ENTITIES_KEY.format(map_id=map_id)
             await self._valkey.srem(map_key, [str(instance_id)])
 
-        # Queue for respawn
-        # Convert seconds to ticks for consistent units
-        respawn_delay_ticks = int(respawn_delay_seconds * settings.GAME_TICK_RATE)
-        respawn_at = death_tick + respawn_delay_ticks
+        # Queue for respawn using wall-clock timestamp
+        # Aligns with get_time_based_respawn_queue which queries using time.time()
+        respawn_at = time_mod.time() + respawn_delay_seconds
         await self._valkey.zadd(
-            ENTITY_RESPAWN_QUEUE_KEY, {str(instance_id): float(respawn_at)}
+            ENTITY_RESPAWN_QUEUE_KEY, {str(instance_id): respawn_at}
         )
 
         # Store respawn data

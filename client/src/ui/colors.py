@@ -63,3 +63,9 @@ class Colors:
     HIT_SPLAT_DAMAGE = (255, 0, 0)
     HIT_SPLAT_MISS = (0, 128, 255)
     HIT_SPLAT_HEAL = (0, 255, 0)
+    
+    # Button colors (used by modals, customisation panel, etc.)
+    BUTTON_BG = (49, 42, 35)       # Same as PANEL_BG
+    BUTTON_HOVER = (69, 59, 49)    # Same as PANEL_INNER_BORDER
+    WHITE = (255, 255, 255)        # Alias for TEXT_WHITE
+    BLACK = (0, 0, 0)              # Pure black

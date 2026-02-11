@@ -42,6 +42,9 @@ class MapRenderer:
         
         # Current map ID for sprite lookups
         self.current_map_id: Optional[str] = None
+        
+        # Cached fonts for performance
+        self._missing_chunk_font = pygame.font.SysFont("monospace", 20)
     
     def render(self, chunks: Dict[Tuple[int, int], Any], map_id: Optional[str] = None) -> None:
         """Render all visible map chunks."""
@@ -133,7 +136,6 @@ class MapRenderer:
         pygame.draw.rect(self.screen, (50, 50, 50), rect, 2)
         
         # Draw question mark
-        font = pygame.font.SysFont("monospace", 20)
-        text = font.render("?", True, (100, 100, 100))
+        text = self._missing_chunk_font.render("?", True, (100, 100, 100))
         text_rect = text.get_rect(center=rect.center)
         self.screen.blit(text, text_rect)

@@ -13,14 +13,7 @@ import pygame
 import asyncio
 from typing import Dict, Optional, Tuple, List, Any
 from dataclasses import dataclass
-import sys
 import logging
-from pathlib import Path
-
-# Setup paths
-project_root = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "common" / "src"))
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -60,8 +53,8 @@ from .sprite_manager import SpriteManager, FRAME_SIZE
 # CONSTANTS
 # =============================================================================
 
-# Default render size (48px - larger than tile size for better visibility)
-DEFAULT_RENDER_SIZE = 48
+# Default render size (64px - native LPC sprite size for pixel-perfect rendering)
+DEFAULT_RENDER_SIZE = 64
 
 # Equipment slot to sprite layer mapping
 SLOT_TO_LAYER: Dict[str, SpriteLayer] = {
@@ -186,6 +179,7 @@ class PaperdollRenderer:
         
         # Check if the composited frame is actually visible (not completely transparent)
         # Using pygame masks instead of numpy surfarray to avoid numpy dependency
+        # Note: This runs only on cache misses; cached frames skip this check (L7)
         try:
             # Create a mask from the alpha channel - this tells us which pixels are visible
             mask = pygame.mask.from_surface(composited, threshold=1)
@@ -458,11 +452,16 @@ class PaperdollRenderer:
             if facial_hair_path:
                 layers.append(RenderLayer(SpriteLayer.FACIAL_HAIR, facial_hair_path))
 
-        # Hair layer (skip if bald)
+        # Hair layer(s) - multi-layer styles have bg (behind head) and fg (in front)
         if hair_style != HairStyle.BALD:
-            hair_path = SpritePaths.hair(hair_style, hair_color, age_group="adult", animation=anim_name)
-            if hair_path:
-                layers.append(RenderLayer(SpriteLayer.HAIR, hair_path))
+            hair_paths = SpritePaths.hair_layers(hair_style, hair_color, age_group="adult", animation=anim_name)
+            if len(hair_paths) == 2:
+                # Multi-layer style: bg behind head, fg in front
+                layers.append(RenderLayer(SpriteLayer.HAIR_BEHIND, hair_paths[0]))
+                layers.append(RenderLayer(SpriteLayer.HAIR, hair_paths[1]))
+            elif len(hair_paths) == 1:
+                # Direct style: single layer
+                layers.append(RenderLayer(SpriteLayer.HAIR, hair_paths[0]))
 
         # Clothing layers (under armor)
         if pants_style != PantsStyle.NONE:

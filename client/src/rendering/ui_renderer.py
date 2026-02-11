@@ -10,6 +10,8 @@ from typing import Dict, Any, Optional, Tuple, Callable
 
 from ..ui.colors import Colors
 from .ui_panels import TabbedSidePanel, ChatWindow, ContextMenu, ContextMenuItem, Tooltip
+from .customisation_panel import CustomisationPanel
+from .help_modal import HelpModal, HelpButton
 
 
 class UIRenderer:
@@ -63,6 +65,15 @@ class UIRenderer:
         self.on_logout: Optional[Callable[[], None]] = None
         self.on_inventory_sort: Optional[Callable[[str], None]] = None
         
+        # Customisation panel (initially None, initialized by client)
+        self.customisation_panel: Optional[CustomisationPanel] = None
+        
+        # Help modal and button
+        screen_width = screen.get_width()
+        screen_height = screen.get_height()
+        self.help_modal = HelpModal(screen_width, screen_height)
+        self.help_button = HelpButton(screen_width - 42, 10)  # Top-right corner
+        
         # Fonts
         try:
             self.font = pygame.font.Font("client/assets/fonts/RetroRPG.ttf", 24)
@@ -72,6 +83,10 @@ class UIRenderer:
             self.font = pygame.font.Font(None, 24)
             self.small_font = pygame.font.Font(None, 18)
             self.tiny_font = pygame.font.Font(None, 14)
+        
+        # Cached fonts for shutdown warning (H5 fix)
+        self._shutdown_title_font = pygame.font.SysFont("sans-serif", 14, bold=True)
+        self._shutdown_text_font = pygame.font.SysFont("sans-serif", 12)
     
     def render(self, game_state: Any) -> None:
         """Render all UI elements."""
@@ -105,17 +120,59 @@ class UIRenderer:
         # Render chat
         if self.show_chat:
             self.chat_window.draw(self.screen)
-        
+        else:
+            # UI hint: show chat availability when hidden
+            self._render_chat_hint()
+
         # Render tooltip (on top of panels)
         self.tooltip.draw(self.screen)
         
         # Render context menu (always on top)
         self.context_menu.draw(self.screen)
         
+        # Render customisation panel (highest priority - full screen modal)
+        if self.customisation_panel and self.customisation_panel.is_visible():
+            self.customisation_panel.draw(self.screen)
+        
+        # Render help modal (second highest priority)
+        if self.help_modal.is_visible():
+            self.help_modal.draw(self.screen)
+        else:
+            # Draw help button when modal is not visible
+            self.help_button.draw(self.screen)
+        
         # Render server shutdown warning if active
         if game_state.server_shutdown_warning:
             self._render_shutdown_warning(game_state.server_shutdown_warning)
     
+    def _render_chat_hint(self) -> None:
+        """Render a subtle hint that chat is available (shown when chat is hidden)."""
+        # Position at bottom left where chat window would be
+        hint_x = 10
+        hint_y = self.screen.get_height() - 24
+
+        # Small pill-shaped background
+        hint_text = "Press C for chat"
+        text_surface = self.chat_window.tiny_font.render(hint_text, True, (150, 150, 150))
+        padding = 6
+        bg_rect = pygame.Rect(
+            hint_x,
+            hint_y,
+            text_surface.get_width() + padding * 2,
+            20
+        )
+
+        # Semi-transparent background
+        bg_surface = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+        bg_surface.fill((30, 30, 30, 180))
+        self.screen.blit(bg_surface, (bg_rect.x, bg_rect.y))
+
+        # Border
+        pygame.draw.rect(self.screen, (79, 67, 55), bg_rect, 1)
+
+        # Text
+        self.screen.blit(text_surface, (hint_x + padding, hint_y + 3))
+
     def _render_shutdown_warning(self, warning: Dict[str, Any]) -> None:
         """Render server shutdown warning."""
         width = 300
@@ -128,23 +185,42 @@ class UIRenderer:
         pygame.draw.rect(self.screen, (150, 50, 50), rect, border_radius=5)
         pygame.draw.rect(self.screen, (255, 100, 100), rect, 3, border_radius=5)
         
-        # Text
-        title_font = pygame.font.SysFont("sans-serif", 14, bold=True)
-        text_font = pygame.font.SysFont("sans-serif", 12)
-        
-        title = title_font.render("SERVER SHUTDOWN WARNING", True, (255, 255, 255))
+        # Text (use cached fonts)
+        title = self._shutdown_title_font.render("SERVER SHUTDOWN WARNING", True, (255, 255, 255))
         self.screen.blit(title, (x + 10, y + 10))
         
         reason = warning.get("reason", "Maintenance")
         countdown = warning.get("countdown", 0)
         
         info_text = f"Reason: {reason} | Time: {countdown}s"
-        text = text_font.render(info_text, True, (255, 200, 200))
+        text = self._shutdown_text_font.render(info_text, True, (255, 200, 200))
         self.screen.blit(text, (x + 10, y + 45))
     
     def handle_event(self, event: pygame.event.Event, game_state: Any = None) -> Optional[str]:
         """Handle UI events."""
-        # Context menu has highest priority when visible
+        # Customisation panel has highest priority when visible (full-screen modal)
+        if self.customisation_panel and self.customisation_panel.is_visible():
+            action = self.customisation_panel.handle_event(event)
+            if action:
+                return action
+            # If customisation panel is visible and we didn't handle the event, don't pass to other panels
+            return None
+        
+        # Help modal has next priority when visible
+        if self.help_modal.is_visible():
+            action = self.help_modal.handle_event(event)
+            if action:
+                return action
+            # If help modal is visible and we didn't handle the event, don't pass to other panels
+            return None
+        
+        # Check help button click before other panels
+        action = self.help_button.handle_event(event)
+        if action == "help_opened":
+            self.help_modal.show()
+            return action
+        
+        # Context menu has next priority when visible
         if self.context_menu.visible:
             action = self.context_menu.handle_event(event)
             if action:
@@ -348,11 +424,6 @@ class UIRenderer:
         elif panel_name == "minimap":
             self.show_minimap = not self.show_minimap
     
-    def hide_all_panels(self) -> None:
-        """Hide all panels."""
-        self.show_chat = False
-        self.show_minimap = False
-    
     def set_chat_input_active(self, active: bool) -> None:
         """Set whether chat input is active."""
         self.chat_window.input_focused = active
@@ -370,6 +441,34 @@ class UIRenderer:
         """Set the inventory sort callback."""
         self.on_inventory_sort = callback
         self.side_panel.on_inventory_sort = callback
+    
+    def show_customisation_panel(self) -> None:
+        """Show the customisation panel."""
+        if self.customisation_panel:
+            self.customisation_panel.show()
+    
+    def hide_customisation_panel(self) -> None:
+        """Hide the customisation panel."""
+        if self.customisation_panel:
+            self.customisation_panel.hide()
+    
+    def is_customisation_visible(self) -> bool:
+        """Check if customisation panel is visible."""
+        if self.customisation_panel:
+            return self.customisation_panel.is_visible()
+        return False
+    
+    def show_help_modal(self) -> None:
+        """Show the help modal."""
+        self.help_modal.show()
+    
+    def hide_help_modal(self) -> None:
+        """Hide the help modal."""
+        self.help_modal.hide()
+    
+    def is_help_visible(self) -> bool:
+        """Check if help modal is visible."""
+        return self.help_modal.is_visible()
 
 
 class Minimap:
@@ -416,42 +515,30 @@ class Minimap:
             if dist < self.radius - 8:
                 pygame.draw.circle(screen, Colors.MINIMAP_OTHER_PLAYER, (int(dot_x), int(dot_y)), 2)
         
-        # NPCs (yellow)
-        for entity_id, entity in getattr(game_state, 'entities', {}).items():
-            if entity.get('entity_type') == 'npc':
-                ex = entity.get("x", 0)
-                ey = entity.get("y", 0)
-                
-                my_x = game_state.position.get("x", 0)
-                my_y = game_state.position.get("y", 0)
-                
-                dx = (ex - my_x) * scale
-                dy = (ey - my_y) * scale
-                
-                dot_x = center[0] + dx
-                dot_y = center[1] + dy
-                
-                dist = ((dot_x - center[0]) ** 2 + (dot_y - center[1]) ** 2) ** 0.5
-                if dist < self.radius - 8:
-                    pygame.draw.circle(screen, Colors.MINIMAP_NPC, (int(dot_x), int(dot_y)), 2)
+        # Extract player position once (H9 fix)
+        my_x = game_state.position.get("x", 0)
+        my_y = game_state.position.get("y", 0)
         
-        # Monsters (red)
+        # NPCs (yellow) and Monsters (red) - single pass iteration (H8 fix)
         for entity_id, entity in getattr(game_state, 'entities', {}).items():
-            if entity.get('entity_type') == 'monster':
-                ex = entity.get("x", 0)
-                ey = entity.get("y", 0)
+            entity_type = entity.get('entity_type')
+            if entity_type not in ('npc', 'monster'):
+                continue
                 
-                my_x = game_state.position.get("x", 0)
-                my_y = game_state.position.get("y", 0)
-                
-                dx = (ex - my_x) * scale
-                dy = (ey - my_y) * scale
-                
-                dot_x = center[0] + dx
-                dot_y = center[1] + dy
-                
-                dist = ((dot_x - center[0]) ** 2 + (dot_y - center[1]) ** 2) ** 0.5
-                if dist < self.radius - 8:
+            ex = entity.get("x", 0)
+            ey = entity.get("y", 0)
+            
+            dx = (ex - my_x) * scale
+            dy = (ey - my_y) * scale
+            
+            dot_x = center[0] + dx
+            dot_y = center[1] + dy
+            
+            dist = ((dot_x - center[0]) ** 2 + (dot_y - center[1]) ** 2) ** 0.5
+            if dist < self.radius - 8:
+                if entity_type == 'npc':
+                    pygame.draw.circle(screen, Colors.MINIMAP_NPC, (int(dot_x), int(dot_y)), 2)
+                else:  # monster
                     pygame.draw.circle(screen, Colors.MINIMAP_MONSTER, (int(dot_x), int(dot_y)), 2)
         
         # Player dot (white, larger, in center)

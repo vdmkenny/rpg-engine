@@ -6,6 +6,7 @@ Handles viewport positioning, smooth following, and coordinate transformations.
 
 from typing import Tuple, Optional
 import math
+import random
 
 from ..config import get_config
 
@@ -54,8 +55,8 @@ class Camera:
         
         # Apply screen shake if active
         if self.shake_amount > 0:
-            shake_x = (math.random() - 0.5) * 2 * self.shake_amount
-            shake_y = (math.random() - 0.5) * 2 * self.shake_amount
+            shake_x = (random.random() - 0.5) * 2 * self.shake_amount
+            shake_y = (random.random() - 0.5) * 2 * self.shake_amount
             self.x += shake_x
             self.y += shake_y
             self.shake_amount *= (1.0 - self.shake_decay * delta_time)

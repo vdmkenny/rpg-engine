@@ -16,7 +16,7 @@ Notes for the next agent:
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from glide import GlideClient, GlideClientConfiguration, NodeAddress
+from glide import GlideClient, GlideClientConfiguration, NodeAddress, BackoffStrategy
 
 from server.src.core.config import settings
 
@@ -94,7 +94,15 @@ parsed_url = urllib.parse.urlparse(settings.VALKEY_URL)
 host = parsed_url.hostname or "localhost"
 port = parsed_url.port or 6379
 
-valkey_config = GlideClientConfiguration([NodeAddress(host, port)])
+valkey_config = GlideClientConfiguration(
+    [NodeAddress(host, port)],
+    request_timeout=500,
+    reconnect_strategy=BackoffStrategy(
+        num_of_retries=5,
+        factor=100,
+        exponent_base=2,
+    ),
+)
 
 valkey_client: GlideClient | None = None
 

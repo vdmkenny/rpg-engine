@@ -26,9 +26,6 @@ class UIPanel:
         self.height = height
         self.title = title
         self.visible = visible
-        self.is_dragging = False
-        self.drag_offset_x = 0
-        self.drag_offset_y = 0
         
         # Pre-rendered background
         self._bg_surface = None
@@ -91,105 +88,6 @@ class UIPanel:
     
     def handle_event(self, event: pygame.event.Event) -> Optional[str]:
         """Handle input events. Override in subclasses."""
-        return None
-
-
-# =============================================================================
-# INVENTORY PANEL
-# =============================================================================
-
-class InventoryPanel(UIPanel):
-    """Inventory grid with 4x7 slots."""
-    
-    SLOT_SIZE = 36
-    PADDING = 2
-    COLUMNS = 4
-    ROWS = 7
-    
-    def __init__(self, x: int, y: int):
-        super().__init__(
-            x, y,
-            self.COLUMNS * (self.SLOT_SIZE + self.PADDING) + 6 + 6,
-            self.ROWS * (self.SLOT_SIZE + self.PADDING) + 2 + 32,
-            "Inventory"
-        )
-        self.items: Dict[int, Dict[str, Any]] = {}
-        self.hovered_slot = -1
-        self.selected_slot = -1
-        self.on_slot_click: Optional[Callable[[int, int], None]] = None
-    
-    def _get_slot_rect(self, slot: int) -> pygame.Rect:
-        """Calculate rect for a slot."""
-        col = slot % self.COLUMNS
-        row = slot // self.COLUMNS
-        x = self.x + 6 + col * (self.SLOT_SIZE + self.PADDING)
-        y = self.y + 26 + row * (self.SLOT_SIZE + self.PADDING)
-        return pygame.Rect(x, y, self.SLOT_SIZE, self.SLOT_SIZE)
-    
-    def draw(self, screen: pygame.Surface) -> None:
-        """Draw inventory."""
-        super().draw(screen)
-        
-        for slot in range(self.COLUMNS * self.ROWS):
-            slot_rect = self._get_slot_rect(slot)
-            
-            # Background
-            if slot == self.selected_slot:
-                bg_color = Colors.SLOT_SELECTED
-            elif slot == self.hovered_slot:
-                bg_color = Colors.SLOT_HOVER
-            else:
-                bg_color = Colors.SLOT_BG
-            
-            pygame.draw.rect(screen, bg_color, slot_rect)
-            pygame.draw.rect(screen, Colors.SLOT_BORDER, slot_rect, 1)
-            
-            # Item if present
-            if slot in self.items:
-                item = self.items[slot]
-                # Draw rarity color
-                item_rect = slot_rect.inflate(-6, -6)
-                rarity = item.get("rarity", "common")
-                rarity_color = {
-                    "common": Colors.RARITY_COMMON,
-                    "uncommon": Colors.RARITY_UNCOMMON,
-                    "rare": Colors.RARITY_RARE,
-                    "epic": Colors.RARITY_EPIC,
-                    "legendary": Colors.RARITY_LEGENDARY,
-                }.get(rarity, Colors.RARITY_COMMON)
-                pygame.draw.rect(screen, rarity_color, item_rect)
-                pygame.draw.rect(screen, Colors.PANEL_BORDER, item_rect, 1)
-                
-                # Item name (3 chars)
-                name = item.get("name", "?")[:3]
-                text = self.tiny_font.render(name, True, Colors.TEXT_ORANGE)
-                screen.blit(text, (slot_rect.x + 2, slot_rect.y + 2))
-                
-                # Quantity
-                qty = item.get("quantity", 1)
-                if qty > 1:
-                    qty_text = "XK" if qty >= 100000 else str(qty)
-                    qty_surface = self.tiny_font.render(qty_text, True, Colors.TEXT_YELLOW)
-                    screen.blit(qty_surface, (slot_rect.x + 2, slot_rect.y + self.SLOT_SIZE - 12))
-    
-    def handle_event(self, event: pygame.event.Event) -> Optional[str]:
-        """Handle mouse events."""
-        if event.type == pygame.MOUSEMOTION:
-            # Update hover
-            for slot in range(self.COLUMNS * self.ROWS):
-                if self._get_slot_rect(slot).collidepoint(event.pos):
-                    self.hovered_slot = slot
-                    return None
-            self.hovered_slot = -1
-        
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            for slot in range(self.COLUMNS * self.ROWS):
-                if self._get_slot_rect(slot).collidepoint(event.pos):
-                    self.selected_slot = slot
-                    if self.on_slot_click:
-                        self.on_slot_click(slot, event.button)
-                    return None
-        
         return None
 
 
@@ -602,65 +500,198 @@ class ChatWindow(UIPanel):
         self.active_channel = "local"
         
         self.input_text = ""
+        self.pending_message = None  # Message pending to be sent (Fix A)
         self.input_focused = False
         self.input_cursor_pos = 0
-        self.cursor_blink_time = 0.0
+        self._last_blink_update = time.time()
+        self.username = ""  # For display in input box (Fix B)
+
+        # Scroll support (Fix 4, 5)
+        self.scroll_offset = 0  # 0 = at bottom (viewing newest)
+        self._line_height = 16
+        self._msg_area_top = self.y + self.TAB_HEIGHT + 4
+        self._msg_area_height = self.height - self.TAB_HEIGHT - 24 - 4  # minus tabs, input, padding
+        self._max_visible_lines = self._msg_area_height // self._line_height
+
+        # Cached background surfaces - tabs more opaque than message body (Fix 2)
+        # Tab background (nearly opaque, readable)
+        self._tab_bg_surface = pygame.Surface((self.width, self.TAB_HEIGHT), pygame.SRCALPHA)
+        self._tab_bg_surface.fill((*Colors.PANEL_BG, 200))
+        # Message body background (more translucent)
+        self._msg_bg_surface = pygame.Surface((self.width, self._msg_area_height + 4), pygame.SRCALPHA)
+        self._msg_bg_surface.fill((*Colors.PANEL_BG, 100))
+        # Input area background (opaque like tabs, covers full width)
+        self._input_bg_surface = pygame.Surface((self.width, 24), pygame.SRCALPHA)
+        self._input_bg_surface.fill((*Colors.PANEL_BG, 200))
     
+    def _wrap_text(self, text: str, max_width: int) -> list[str]:
+        """Wrap text to fit within max_width pixels."""
+        words = text.split()
+        lines = []
+        current_line = []
+        current_width = 0
+
+        for word in words:
+            word_surface = self.tiny_font.render(word, True, (255, 255, 255))
+            word_width = word_surface.get_width()
+            space_width = self.tiny_font.size(" ")[0]
+
+            if current_width + word_width + (len(current_line) * space_width) <= max_width:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(" ".join(current_line))
+                # If single word is too long, break it
+                if word_width > max_width:
+                    partial = ""
+                    for char in word:
+                        test = partial + char
+                        if self.tiny_font.size(test)[0] <= max_width:
+                            partial = test
+                        else:
+                            if partial:
+                                lines.append(partial)
+                            partial = char
+                    if partial:
+                        current_line = [partial]
+                        current_width = self.tiny_font.size(partial)[0]
+                else:
+                    current_line = [word]
+                    current_width = word_width
+
+        if current_line:
+            lines.append(" ".join(current_line))
+
+        return lines
+
     def draw(self, screen: pygame.Surface) -> None:
-        """Draw chat window."""
+        """Draw chat window with word wrap, scroll, and scrollbar."""
         if not self.visible:
             return
-        
-        # Translucent background
-        surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-        surface.fill((*Colors.PANEL_BG, 180))
-        screen.blit(surface, (self.x, self.y))
-        
-        # Border
+
+        # Tab background (more opaque)
+        screen.blit(self._tab_bg_surface, (self.x, self.y))
+
+        # Message body background (more translucent)
+        msg_bg_y = self.y + self.TAB_HEIGHT
+        screen.blit(self._msg_bg_surface, (self.x, msg_bg_y))
+
+        # Border around entire window
         pygame.draw.rect(screen, Colors.PANEL_BORDER, (self.x, self.y, self.width, self.height), 2)
-        
+
         # Tabs
         tab_width = self.width // 3
         for tab_idx, (ch_name, ch_data) in enumerate(self.channels.items()):
             tab_rect = pygame.Rect(self.x + tab_idx * tab_width, self.y, tab_width, self.TAB_HEIGHT)
-            
+
             if ch_name == self.active_channel:
                 pygame.draw.rect(screen, Colors.STONE_MEDIUM, tab_rect)
             else:
                 pygame.draw.rect(screen, Colors.STONE_DARK, tab_rect)
-            
+
             pygame.draw.rect(screen, Colors.PANEL_BORDER, tab_rect, 1)
-            
+
             tab_text = self.tiny_font.render(ch_name.title(), True, ch_data["color"])
             screen.blit(tab_text, (
                 tab_rect.centerx - tab_text.get_width() // 2,
                 tab_rect.centery - tab_text.get_height() // 2
             ))
-        
-        # Messages area
+
+        # Messages area with word wrap and scroll
+        max_text_width = self.width - 16  # 8px padding each side
+        scrollbar_visible = False
+        all_lines = []
+
+        for msg_data in self.channels[self.active_channel]["messages"]:
+            username = msg_data.get('username', '?')
+            text = msg_data.get('text', '')
+            full_text = f"{username}: {text}"
+            wrapped = self._wrap_text(full_text, max_text_width)
+            color = self.channels[self.active_channel]["color"]
+            for line in wrapped:
+                all_lines.append((line, color))
+
+        total_lines = len(all_lines)
+        if total_lines > self._max_visible_lines:
+            scrollbar_visible = True
+            max_text_width -= 12  # Make room for scrollbar
+            # Re-wrap with reduced width
+            all_lines = []
+            for msg_data in self.channels[self.active_channel]["messages"]:
+                username = msg_data.get('username', '?')
+                text = msg_data.get('text', '')
+                full_text = f"{username}: {text}"
+                wrapped = self._wrap_text(full_text, max_text_width)
+                color = self.channels[self.active_channel]["color"]
+                for line in wrapped:
+                    all_lines.append((line, color))
+            total_lines = len(all_lines)
+
+        # Calculate visible range based on scroll offset
+        # scroll_offset 0 = view from bottom (newest messages)
+        if total_lines <= self._max_visible_lines:
+            # All messages fit, show them all
+            visible_lines = all_lines
+            self.scroll_offset = 0
+        else:
+            # Need to scroll
+            max_scroll = total_lines - self._max_visible_lines
+            self.scroll_offset = min(self.scroll_offset, max_scroll)
+            end_idx = total_lines - self.scroll_offset
+            start_idx = max(0, end_idx - self._max_visible_lines)
+            visible_lines = all_lines[start_idx:end_idx]
+
+        # Render visible messages
         msg_y = self.y + self.TAB_HEIGHT + 4
-        for msg_data in self.channels[self.active_channel]["messages"][-5:]:
-            text = f"{msg_data.get('username', '?')}: {msg_data.get('text', '')}"
-            msg_surface = self.tiny_font.render(text[:60], True, self.channels[self.active_channel]["color"])
-            screen.blit(msg_surface, (self.x + 4, msg_y))
-            msg_y += 16
+        for line_text, color in visible_lines:
+            msg_surface = self.tiny_font.render(line_text, True, color)
+            screen.blit(msg_surface, (self.x + 6, msg_y))
+            msg_y += self._line_height
+
+        # Scrollbar (if content overflows)
+        if scrollbar_visible and total_lines > 0:
+            scrollbar_width = 6
+            track_x = self.x + self.width - 10
+            track_y = self.y + self.TAB_HEIGHT + 2
+            track_height = self._msg_area_height
+
+            # Track background (brighter for visibility)
+            pygame.draw.rect(screen, Colors.STONE_DARK, (track_x, track_y, scrollbar_width, track_height))
+
+            # Thumb - proportional size and position
+            thumb_height = max(12, int((self._max_visible_lines / total_lines) * track_height))
+            max_scroll = total_lines - self._max_visible_lines
+            # scroll_offset 0 = thumb at bottom
+            if max_scroll > 0:
+                scroll_ratio = self.scroll_offset / max_scroll
+                thumb_y = track_y + int((1.0 - scroll_ratio) * (track_height - thumb_height))
+            else:
+                thumb_y = track_y + track_height - thumb_height
+
+            pygame.draw.rect(screen, Colors.STONE_LIGHT, (track_x, thumb_y, scrollbar_width, thumb_height))
+
+        # Input area background (full width)
+        input_y = self.y + self.height - 24
+        screen.blit(self._input_bg_surface, (self.x, input_y))
         
         # Input field
-        input_y = self.y + self.height - 24
         pygame.draw.rect(screen, Colors.SLOT_BG, (self.x + 4, input_y, self.width - 8, 20))
         border_color = Colors.TEXT_WHITE if self.input_focused else Colors.SLOT_BORDER
         pygame.draw.rect(screen, border_color, (self.x + 4, input_y, self.width - 8, 20), 1)
-        
-        # Input text
+
+        # Input text with username prefix (Fix B)
+        prefix = f"{self.username}: " if self.username else ""
+        prefix_surface = self.tiny_font.render(prefix, True, self.channels[self.active_channel]["color"])
+        screen.blit(prefix_surface, (self.x + 6, input_y + 2))
+
         input_text_surface = self.tiny_font.render(self.input_text, True, Colors.TEXT_WHITE)
-        screen.blit(input_text_surface, (self.x + 6, input_y + 2))
-        
-        # Cursor
-        if self.input_focused and int(self.cursor_blink_time * 2) % 2 == 0:
-            cursor_x = self.x + 6 + input_text_surface.get_width()
+        screen.blit(input_text_surface, (self.x + 6 + prefix_surface.get_width(), input_y + 2))
+
+        # Cursor (time-based blink instead of frame-based for M5 fix)
+        elapsed = time.time() - self._last_blink_update
+        if self.input_focused and int(elapsed * 2) % 2 == 0:
+            cursor_x = self.x + 6 + prefix_surface.get_width() + input_text_surface.get_width()
             pygame.draw.line(screen, Colors.TEXT_WHITE, (cursor_x, input_y + 2), (cursor_x, input_y + 18))
-        
-        self.cursor_blink_time += 1/60  # Assuming 60 FPS
     
     def add_message(self, channel: str, username: str, text: str) -> None:
         """Add a message to a channel."""
@@ -692,18 +723,44 @@ class ChatWindow(UIPanel):
         elif event.type == pygame.KEYDOWN and self.input_focused:
             if event.key == pygame.K_RETURN:
                 if self.input_text.strip():
-                    # Send message
-                    self.add_message(self.active_channel, "You", self.input_text)
+                    # Send message - store in pending_message before clearing (Fix A)
+                    self.pending_message = self.input_text
+                    # Only add to chat log if it's NOT a command (commands handled separately)
+                    if not self.input_text.startswith("/"):
+                        self.add_message(self.active_channel, "You", self.input_text)
+                    self.scroll_offset = 0  # Scroll to bottom when sending
                     self.input_text = ""
                     self.input_cursor_pos = 0
                     return "chat_send"
-            elif event.key == pygame.K_ESCAPE:
-                self.input_focused = False
+            # ESC handling removed - parent (client.py) now handles defocusing (Fix 1)
             elif event.key == pygame.K_BACKSPACE:
                 self.input_text = self.input_text[:-1]
             elif event.unicode.isprintable():
                 self.input_text += event.unicode
-        
+
+        # Page Up / Page Down for scrolling (always active when chat visible, Fix 6)
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_PAGEUP:
+                # Scroll up one page
+                self.scroll_offset += self._max_visible_lines
+                return None
+            elif event.key == pygame.K_PAGEDOWN:
+                # Scroll down one page
+                self.scroll_offset = max(0, self.scroll_offset - self._max_visible_lines)
+                return None
+
+        # Mouse wheel scrolling (Fix 5)
+        elif event.type == pygame.MOUSEWHEEL:
+            # Check if mouse is within chat window
+            mouse_pos = pygame.mouse.get_pos()
+            chat_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+            if chat_rect.collidepoint(mouse_pos):
+                if event.y > 0:  # Scroll up (away from user)
+                    self.scroll_offset += 3
+                elif event.y < 0:  # Scroll down (toward user)
+                    self.scroll_offset = max(0, self.scroll_offset - 3)
+                return None
+
         return None
 
 
@@ -738,6 +795,9 @@ class ContextMenu:
         self.items: List[ContextMenuItem] = []
         self.hovered_index = -1
         self.on_select: Optional[Callable[[ContextMenuItem], None]] = None
+        
+        # Cached font for performance
+        self._font = pygame.font.SysFont("sans-serif", 12)
     
     def show(self, x: int, y: int, items: List[ContextMenuItem], on_select: Optional[Callable[[ContextMenuItem], None]] = None) -> None:
         """Show the context menu at the specified position."""
@@ -768,7 +828,6 @@ class ContextMenu:
         pygame.draw.rect(screen, Colors.PANEL_BORDER, menu_rect, 2)
         
         # Draw items
-        font = pygame.font.SysFont("sans-serif", 12)
         for i, item in enumerate(self.items):
             item_y = self.y + self.PADDING + i * self.ITEM_HEIGHT
             item_rect = pygame.Rect(self.x, item_y, self.WIDTH, self.ITEM_HEIGHT)
@@ -778,7 +837,7 @@ class ContextMenu:
                 pygame.draw.rect(screen, Colors.SLOT_HOVER, item_rect)
             
             # Draw text
-            text_surface = font.render(item.label, True, item.color)
+            text_surface = self._font.render(item.label, True, item.color)
             screen.blit(text_surface, (self.x + self.PADDING, item_y + 3))
     
     def handle_event(self, event: pygame.event.Event) -> Optional[str]:
@@ -845,6 +904,9 @@ class Tooltip:
         self.lines: List[Tuple[str, Tuple[int, int, int]]] = []
         self.width = 0
         self.height = 0
+        
+        # Cached font for performance
+        self._font = pygame.font.SysFont("sans-serif", 11)
     
     def show(self, x: int, y: int, lines: List[Tuple[str, Tuple[int, int, int]]]) -> None:
         """
@@ -858,12 +920,11 @@ class Tooltip:
         self.visible = True
         
         # Calculate dimensions
-        font = pygame.font.SysFont("sans-serif", 11)
         self.width = 0
         total_height = 0
         
         for text, _ in lines:
-            text_surface = font.render(text, True, Colors.TEXT_WHITE)
+            text_surface = self._font.render(text, True, Colors.TEXT_WHITE)
             self.width = max(self.width, text_surface.get_width())
             total_height += text_surface.get_height() + self.LINE_SPACING
         
@@ -893,11 +954,10 @@ class Tooltip:
         pygame.draw.rect(screen, Colors.PANEL_BORDER, tooltip_rect, 1)
         
         # Lines
-        font = pygame.font.SysFont("sans-serif", 11)
         line_y = self.y + self.PADDING
         
         for text, color in self.lines:
-            text_surface = font.render(text, True, color)
+            text_surface = self._font.render(text, True, color)
             screen.blit(text_surface, (self.x + self.PADDING, line_y))
             line_y += text_surface.get_height() + self.LINE_SPACING
 

@@ -18,12 +18,6 @@ from ..core.event_bus import get_event_bus, EventType
 from ..logging_config import get_logger
 
 # Protocol types from common module
-import sys
-from pathlib import Path
-common_path = Path(__file__).parent.parent.parent.parent / "common" / "src"
-if str(common_path) not in sys.path:
-    sys.path.insert(0, str(common_path))
-
 from protocol import MessageType, WSMessage
 
 logger = get_logger(__name__)
@@ -56,6 +50,7 @@ class ConnectionManager:
         self._reconnect_delay = 1.0
         self._auth_complete = asyncio.Event()
         self._buffered_messages: list = []  # Messages received during auth
+        self._intentional_disconnect = False  # Flag to prevent reconnect after intentional disconnect (M9 fix)
     
     @property
     def state(self) -> ConnectionState:
@@ -92,6 +87,7 @@ class ConnectionManager:
         
         self._jwt_token = jwt_token
         self._state = ConnectionState.CONNECTING
+        self._intentional_disconnect = False  # Reset flag for new connection (M9 fix)
         self._event_bus.emit(EventType.CONNECTING)
         
         try:
@@ -176,6 +172,8 @@ class ConnectionManager:
     
     async def disconnect(self) -> None:
         """Disconnect from the server."""
+        self._intentional_disconnect = True  # Mark as intentional to prevent reconnect (M9 fix)
+        
         if self._receive_task:
             self._receive_task.cancel()
             try:
@@ -311,8 +309,8 @@ class ConnectionManager:
                 self._state = ConnectionState.DISCONNECTED
                 self._event_bus.emit(EventType.DISCONNECTED)
                 
-                # Attempt automatic reconnection if we were authenticated
-                if self._jwt_token and self._connection_attempts < self._max_reconnect_attempts:
+                # Attempt automatic reconnection if we were authenticated and not intentional disconnect (M9 fix)
+                if not self._intentional_disconnect and self._jwt_token and self._connection_attempts < self._max_reconnect_attempts:
                     logger.info("Attempting automatic reconnection...")
                     self._connection_attempts += 1
                     success = await self.reconnect()

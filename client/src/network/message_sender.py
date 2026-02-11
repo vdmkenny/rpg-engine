@@ -11,12 +11,6 @@ import asyncio
 from .connection import get_connection_manager
 from ..logging_config import get_logger
 
-import sys
-from pathlib import Path
-common_path = Path(__file__).parent.parent.parent.parent / "common" / "src"
-if str(common_path) not in sys.path:
-    sys.path.insert(0, str(common_path))
-
 from protocol import MessageType, Direction, ChatChannel, InventorySortCriteria
 
 logger = get_logger(__name__)

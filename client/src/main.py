@@ -5,13 +5,6 @@ Initializes logging and starts the client.
 """
 
 import asyncio
-import sys
-from pathlib import Path
-
-# Add common module to path
-common_path = Path(__file__).parent.parent / "common" / "src"
-if str(common_path) not in sys.path:
-    sys.path.insert(0, str(common_path))
 
 from .client import Client
 from .logging_config import setup_logging

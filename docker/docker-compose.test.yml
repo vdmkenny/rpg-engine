@@ -40,7 +40,7 @@ services:
       - rpg_net
   
   test_valkey:
-    image: valkey/valkey:9.0.1-alpine
+    image: valkey/valkey:9.0.2-alpine
     platform: linux/amd64
     ports:
       - "6380:6379"

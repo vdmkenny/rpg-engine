@@ -22,7 +22,7 @@ class ConnectionService:
     async def initialize_player_connection(
         player_id: int, username: str, x: int, y: int, 
         map_id: str, current_hp: int, max_hp: int,
-        appearance: Dict[str, Any] = None
+        appearance: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Initialize a player's WebSocket connection state.
@@ -356,42 +356,51 @@ class ConnectionService:
             List of player entity data for broadcasting
         """
         try:
-            from server.src.api.connection_manager import ConnectionManager
+            from server.src.api.websockets import manager as connection_manager
             from server.src.services.visual_state_service import VisualStateService
             
-            # Get connection manager instance (should be singleton)
-            manager = ConnectionManager()
+            # Use the singleton ConnectionManager from websockets module
             existing_players = []
             
-            # Get all connected usernames on the map
-            connected_usernames = manager.connections_by_map.get(map_id, {})
+            # Get all connected player IDs on the map
+            # connections_by_map is {map_id: {player_id: WebSocket}}
+            connected_player_ids = connection_manager.connections_by_map.get(map_id, {})
             
             # In integration tests, this is usually empty, so return early
-            if not connected_usernames:
+            if not connected_player_ids:
                 logger.debug(
                     "No existing players on map",
                     extra={"map_id": map_id, "exclude_username": exclude_username}
                 )
                 return existing_players
             
+            # Get the excluding player's ID from username for comparison
+            exclude_player_id = None
+            if exclude_username:
+                exclude_player = await PlayerService.get_player_by_username(exclude_username)
+                if exclude_player:
+                    exclude_player_id = exclude_player.id
+            
             # For each connected player (excluding the new one)
-            for other_username in connected_usernames:
-                if other_username != exclude_username:
+            for other_player_id in connected_player_ids:
+                if other_player_id != exclude_player_id:
                     # Get position using PlayerService
                     try:
-                        # First get player ID for this username - use PlayerService to avoid direct DB access
-                        player = await PlayerService.get_player_by_username(other_username)
-                        
-                        if player and await PlayerService.is_player_online(player.id):
-                            position_data = await PlayerService.get_player_position(player.id)
+                        # Check if player is online and get their data
+                        if await PlayerService.is_player_online(other_player_id):
+                            position_data = await PlayerService.get_player_position(other_player_id)
                             if position_data:
+                                # Get player info for username
+                                player = await PlayerService.get_player_by_id(other_player_id)
+                                username = player.username if player else "Unknown"
+                                
                                 # Get visual state via service layer
-                                visual_data = await VisualStateService.get_player_visual_state(player.id)
+                                visual_data = await VisualStateService.get_player_visual_state(other_player_id)
                                 
                                 player_data = {
                                     "type": "player",
-                                    "player_id": player.id,
-                                    "username": other_username,
+                                    "player_id": other_player_id,
+                                    "username": username,
                                     "x": position_data.x,
                                     "y": position_data.y, 
                                     "map_id": position_data.map_id,
@@ -407,7 +416,7 @@ class ConnectionService:
                         logger.warning(
                             "Failed to get position for existing player",
                             extra={
-                                "username": other_username,
+                                "player_id": other_player_id,
                                 "map_id": map_id,
                                 "error": str(e)
                             }

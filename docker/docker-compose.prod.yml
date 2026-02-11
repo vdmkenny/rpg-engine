@@ -1,0 +1,74 @@
+services:
+  db:
+    image: postgres:18
+    platform: linux/amd64
+    container_name: rpg_db_prod
+    environment:
+      POSTGRES_USER: rpg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rpgpassword}
+      POSTGRES_DB: rpg
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rpg -d rpg"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:9.0.2
+    platform: linux/amd64
+    container_name: rpg_valkey_prod
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  server:
+    build:
+      context: ../
+      dockerfile: server/Dockerfile
+    container_name: rpg_server_prod
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://rpg:${POSTGRES_PASSWORD:-rpgpassword}@db:5432/rpg
+      - VALKEY_URL=valkey://valkey:6379/0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change_me_in_production}
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=production
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8000:8000"
+    # No volume mounts in production for immutability
+    restart: unless-stopped
+    command: >
+      poetry run uvicorn server.src.main:app 
+      --host 0.0.0.0 
+      --port 8000 
+      --workers 4 
+      --no-access-log
+
+volumes:
+  db_data:
+  valkey_data:

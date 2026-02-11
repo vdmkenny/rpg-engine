@@ -506,9 +506,12 @@ class PlayerStateManager(BaseManager):
     # =========================================================================
 
     async def get_player_full_state(self, player_id: int) -> Optional[Dict[str, Any]]:
-        """Get full player state from cache."""
+        """Get full player state from cache with TTL refresh."""
         key = PLAYER_KEY.format(player_id=player_id)
-        return await self._get_from_valkey(key)
+        data = await self._get_from_valkey(key)
+        if data:
+            await self._refresh_ttl(key, TIER1_TTL)
+        return data
 
     async def set_player_full_state(
         self, player_id: int, state: Dict[str, Any]

@@ -66,9 +66,11 @@ async def initialize_player_connection(username: str, player_id: int, valkey) ->
         
         # Initialize player in service layer and GSM
         await PlayerService.login_player(player.id)
+        # Convert AppearanceData to dict for Valkey serialization
+        appearance_dict = player.appearance.to_dict() if player.appearance else None
         await ConnectionService.initialize_player_connection(
             player.id, username, validated_x, validated_y, validated_map, current_hp, max_hp,
-            appearance=player.appearance
+            appearance=appearance_dict
         )
         
         logger.debug(

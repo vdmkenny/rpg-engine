@@ -95,7 +95,7 @@ class AppearanceHandlerMixin:
                 appearance_changes["shoes_color"] = payload.shoes_color
 
             # Validate the appearance changes before applying
-            validation_result = self._validate_appearance_changes(appearance_changes)
+            validation_result = self._validate_appearance_changes(appearance_changes, current_appearance)
             if not validation_result["valid"]:
                 await self._send_error_response(
                     message.id,
@@ -117,15 +117,20 @@ class AppearanceHandlerMixin:
             # Invalidate visual cache to force re-render
             await visual_registry.invalidate_player(self.player_id)
 
-            # Broadcast appearance change to nearby players
-            await self._broadcast_appearance_update(new_appearance)
+            # Build full visual state for response and broadcast
+            from server.src.services.visual_state_service import VisualStateService
+            visual_data = await VisualStateService.get_player_visual_state(self.player_id)
 
-            # Send success response with new appearance
+            # Broadcast appearance change to nearby players
+            await self._broadcast_appearance_update()
+
+            # Send success response with full visual state
             await self._send_success_response(
                 message.id,
                 {
                     "appearance": new_appearance.to_dict(),
-                    "visual_hash": new_appearance.compute_hash()
+                    "visual_hash": visual_data["visual_hash"],
+                    "visual_state": visual_data["visual_state"]
                 }
             )
 
@@ -155,18 +160,24 @@ class AppearanceHandlerMixin:
                 "Failed to update appearance - please try again"
             )
 
-    def _validate_appearance_changes(self, changes: dict) -> dict:
+    def _validate_appearance_changes(self, changes: dict, current_appearance: AppearanceData) -> dict:
         """
         Validate raw appearance change values before applying them.
         
+        First checks enum membership, then verifies against player allowlist.
+        Then performs cross-field validation (e.g., gender-restricted clothing).
+        This prevents players from using options restricted to NPCs or admins.
+        
         Args:
             changes: Dictionary of field changes from the payload
+            current_appearance: The player's current appearance for context
             
         Returns:
             Dict with "valid" (bool) and optional "error" (str)
         """
         from common.src.sprites import BodyType, SkinTone, HeadType, HairStyle, HairColor, EyeColor
         from common.src.sprites.enums import FacialHairStyle, ClothingStyle, PantsStyle, ShoesStyle, ClothingColor
+        from server.src.services.appearance_options_service import is_value_allowed_for_player, RESTRICTIONS
         
         # Mapping of field names to their enum classes
         enum_fields = {
@@ -196,33 +207,93 @@ class AppearanceHandlerMixin:
                         "valid": False,
                         "error": f"Invalid value for {field_name}: '{value}'. Must be one of: {[e.value for e in enum_cls]}"
                     }
+                
+                # Check player allowlist (server-side enforcement)
+                if not is_value_allowed_for_player(field_name, value):
+                    return {
+                        "valid": False,
+                        "error": f"Value '{value}' is not available for players. "
+                                  f"Field '{field_name}' has restricted options."
+                    }
+        
+        # Cross-field validation: check gender-restricted clothing
+        # Get effective body_type (from changes or current appearance)
+        effective_body_type = changes.get("body_type", current_appearance.body_type.value)
+        effective_shirt_style = changes.get("shirt_style", current_appearance.shirt_style.value)
+        effective_shirt_color = changes.get("shirt_color", current_appearance.shirt_color.value)
+        
+        # Validate shirt_style against body_type restrictions
+        shirt_restrictions = RESTRICTIONS.get("shirt_style", {})
+        body_type_filter = shirt_restrictions.get("body_type_filter", {})
+        
+        if effective_shirt_style in body_type_filter:
+            allowed_body_types = body_type_filter[effective_shirt_style]
+            if effective_body_type not in allowed_body_types:
+                gender_name = "female" if effective_body_type == "male" else "male"
+                return {
+                    "valid": False,
+                    "error": f"'{effective_shirt_style}' is only available for {gender_name} characters."
+                }
+        
+        # Validate shirt_color against shirt_style restrictions (robe limited palette)
+        if effective_shirt_style == "robe":
+            robe_valid_colors = RESTRICTIONS.get("shirt_color", {}).get("shirt_style_filter", {}).get("robe", [])
+            if effective_shirt_color not in robe_valid_colors:
+                return {
+                    "valid": False,
+                    "error": f"Color '{effective_shirt_color}' is not available for the robe style. "
+                              f"Robe has a limited color palette."
+                }
         
         return {"valid": True}
 
-    async def _broadcast_appearance_update(self, appearance: AppearanceData) -> None:
+    async def _broadcast_appearance_update(self) -> None:
         """
         Broadcast appearance change to nearby players.
 
         This ensures other players see the updated appearance immediately.
         """
         try:
-            from server.src.services.broadcast_service import broadcast_service
+            # Use PlayerService to find nearby players and ConnectionManager to broadcast
+            player_service = PlayerService()
+            nearby_players = await player_service.get_nearby_players(self.player_id, radius=32)
 
-            # Get visual state for hash
-            visual_state = await VisualStateService.get_player_visual_state(self.player_id)
-            visual_hash = visual_state.compute_hash() if visual_state else None
+            if not nearby_players:
+                return
+
+            # Build full visual state including appearance + equipment
+            from server.src.services.visual_state_service import VisualStateService
+            visual_data = await VisualStateService.get_player_visual_state(self.player_id)
+
+            if not visual_data:
+                logger.warning(
+                    "No visual data available for appearance broadcast",
+                    extra={"player_id": self.player_id}
+                )
+                return
+
+            # Build the event payload with full visual_state
+            event_payload = {
+                "player_id": self.player_id,
+                "username": self.username,
+                "visual_hash": visual_data["visual_hash"],
+                "visual_state": visual_data["visual_state"]
+            }
+
+            # Create the event message
+            from common.src.websocket_utils import create_event
+            event_msg = create_event(MessageType.EVENT_APPEARANCE_UPDATE, event_payload)
+
+            # Pack the message
+            import msgpack
+            message_data = msgpack.packb(event_msg.model_dump())
+
+            # Get list of nearby player IDs
+            nearby_player_ids = [player.player_id for player in nearby_players]
 
             # Broadcast to nearby players
-            await broadcast_service.broadcast_to_nearby(
-                self.player_id,
-                MessageType.EVENT_APPEARANCE_UPDATE,
-                {
-                    "player_id": self.player_id,
-                    "username": self.username,
-                    "appearance": appearance.to_dict(),
-                    "visual_hash": visual_hash
-                }
-            )
+            from server.src.api.websockets import manager as connection_manager
+            await connection_manager.broadcast_to_players(nearby_player_ids, message_data)
 
         except Exception as e:
             logger.error(

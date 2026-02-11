@@ -18,6 +18,7 @@ from .enums import (
     HairColor,
     EyeColor,
     EyeAgeGroup,
+    FacialHairStyle,
     EquipmentSlot,
     ClothingStyle,
     PantsStyle,
@@ -31,12 +32,71 @@ from .appearance import AppearanceData
 class SpritePaths:
     """
     Utility class for constructing sprite file paths.
-    
+
     All paths are relative to the sprites/lpc/ directory.
     """
-    
+
     # Base directory for LPC sprites (relative to server/sprites/)
     LPC_BASE = "lpc"
+
+    # Body type directory mapping: female -> thin for most clothing categories
+    # LPC assets use "thin" as the female body type for most items, not "female"
+    _BODY_TYPE_MAP = {
+        "feet": "thin",
+        "legs": "thin",
+        "torso_clothes": "female",
+    }
+
+    # Hair styles that use bg/fg subdirectories for multi-layer rendering
+    # These styles have hair behind and in front of the head
+    _MULTILAYER_HAIR_STYLES = {
+        "bangslong2", "braid", "braid2", "bunches", "curls_large",
+        "curls_large_xlong", "high_ponytail", "long_band", "long_center_part",
+        "long_tied", "ponytail", "ponytail2", "princess", "relm_ponytail",
+        "relm_xlong", "sara", "shoulderl", "shoulderr", "single", "wavy",
+        "xlong", "xlong_wavy",
+    }
+
+    # Clothing items that lack IDLE animation (fall back to WALK)
+    _CLOTHING_NO_IDLE = {
+        # Format: (style, body_type): True
+        # Female shirt styles without idle
+        ("corset", "female"),
+        ("blouse", "female"),
+        ("tunic", "female"),
+        ("robe", "female"),
+        ("sleeveless", "female"),
+        # Male shirt styles without idle
+        ("sleeveless", "male"),
+        # Leg styles without idle
+        ("skirts", "male"),      # Skirts lack idle for both genders
+        ("skirts", "female"),
+        ("pants", "female"),     # Female pants lack idle
+    }
+
+    @classmethod
+    def _get_body_dir(cls, category: str, body_type: BodyType) -> str:
+        """
+        Get the correct body type directory name for a category.
+
+        Most LPC assets use "thin" for female body types, not "female".
+        """
+        if body_type == BodyType.FEMALE:
+            return cls._BODY_TYPE_MAP.get(category, "female")
+        return body_type.value
+
+    @classmethod
+    def _get_clothing_animation(cls, style: str, body_type: BodyType, animation: str) -> str:
+        """
+        Get the correct animation for clothing, with fallback for missing IDLE.
+
+        Some clothing styles don't have idle animations - fall back to walk.
+        """
+        if animation == "idle":
+            # Check if this clothing+body combination lacks idle
+            if (style, body_type.value) in cls._CLOTHING_NO_IDLE:
+                return "walk"
+        return animation
     
     @staticmethod
     def body(body_type: BodyType, skin_tone: SkinTone, animation: str = "walk") -> str:
@@ -111,11 +171,87 @@ class SpritePaths:
         # Handle "bald" specially - no sprite needed
         if hair_style == HairStyle.BALD:
             return ""
-        
+
         return f"hair/{hair_style.value}/{age_group}/{animation}/{hair_color.value}.png"
 
+    @classmethod
+    def hair_layers(
+        cls,
+        hair_style: HairStyle,
+        hair_color: HairColor,
+        age_group: str = "adult",
+        animation: str = "walk",
+    ) -> List[str]:
+        """
+        Get the path(s) for hair sprite sheet(s).
+        
+        For multi-layer styles (ponytail, braid, etc.), returns both bg and fg paths.
+        For direct styles, returns a single path.
+        For bald, returns an empty list.
+        
+        Args:
+            hair_style: Hair style
+            hair_color: Hair color
+            age_group: Age group (adult, child, elderly)
+            animation: Animation type (walk, idle, slash, etc.)
+            
+        Returns:
+            List of sprite paths (empty for bald, 1 for direct styles, 2 for multi-layer)
+        """
+        # Handle "bald" specially - no sprite needed
+        if hair_style == HairStyle.BALD:
+            return []
+
+        style_value = hair_style.value
+        if style_value in cls._MULTILAYER_HAIR_STYLES:
+            # Multi-layer style: bg layer (behind head) and fg layer (in front of head)
+            bg_path = f"hair/{style_value}/{age_group}/bg/{animation}/{hair_color.value}.png"
+            fg_path = f"hair/{style_value}/{age_group}/fg/{animation}/{hair_color.value}.png"
+            return [bg_path, fg_path]
+        else:
+            # Direct style: single path
+            return [f"hair/{style_value}/{age_group}/{animation}/{hair_color.value}.png"]
+
     @staticmethod
+    def facial_hair(
+        facial_hair_style: FacialHairStyle,
+        facial_hair_color: HairColor,
+        animation: str = "walk",
+    ) -> str:
+        """
+        Get the path for a facial hair (beard/mustache) sprite sheet.
+
+        Args:
+            facial_hair_style: Facial hair style (beards, mustaches)
+            facial_hair_color: Facial hair color
+            animation: Animation type (walk, idle, slash, etc.)
+
+        Returns:
+            Path like "beards/beard/basic/walk/black.png" or "beards/mustache/basic/walk/black.png"
+        """
+        # Handle "none" specially - no sprite needed
+        if facial_hair_style == FacialHairStyle.NONE:
+            return ""
+
+        # Handle "stubble" - falls under beard directory
+        if facial_hair_style == FacialHairStyle.STUBBLE:
+            return f"beards/beard/5oclock_shadow/{animation}/{facial_hair_color.value}.png"
+
+        # Map FacialHairStyle enum values to actual directory names
+        # Color is controlled separately via facial_hair_color parameter
+        if facial_hair_style == FacialHairStyle.BEARD:
+            return f"beards/beard/basic/{animation}/{facial_hair_color.value}.png"
+        elif facial_hair_style == FacialHairStyle.MUSTACHE:
+            return f"beards/mustache/basic/{animation}/{facial_hair_color.value}.png"
+        elif facial_hair_style == FacialHairStyle.GOATEE:
+            return f"beards/beard/trimmed/{animation}/{facial_hair_color.value}.png"
+
+        # Default fallback (should never reach here)
+        return ""
+
+    @classmethod
     def clothing_shirt(
+        cls,
         shirt_style: ClothingStyle,
         shirt_color: ClothingColor,
         body_type: BodyType = BodyType.MALE,
@@ -137,15 +273,34 @@ class SpritePaths:
         if shirt_style == ClothingStyle.NONE:
             return ""
 
+        # Handle animation fallback for missing idle
+        style_name = shirt_style.value
+        actual_animation = cls._get_clothing_animation(style_name, body_type, animation)
+
+        # Handle vest - no female/thin variant exists, only male
+        if shirt_style == ClothingStyle.VEST:
+            if body_type == BodyType.FEMALE:
+                return ""  # Skip vest layer for female body type
+            return f"torso/clothes/vest/{body_type.value}/{actual_animation}/{shirt_color.value}.png"
+
         # Handle nested directory structure for longsleeve variants
         # longsleeve2, longsleeve2_buttoned, etc. are inside longsleeve/ parent directory
         if shirt_style.value.startswith("longsleeve"):
-            return f"torso/clothes/longsleeve/{shirt_style.value}/{body_type.value}/{animation}/{shirt_color.value}.png"
+            return f"torso/clothes/longsleeve/{shirt_style.value}/{body_type.value}/{actual_animation}/{shirt_color.value}.png"
 
-        return f"torso/clothes/{shirt_style.value}/{body_type.value}/{animation}/{shirt_color.value}.png"
+        # Handle nested directory for shortsleeve: shortsleeve/shortsleeve/
+        if shirt_style == ClothingStyle.SHORTSLEEVE:
+            return f"torso/clothes/shortsleeve/shortsleeve/{body_type.value}/{actual_animation}/{shirt_color.value}.png"
 
-    @staticmethod
+        # Handle nested directory for sleeveless: sleeveless/sleeveless/
+        if shirt_style == ClothingStyle.SLEEVELESS:
+            return f"torso/clothes/sleeveless/sleeveless/{body_type.value}/{actual_animation}/{shirt_color.value}.png"
+
+        return f"torso/clothes/{style_name}/{body_type.value}/{actual_animation}/{shirt_color.value}.png"
+
+    @classmethod
     def clothing_pants(
+        cls,
         pants_style: PantsStyle,
         pants_color: ClothingColor,
         body_type: BodyType = BodyType.MALE,
@@ -167,10 +322,30 @@ class SpritePaths:
         if pants_style == PantsStyle.NONE:
             return ""
 
-        return f"legs/{pants_style.value}/{body_type.value}/{animation}/{pants_color.value}.png"
+        # Handle animation fallback for missing idle
+        style_name = pants_style.value
+        actual_animation = cls._get_clothing_animation(style_name, body_type, animation)
 
-    @staticmethod
+        # Get correct body type directory
+        # Note: pants uses "female" but leggings, shorts, and pantaloons use "thin" for female body type
+        if pants_style in {PantsStyle.LEGGINGS, PantsStyle.SHORTS, PantsStyle.PANTALOONS}:
+            body_dir = cls._get_body_dir("legs", body_type)
+        else:
+            body_dir = body_type.value
+
+        # Handle shorts nested directory: shorts/shorts/
+        if pants_style == PantsStyle.SHORTS:
+            return f"legs/shorts/shorts/{body_dir}/{actual_animation}/{pants_color.value}.png"
+
+        # Handle skirts sub-style: default to "plain" (supports both male/female)
+        if pants_style == PantsStyle.SKIRT:
+            return f"legs/skirts/plain/{body_dir}/{actual_animation}/{pants_color.value}.png"
+
+        return f"legs/{style_name}/{body_dir}/{actual_animation}/{pants_color.value}.png"
+
+    @classmethod
     def clothing_shoes(
+        cls,
         shoes_style: ShoesStyle,
         shoes_color: ClothingColor,
         body_type: BodyType = BodyType.MALE,
@@ -192,7 +367,14 @@ class SpritePaths:
         if shoes_style == ShoesStyle.NONE:
             return ""
 
-        return f"feet/{shoes_style.value}/{body_type.value}/{animation}/{shoes_color.value}.png"
+        # Get correct body type directory
+        body_dir = cls._get_body_dir("feet", body_type)
+
+        # Handle boots - requires "basic/" subdirectory
+        if shoes_style == ShoesStyle.BOOTS:
+            return f"feet/boots/basic/{body_dir}/{animation}/{shoes_color.value}.png"
+
+        return f"feet/{shoes_style.value}/{body_dir}/{animation}/{shoes_color.value}.png"
 
     @staticmethod
     def equipment(
@@ -256,10 +438,9 @@ class SpritePaths:
         eye_age = get_eye_age_group(appearance.body_type, appearance.head_type)
         paths.append(cls.eyes(appearance.eye_color, eye_age))
 
-        # Hair sprite (skip if bald)
-        hair_path = cls.hair(appearance.hair_style, appearance.hair_color)
-        if hair_path:
-            paths.append(hair_path)
+        # Hair sprite(s) - may return 1 path (direct) or 2 paths (bg+fg for multi-layer)
+        hair_paths = cls.hair_layers(appearance.hair_style, appearance.hair_color)
+        paths.extend(hair_paths)
 
         # Clothing - pants (under armor)
         pants_path = cls.clothing_pants(

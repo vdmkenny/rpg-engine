@@ -20,9 +20,10 @@ display:
 game:
   tile_size: 32
   chunk_size: 16
-  move_cooldown: 0.15
-  move_duration: 0.2
+  move_cooldown: 0.5
+  move_duration: 0.5
   chunk_request_distance: 8
+  zoom_level: 2.0
 
 # Keyboard shortcuts
 key_bindings:

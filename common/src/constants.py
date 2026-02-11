@@ -4,8 +4,8 @@ This file centralizes all magic numbers used throughout the game.
 """
 
 # Animation and Timing Constants
-MOVEMENT_ANIMATION_DURATION = 0.2  # Seconds for smooth movement animation
-CLIENT_MOVE_COOLDOWN = 0.2  # Minimum time between client moves (seconds)
+MOVEMENT_ANIMATION_DURATION = 0.5  # Seconds for smooth movement animation
+CLIENT_MOVE_COOLDOWN = 0.5  # Minimum time between client moves (seconds)
 WEBSOCKET_TIMEOUT = 1.0  # WebSocket receive timeout (seconds) - only used for connection setup
 ASYNC_SLEEP_SHORT = 0.3  # Short async sleep duration (seconds)
 ASYNC_SLEEP_MEDIUM = 0.5  # Medium async sleep duration (seconds)
@@ -30,7 +30,7 @@ DARK_GRAY = (64, 64, 64)  # UI border
 
 # Server Constants
 DEFAULT_CHUNK_SIZE = 64  # Default chunk size in tiles
-SERVER_MOVE_COOLDOWN = 0.2  # Server-side movement cooldown (seconds) - matches client
+SERVER_MOVE_COOLDOWN = 0.5  # Server-side movement cooldown (seconds) - matches client
 
 # Progress and Animation Constants
 ANIMATION_COMPLETE = 1.0  # Animation completion threshold

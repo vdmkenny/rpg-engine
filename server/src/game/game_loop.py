@@ -303,6 +303,7 @@ def get_visible_players(
         
         if is_in_visible_range(player_x, player_y, entity_x, entity_y):
             entity_data = {
+                "id": f"player_{entity_player_id}",  # Entity ID for client tracking
                 "type": "player",
                 "player_id": entity_player_id,
                 "username": entity.get("username", ""),  # For display
@@ -858,19 +859,29 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         },
                     )
 
-            # Process entity respawn queue (every tick)
-            try:
-                entity_mgr = get_entity_manager()
-                await EntitySpawnService.check_respawn_queue(entity_mgr)
-            except Exception as respawn_error:
-                logger.error(
-                    "Entity respawn processing failed",
-                    extra={
-                        "error": str(respawn_error),
-                        "tick": current_tick,
-                        "traceback": traceback.format_exc(),
-                    },
-                )
+            # Process entity respawn queue (every 10 ticks = 2x/sec)
+            if current_tick % 10 == 0:
+                try:
+                    entity_mgr = get_entity_manager()
+                    await EntitySpawnService.check_respawn_queue(entity_mgr)
+                except TimeoutError as timeout_error:
+                    # Transient timeout on non-critical operation - just warn
+                    logger.warning(
+                        "Entity respawn queue check timed out (retrying next cycle)",
+                        extra={
+                            "error": str(timeout_error),
+                            "tick": current_tick,
+                        },
+                    )
+                except Exception as respawn_error:
+                    logger.error(
+                        "Entity respawn processing failed",
+                        extra={
+                            "error": str(respawn_error),
+                            "tick": current_tick,
+                            "traceback": traceback.format_exc(),
+                        },
+                    )
 
             # Process each active map
             active_maps = list(manager.connections_by_map.keys())
@@ -925,10 +936,24 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         equipped_items = _build_equipped_items_map(equipment_data, reference_mgr)
                         
                         # Build visual state and register with visual registry
-                        visual_state = _build_visual_state(appearance, equipped_items)
-                        visual_hash = await visual_registry.register_visual_state(
-                            f"player_{player_id}", visual_state
-                        )
+                        # Wrapped in try/except to prevent one bad player from crashing all players
+                        try:
+                            visual_state = _build_visual_state(appearance, equipped_items)
+                            visual_hash = await visual_registry.register_visual_state(
+                                f"player_{player_id}", visual_state
+                            )
+                        except Exception as visual_error:
+                            logger.error(
+                                "Failed to build visual state for player",
+                                extra={
+                                    "player_id": player_id,
+                                    "username": username,
+                                    "error": str(visual_error),
+                                    "appearance": str(appearance)[:200] if appearance else None,
+                                },
+                            )
+                            # Skip this player for this tick - they'll be retried next tick
+                            continue
                         
                         all_player_data.append({
                             "player_id": player_id,
@@ -1074,6 +1099,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     for entity in all_player_data:
                         if entity.get("player_id") == player_id:
                             own_player_data = {
+                                "id": f"player_{player_id}",  # Entity ID for client tracking
                                 "type": "player",
                                 "player_id": player_id,
                                 "username": entity.get("username", ""),  # For display

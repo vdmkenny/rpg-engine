@@ -257,7 +257,7 @@ class MovementService:
 
             # Update position using MovementService method
             current_time = time.time()
-            success = await MovementService.set_player_position(player_id, new_x, new_y, map_id)
+            success = await MovementService.set_player_position(player_id, new_x, new_y, map_id, facing_direction=direction)
             
             if not success:
                 return {
@@ -366,7 +366,7 @@ class MovementService:
 
     @staticmethod
     async def set_player_position(
-        player_id: int, x: int, y: int, map_id: str, update_movement_time: bool = True
+        player_id: int, x: int, y: int, map_id: str, update_movement_time: bool = True, facing_direction: str = "DOWN"
     ) -> bool:
         """
         Set player position in game state.
@@ -407,7 +407,8 @@ class MovementService:
                 "map_id": map_id,
                 "current_hp": int(current_hp),
                 "max_hp": int(max_hp),
-                "last_move_time": time() if update_movement_time else 0
+                "last_move_time": time() if update_movement_time else 0,
+                "facing_direction": facing_direction
             }
             await player_mgr.set_player_full_state(player_id, state)
             

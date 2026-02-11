@@ -5,7 +5,7 @@ Consolidated schemas for MMORPG player management.
 Replaces: PlayerInDB, PlayerPublic, PlayerData, etc.
 """
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -58,6 +58,32 @@ class PlayerData(BaseModel):
     total_level: int = 0
     timeout_until: Optional[datetime] = None  # UTC datetime or None
     appearance: Optional[AppearanceData] = None
+    
+    @field_validator("appearance", mode="before")
+    @classmethod
+    def validate_appearance(cls, v):
+        """
+        Convert dict or AppearanceData to AppearanceData using lenient parsing.
+        
+        This handles:
+        - Dict from database (JSON column) -> AppearanceData via from_dict()
+        - None -> None
+        - Existing AppearanceData -> passed through
+        
+        Using from_dict() ensures invalid enum values fallback to defaults
+        rather than causing validation errors that block player login.
+        """
+        if v is None:
+            return None
+        if isinstance(v, AppearanceData):
+            return v
+        if isinstance(v, dict):
+            return AppearanceData.from_dict(v)
+        # Fallback: try to treat as dict-like
+        try:
+            return AppearanceData.from_dict(dict(v))
+        except Exception:
+            return None
 
 
 class PlayerPosition(BaseModel):

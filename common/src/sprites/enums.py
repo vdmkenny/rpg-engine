@@ -298,19 +298,13 @@ class FacialHairStyle(str, Enum):
 
     Available in LPC face/beard/ spritesheets.
     Can be used by any body type, defaults to none for female bodies.
+    Color is controlled separately via facial_hair_color field.
     """
     NONE = "none"
     STUBBLE = "stubble"
-    BEARD_BLACK = "beard_black"  # Full black beard
-    BEARD_BLONDE = "beard_blonde"  # Full blonde beard
-    BEARD_BROWN = "beard_brown"  # Full brown beard
-    BEARD_GRAY = "beard_gray"  # Gray beard (for elders)
-    MUSTACHE_BLACK = "mustache_black"
-    MUSTACHE_BLONDE = "mustache_blonde"
-    MUSTACHE_BROWN = "mustache_brown"
-    GOATEE_BLACK = "goatee_black"
-    GOATEE_BLONDE = "goatee_blonde"
-    GOATEE_BROWN = "goatee_brown"
+    BEARD = "beard"
+    MUSTACHE = "mustache"
+    GOATEE = "goatee"
 
 
 class AnimationType(str, Enum):
@@ -440,6 +434,8 @@ class SpriteLayer(int, Enum):
     Lower values are rendered first (behind).
     Higher values are rendered on top.
     """
+    # Hair behind head (for multi-layer styles like ponytail)
+    HAIR_BEHIND = -1
     # Base layers
     BODY = 0
     HEAD = 1

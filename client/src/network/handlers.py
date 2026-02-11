@@ -5,18 +5,16 @@ Each handler processes a specific message type and updates game state.
 """
 
 from typing import Dict, Any, Optional, TYPE_CHECKING
+import time
 
 from ..logging_config import get_logger
 from ..core import get_event_bus, EventType
+from .message_sender import get_message_sender
 
 if TYPE_CHECKING:
-    from ..game.client_state import ClientGameState
-
-import sys
-from pathlib import Path
-common_path = Path(__file__).parent.parent.parent.parent / "common" / "src"
-if str(common_path) not in sys.path:
-    sys.path.insert(0, str(common_path))
+    from ..game.client_state import ClientGameState, HitSplat
+else:
+    from ..game.client_state import HitSplat
 
 from protocol import MessageType
 
@@ -60,6 +58,10 @@ class MessageHandlers:
             self.game_state.visual_hash = player_data["visual_hash"]
         if "visual_state" in player_data:
             self.game_state.visual_state = player_data["visual_state"]
+            # Extract appearance from visual_state for customisation
+            vs = player_data["visual_state"]
+            if isinstance(vs, dict) and "appearance" in vs:
+                self.game_state.appearance = vs["appearance"]
 
             # Preload player paperdoll sprites
             try:
@@ -94,8 +96,7 @@ class MessageHandlers:
         
         # Request map chunks around current position (handles reconnects)
         if self.connection and self.game_state.position:
-            from .message_sender import MessageSender
-            sender = MessageSender()
+            sender = get_message_sender()
             x = self.game_state.position.get("x", 0)
             y = self.game_state.position.get("y", 0)
             try:
@@ -163,8 +164,31 @@ class MessageHandlers:
         # Update existing entities
         for entity in entities:
             entity_id = entity.get("id")
+            entity_type = entity.get("type", "entity")
+            player_id = entity.get("player_id")  # For player entities
             if entity_id:
-                self.game_state.update_entity(entity_id, entity)
+                if entity_type == "player":
+                    # Skip if this is the local player (avoid ghost of yourself)
+                    if player_id == self.game_state.player_id:
+                        continue
+                    # Add new players to other_players if not already tracked
+                    if player_id and player_id not in self.game_state.other_players:
+                        self.game_state.other_players[player_id] = {
+                            "username": entity.get("username", ""),
+                            "position": {"x": entity.get("x", 0), "y": entity.get("y", 0)},
+                            "current_hp": entity.get("current_hp", 100),
+                            "max_hp": entity.get("max_hp", 100),
+                            "visual_hash": entity.get("visual_hash"),
+                            "visual_state": entity.get("visual_state"),
+                            "facing_direction": entity.get("facing_direction", "DOWN")
+                        }
+                        self.event_bus.emit(EventType.ENTITY_SPAWNED, {"player_id": player_id, "username": entity.get("username", "")})
+                    # Update tracked players
+                    if player_id in self.game_state.other_players:
+                        self.game_state.update_other_player(player_id, entity)
+                else:
+                    # Update NPCs/monsters normally
+                    self.game_state.update_entity(entity_id, entity)
         
         # Remove despawned entities
         for entity_id in removed_entities:
@@ -214,7 +238,9 @@ class MessageHandlers:
             "username": username,
             "position": position,
             "current_hp": payload.get("current_hp", 100),
-            "max_hp": payload.get("max_hp", 100)
+            "max_hp": payload.get("max_hp", 100),
+            "visual_hash": payload.get("visual_hash"),
+            "visual_state": payload.get("visual_state")
         }
         
         self.event_bus.emit(EventType.ENTITY_SPAWNED, {"player_id": player_id, "username": username})
@@ -271,12 +297,12 @@ class MessageHandlers:
             target_id = target.get("id")
             is_miss = action_type == "miss"
             
-            hit_splat = {
-                "target_id": target_id,
-                "damage": damage,
-                "is_miss": is_miss,
-                "timestamp": payload.get("timestamp", 0)
-            }
+            hit_splat = HitSplat(
+                target_id=target_id,
+                damage=damage,
+                is_miss=is_miss,
+                timestamp=time.time()
+            )
             self.game_state.hit_splats.append(hit_splat)
         
         # Track XP gains
@@ -298,10 +324,14 @@ class MessageHandlers:
         
         if player_id == self.game_state.player_id:
             self.game_state.visual_hash = visual_hash
+            if "visual_state" in payload:
+                self.game_state.visual_state = payload["visual_state"]
             if "appearance" in payload:
                 self.game_state.appearance = payload["appearance"]
         elif player_id in self.game_state.other_players:
             self.game_state.other_players[player_id]["visual_hash"] = visual_hash
+            if "visual_state" in payload:
+                self.game_state.other_players[player_id]["visual_state"] = payload["visual_state"]
         
         self.event_bus.emit(EventType.APPEARANCE_UPDATED, {
             "player_id": player_id,
@@ -331,8 +361,39 @@ class MessageHandlers:
         
         # Update game state based on response data
         if "new_position" in data:
-            self.game_state.position = data["new_position"]
-            self.event_bus.emit(EventType.PLAYER_MOVED, data["new_position"])
+            new_pos = data["new_position"]
+            # Start movement interpolation instead of instant teleport
+            if not self.game_state.is_moving:
+                # Starting a new movement from current position
+                self.game_state.move_start_x = self.game_state.position.get("x", 0)
+                self.game_state.move_start_y = self.game_state.position.get("y", 0)
+            else:
+                # Already moving - chain from current target
+                self.game_state.move_start_x = self.game_state.move_target_x
+                self.game_state.move_start_y = self.game_state.move_target_y
+            
+            self.game_state.move_target_x = new_pos.get("x", 0)
+            self.game_state.move_target_y = new_pos.get("y", 0)
+            self.game_state.is_moving = True
+            self.game_state.move_progress = 0.0
+            # Don't update position yet - wait for animation to complete
+            
+            self.event_bus.emit(EventType.PLAYER_MOVED, new_pos)
+        
+        # Handle appearance update success response
+        if "visual_state" in data or "visual_hash" in data:
+            if "visual_hash" in data:
+                self.game_state.visual_hash = data["visual_hash"]
+            if "visual_state" in data:
+                self.game_state.visual_state = data["visual_state"]
+            if "appearance" in data:
+                self.game_state.appearance = data["appearance"]
+            
+            logger.debug("Updated local player visual state from success response")
+            self.event_bus.emit(EventType.APPEARANCE_UPDATED, {
+                "player_id": self.game_state.player_id,
+                "visual_hash": data.get("visual_hash")
+            })
     
     async def handle_error_response(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:
         """Handle error response."""
@@ -351,23 +412,25 @@ class MessageHandlers:
     
     async def handle_data_response(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:
         """Handle data response from queries."""
-        data_type = payload.get("data_type")
-        data = payload.get("data", {})
-        
-        logger.debug(f"Received data response: {data_type}")
-        
-        if data_type == "inventory":
-            self.game_state.update_inventory(data)
-            self.event_bus.emit(EventType.INVENTORY_UPDATED, data)
-        elif data_type == "equipment":
-            self.game_state.update_equipment(data)
-            self.event_bus.emit(EventType.EQUIPMENT_UPDATED, data)
-        elif data_type == "stats":
-            self.game_state.update_stats(data)
-            self.event_bus.emit(EventType.STATS_UPDATED, data)
-        elif data_type == "map_chunks":
-            self.game_state.update_map_chunks(data)
-            self.event_bus.emit(EventType.CHUNK_RECEIVED, data)
+        # Detect data type from payload keys (server sends flat structures without data_type/data wrapper)
+        if "chunks" in payload:
+            logger.debug("Received map chunks response")
+            self.game_state.update_map_chunks(payload)
+            self.event_bus.emit(EventType.CHUNK_RECEIVED, payload)
+        elif "inventory" in payload:
+            logger.debug("Received inventory response")
+            self.game_state.update_inventory(payload["inventory"])
+            self.event_bus.emit(EventType.INVENTORY_UPDATED, payload["inventory"])
+        elif "equipment" in payload:
+            logger.debug("Received equipment response")
+            self.game_state.update_equipment(payload["equipment"])
+            self.event_bus.emit(EventType.EQUIPMENT_UPDATED, payload["equipment"])
+        elif "stats" in payload:
+            logger.debug("Received stats response")
+            self.game_state.update_stats(payload)
+            self.event_bus.emit(EventType.STATS_UPDATED, payload)
+        else:
+            logger.warning(f"Unknown data response payload: {list(payload.keys())}")
 
 
 def register_all_handlers(game_state: "ClientGameState") -> MessageHandlers:

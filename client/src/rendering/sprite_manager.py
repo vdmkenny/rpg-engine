@@ -131,9 +131,14 @@ class SpriteManager:
             headers = {"Authorization": f"Bearer {self.auth_token}"}
             
             async with session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    print(f"Failed to download {sprite_path}: {response.status}")
+                if response.status == 404:
+                    # Asset genuinely doesn't exist - blacklist permanently
+                    print(f"Sprite not found (404): {sprite_path}")
                     self._failed_paths.add(sprite_path)
+                    return False
+                elif response.status != 200:
+                    # Transient server error - don't blacklist, allow retry
+                    print(f"Failed to download {sprite_path}: HTTP {response.status}")
                     return False
                 
                 data = await response.read()
@@ -148,8 +153,8 @@ class SpriteManager:
                 return True
                 
         except Exception as e:
+            # Network errors, timeouts, etc. - don't blacklist, allow retry
             print(f"Error downloading {sprite_path}: {e}")
-            self._failed_paths.add(sprite_path)
             return False
     
     def get_surface(self, sprite_path: str) -> Optional[pygame.Surface]:

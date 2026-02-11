@@ -56,10 +56,10 @@ class ChatService:
             Formatted system message dict
         """
         return {
-            "username": "System",
+            "sender": "System",
             "message": error_message,
             "channel": channel,
-            "timestamp": time.time()
+            "timestamp": int(time.time() * 1000)  # Convert to milliseconds for protocol
         }
 
     @staticmethod
@@ -391,7 +391,7 @@ class ChatService:
                         version="2.0"
                     )
                     packed_message = msgpack.packb(system_msg.model_dump(), use_bin_type=True)
-                    await connection_manager.send_personal_message(username, packed_message)
+                    await connection_manager.send_personal_message(player_id, packed_message)
                 
                 return {
                     "success": False,
@@ -411,14 +411,15 @@ class ChatService:
             )
             
             # Create the chat message response
+            # Use 'sender' field to match ChatMessageEventPayload protocol definition
             chat_response = WSMessage(
                 id=None,  # No correlation ID for events
                 type=MessageType.EVENT_CHAT_MESSAGE,
                 payload={
-                    "username": username,
+                    "sender": username,
                     "message": processed_message,
                     "channel": channel,
-                    "timestamp": time.time()
+                    "timestamp": int(time.time() * 1000)  # Convert to milliseconds for protocol
                 },
                 version="2.0"
             )
@@ -442,16 +443,21 @@ class ChatService:
                     )
                     
                     # Always include the sender in local chat (for message confirmation)
-                    recipient_usernames = [username]  # Start with sender
+                    # Build list of player_ids (integers) - ConnectionManager expects player_ids
+                    recipient_player_ids = [player_id]  # Start with sender
                     if nearby_players:
-                        recipient_usernames.extend([p["username"] for p in nearby_players])
+                        recipient_player_ids.extend([p["player_id"] for p in nearby_players])
                     
                     # Remove duplicates while preserving order
-                    recipient_usernames = list(dict.fromkeys(recipient_usernames))
+                    recipient_player_ids = list(dict.fromkeys(recipient_player_ids))
                     
                     packed_message = msgpack.packb(chat_response.model_dump(), use_bin_type=True)
-                    await connection_manager.broadcast_to_players(recipient_usernames, packed_message)
-                    recipients = recipient_usernames
+                    await connection_manager.broadcast_to_players(recipient_player_ids, packed_message)
+                    # Return usernames for tracking/display purposes
+                    recipients = [username]
+                    if nearby_players:
+                        recipients.extend([p["username"] for p in nearby_players])
+                    recipients = list(dict.fromkeys(recipients))
                 else:
                     logger.warning(
                         "Could not get player position for local chat",
@@ -464,8 +470,10 @@ class ChatService:
                 if target_username:
                     recipient_data = await ChatService.get_dm_recipient(target_username)
                     if recipient_data:
+                        # recipient_data contains player_id (int) - use it for ConnectionManager
+                        recipient_player_id = recipient_data["player_id"]
                         packed_message = msgpack.packb(chat_response.model_dump(), use_bin_type=True)
-                        await connection_manager.send_personal_message(target_username, packed_message)
+                        await connection_manager.send_personal_message(recipient_player_id, packed_message)
                         recipients = [target_username]
                     else:
                         # Send system error message for DM recipient not found
@@ -479,7 +487,8 @@ class ChatService:
                             version="2.0"
                         )
                         packed_message = msgpack.packb(system_response.model_dump(), use_bin_type=True)
-                        await connection_manager.send_personal_message(username, packed_message)
+                        # Use player_id (int) for ConnectionManager
+                        await connection_manager.send_personal_message(player_id, packed_message)
                         
                         return {
                             "success": False,
@@ -497,7 +506,8 @@ class ChatService:
                         version="2.0"
                     )
                     packed_message = msgpack.packb(dm_response.model_dump(), use_bin_type=True)
-                    await connection_manager.send_personal_message(username, packed_message)
+                    # Use player_id (int) for ConnectionManager
+                    await connection_manager.send_personal_message(player_id, packed_message)
                     recipients = [username]
                      
             return {
