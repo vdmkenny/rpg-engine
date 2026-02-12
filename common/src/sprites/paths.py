@@ -72,6 +72,9 @@ class SpritePaths:
         ("skirts", "male"),      # Skirts lack idle for both genders
         ("skirts", "female"),
         ("pants", "female"),     # Female pants lack idle
+        # Child body type lacks idle for most clothing
+        ("shirt", "child"),
+        ("pants", "child"),
     }
 
     @classmethod
@@ -137,16 +140,19 @@ class SpritePaths:
     ) -> str:
         """
         Get the path for an eyes sprite sheet.
-        
+
         Args:
             eye_color: Eye color
             age_group: Age variant (adult, child, elderly)
             expression: Eye expression (default, anger, sad, etc.)
             animation: Animation type (walk, idle, slash, etc.)
-            
+
         Returns:
             Path like "eyes/human/adult/default/walk/blue.png"
         """
+        # Child eyes don't have expression subdirectories, only animation
+        if age_group == EyeAgeGroup.CHILD:
+            return f"eyes/human/{age_group.value}/{animation}/{eye_color.value}.png"
         return f"eyes/human/{age_group.value}/{expression}/{animation}/{eye_color.value}.png"
     
     @staticmethod
@@ -282,6 +288,12 @@ class SpritePaths:
             if body_type == BodyType.FEMALE:
                 return ""  # Skip vest layer for female body type
             return f"torso/clothes/vest/{body_type.value}/{actual_animation}/{shirt_color.value}.png"
+
+        # Handle shirt - only child body type has sprites (no male/female variants)
+        if shirt_style == ClothingStyle.SHIRT:
+            if body_type != BodyType.CHILD:
+                return ""  # Skip shirt layer for non-child body types
+            return f"torso/clothes/shirt/{body_type.value}/{actual_animation}/{shirt_color.value}.png"
 
         # Handle nested directory structure for longsleeve variants
         # longsleeve2, longsleeve2_buttoned, etc. are inside longsleeve/ parent directory
@@ -545,6 +557,7 @@ def get_equipment_sprite_path(
 def resolve_equipment_sprite(
     sprite_id: str,
     animation: str = "walk",
+    body_type: str = "male",
 ) -> tuple[str, str | None]:
     """
     Resolve an equipment sprite ID to an LPC path and optional tint.
@@ -556,6 +569,7 @@ def resolve_equipment_sprite(
     Args:
         sprite_id: The equipped_sprite_id from ItemDefinition
         animation: Animation name (walk, slash, hurt, etc.)
+        body_type: Body type for sprite selection (male, female, child, teen)
 
     Returns:
         Tuple of (full_sprite_path, tint_color_or_none)
@@ -569,7 +583,7 @@ def resolve_equipment_sprite(
         fallback_path = f"equipment/unknown/{sprite_id}.png"
         return (SpritePaths.get_full_path(fallback_path), None)
 
-    path = sprite_info.get_path(animation=animation)
+    path = sprite_info.get_path(animation=animation, body_type=body_type)
     return (SpritePaths.get_full_path(path), sprite_info.tint)
 
 

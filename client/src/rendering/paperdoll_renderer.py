@@ -509,22 +509,22 @@ class PaperdollRenderer:
                 continue
             
             # Get the sprite path using current animation
-            sprite_path = equip_sprite.get_path(animation=anim_name)
-            
+            sprite_path = equip_sprite.get_path(animation=anim_name, body_type=body_type.value)
+
             # Use tint from visual state
             final_tint = tint or equip_sprite.tint
-            
+
             # Get the layer for this slot
             layer = SLOT_TO_LAYER.get(slot, SpriteLayer.ARMOR_BODY)
-            
+
             # Add foreground layer
             layers.append(RenderLayer(layer, sprite_path, final_tint))
-            
+
             # NEW: Handle layered equipment sprites (e.g., weapons with bg+fg layers)
             if equip_sprite.has_layers:
                 # Also render the background layer for layered equipment
                 # Get the bg path instead of fg
-                bg_sprite_path = equip_sprite.get_path(animation=anim_name, layer="bg")
+                bg_sprite_path = equip_sprite.get_path(animation=anim_name, layer="bg", body_type=body_type.value)
                 # Use WEAPON_BEHIND for weapon bg, otherwise use same layer-1
                 if layer == SpriteLayer.WEAPON_FRONT:
                     bg_layer = SpriteLayer.WEAPON_BEHIND
@@ -604,9 +604,9 @@ class PaperdollRenderer:
 
         # Log debug info if some layers are missing
         if missing_sprites and rendered_layers == 0:
-            logger.debug(f"All sprites missing for frame ({row}, {col}). Missing: {missing_sprites[:3]}...")
+            logger.info(f"All sprites missing for frame ({row}, {col}). Missing paths: {missing_sprites}")
         elif missing_sprites:
-            logger.debug(f"Rendered {rendered_layers}/{len(layers)} layers. Missing: {len(missing_sprites)} sprites")
+            logger.debug(f"Rendered {rendered_layers}/{len(layers)} layers. Missing {len(missing_sprites)} sprites: {missing_sprites[:5]}")
 
         return result
     

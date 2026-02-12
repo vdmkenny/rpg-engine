@@ -331,3 +331,166 @@ class TestAllEquipmentMapped:
         ]
         for sprite_id in leather:
             assert validate_sprite_id(sprite_id), f"Missing mapping for {sprite_id}"
+
+
+class TestEquipmentBodyType:
+    """Tests for body type directory insertion in equipment paths."""
+    
+    def test_platebody_has_body_type_category(self):
+        """Platebodies should have body_type_category set."""
+        sprite = get_equipment_sprite("equip_copper_platebody")
+        assert sprite is not None
+        assert sprite.body_type_category is not None
+    
+    def test_platebody_inserts_male_body_type(self):
+        """Platebody path should include male body type directory."""
+        sprite = get_equipment_sprite("equip_copper_platebody")
+        assert sprite is not None
+        path = sprite.get_path(animation="walk", body_type="male")
+        assert "male" in path
+        assert "torso/armour/plate/male/walk" in path
+    
+    def test_platebody_inserts_female_body_type(self):
+        """Platebody path should include female body type directory."""
+        sprite = get_equipment_sprite("equip_copper_platebody")
+        assert sprite is not None
+        path = sprite.get_path(animation="walk", body_type="female")
+        assert "female" in path
+        assert "torso/armour/plate/female/walk" in path
+    
+    def test_helmet_inserts_adult_for_male(self):
+        """Helmet should use adult directory for adult body types."""
+        sprite = get_equipment_sprite("equip_copper_helmet")
+        assert sprite is not None
+        path = sprite.get_path(animation="walk", body_type="male")
+        assert "adult" in path
+        assert "hat/helmet/barbarian/adult/walk" in path
+    
+    def test_shield_inserts_body_type(self):
+        """Shield path should include body type directory."""
+        sprite = get_equipment_sprite("equip_wooden_shield")
+        assert sprite is not None
+        path = sprite.get_path(animation="walk", body_type="male")
+        assert "male" in path
+        assert "shield/kite/male/walk" in path
+    
+    def test_leather_boots_inserts_body_type(self):
+        """Leather boots should include body type directory."""
+        sprite = get_equipment_sprite("equip_leather_boots")
+        assert sprite is not None
+        path = sprite.get_path(animation="walk", body_type="female")
+        # Boots use "thin" for female body type
+        assert "thin" in path
+        assert "feet/boots/basic/thin/walk" in path
+    
+    def test_leather_gloves_inserts_body_type(self):
+        """Leather gloves should include body type directory."""
+        sprite = get_equipment_sprite("equip_leather_gloves")
+        assert sprite is not None
+        path = sprite.get_path(animation="walk", body_type="male")
+        assert "male" in path
+        assert "arms/gloves/male/walk" in path
+
+
+class TestEquipmentIdleFallback:
+    """Tests for idle animation fallback when has_idle=False."""
+    
+    def test_dagger_no_idle_uses_walk(self):
+        """Dagger should fallback to walk when idle is requested."""
+        sprite = get_equipment_sprite("equip_copper_dagger")
+        assert sprite is not None
+        assert sprite.has_idle is False
+        
+        idle_path = sprite.get_path(animation="idle", body_type="male")
+        assert "walk" in idle_path
+        assert "idle" not in idle_path
+    
+    def test_lonsword_no_idle_uses_walk(self):
+        """Longsword should fallback to walk when idle is requested."""
+        sprite = get_equipment_sprite("equip_copper_longsword")
+        assert sprite is not None
+        assert sprite.has_idle is False
+        
+        idle_path = sprite.get_path(animation="idle", body_type="male")
+        assert "walk" in idle_path
+    
+    def test_shield_no_idle_uses_walk(self):
+        """Shield should fallback to walk when idle is requested."""
+        sprite = get_equipment_sprite("equip_wooden_shield")
+        assert sprite is not None
+        assert sprite.has_idle is False
+        
+        idle_path = sprite.get_path(animation="idle", body_type="male")
+        assert "walk" in idle_path
+    
+    def test_helmet_has_idle_true(self):
+        """Helmet should use idle when has_idle=True."""
+        sprite = get_equipment_sprite("equip_copper_helmet")
+        assert sprite is not None
+        assert sprite.has_idle is True
+        
+        idle_path = sprite.get_path(animation="idle", body_type="male")
+        assert "idle" in idle_path
+    
+    def test_platebody_has_idle_true(self):
+        """Platebody should use idle when has_idle=True."""
+        sprite = get_equipment_sprite("equip_copper_platebody")
+        assert sprite is not None
+        assert sprite.has_idle is True
+        
+        idle_path = sprite.get_path(animation="idle", body_type="male")
+        assert "idle" in idle_path
+
+
+class TestFixedBasePaths:
+    """Tests for corrected base paths in equipment mapping."""
+    
+    def test_leather_gloves_uses_arms_path(self):
+        """Leather gloves should use arms/gloves base path."""
+        sprite = get_equipment_sprite("equip_leather_gloves")
+        assert sprite is not None
+        assert "arms/gloves" in sprite.base_path
+    
+    def test_leather_body_uses_torso_armour_path(self):
+        """Leather body should use torso/armour/leather base path."""
+        sprite = get_equipment_sprite("equip_leather_body")
+        assert sprite is not None
+        assert "torso/armour/leather" in sprite.base_path
+    
+    def test_shield_uses_kite_path(self):
+        """Shields should use shield/kite base path."""
+        sprite = get_equipment_sprite("equip_wooden_shield")
+        assert sprite is not None
+        assert "shield/kite" in sprite.base_path
+    
+    def test_arrows_use_quiver_path(self):
+        """Arrows should use quiver base path."""
+        sprite = get_equipment_sprite("equip_bronze_arrows")
+        assert sprite is not None
+        assert "quiver" in sprite.base_path
+    
+    def test_bow_uses_weapon_ranged_path(self):
+        """Bow should use weapon/ranged/bow base path."""
+        sprite = get_equipment_sprite("equip_shortbow")
+        assert sprite is not None
+        assert "weapon/ranged/bow" in sprite.base_path
+
+
+class TestResolveEquipmentSpriteWithBodyType:
+    """Tests for resolve_equipment_sprite with body_type parameter."""
+    
+    def test_resolve_with_default_body_type(self):
+        """resolve_equipment_sprite should use male as default."""
+        path, _ = resolve_equipment_sprite("equip_copper_platebody")
+        assert "male" in path
+    
+    def test_resolve_with_female_body_type(self):
+        """resolve_equipment_sprite should accept female body_type."""
+        path, _ = resolve_equipment_sprite("equip_copper_platebody", body_type="female")
+        assert "female" in path
+    
+    def test_resolve_with_idle_and_fallback(self):
+        """resolve_equipment_sprite should handle idle fallback for weapons."""
+        path, _ = resolve_equipment_sprite("equip_copper_dagger", animation="idle")
+        # Dagger has no idle, should use walk
+        assert "walk" in path
