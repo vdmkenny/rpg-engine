@@ -89,19 +89,19 @@ class HeadType(str, Enum):
     HUMAN_ELDERLY_SMALL = "human/elderly_small"
     
     # Monster/creature heads
-    SKELETON = "skeleton/default"
-    ZOMBIE = "zombie/default"
-    VAMPIRE = "vampire/default"
-    ORC = "orc/default"
-    GOBLIN = "goblin/default"
-    TROLL = "troll/default"
-    WOLF = "wolf/default"
-    LIZARD = "lizard/default"
-    MINOTAUR = "minotaur/default"
-    
+    SKELETON = "skeleton/adult"
+    ZOMBIE = "zombie/adult"
+    VAMPIRE = "vampire/adult"
+    ORC = "orc/male"
+    GOBLIN = "goblin/child"
+    TROLL = "troll/adult"
+    WOLF = "wolf/male"
+    LIZARD = "lizard/male"
+    MINOTAUR = "minotaur/male"
+
     # Special heads
-    FRANKENSTEIN = "frankenstein/default"
-    JACK = "jack/default"  # Jack-o-lantern
+    FRANKENSTEIN = "frankenstein/adult"
+    JACK = "jack/adult"  # Jack-o-lantern
 
 
 class HairStyle(str, Enum):
@@ -347,6 +347,7 @@ class ClothingStyle(str, Enum):
     """
     # Shirts/Tops
     NONE = "none"
+    SHIRT = "shirt"
     LONGSLEEVE = "longsleeve2"
     SHORTSLEEVE = "shortsleeve"
     SLEEVELESS = "sleeveless"

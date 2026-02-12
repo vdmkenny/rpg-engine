@@ -16,7 +16,7 @@ from sprites.enums import EquipmentSlot
 class EntityType(Enum):
     """Types of entities in the game world."""
     PLAYER = "player"
-    NPC = "npc"
+    HUMANOID_NPC = "humanoid_npc"
     MONSTER = "monster"
 
 
@@ -56,6 +56,7 @@ class Entity:
     max_hp: int = 100
     level: int = 1
     visual_hash: Optional[str] = None
+    visual_state: Optional[Dict[str, Any]] = None
     facing_direction: str = "DOWN"
     is_moving: bool = False
     move_progress: float = 0.0
@@ -154,27 +155,38 @@ class ClientGameState:
         self.server_shutdown_warning: Optional[Dict[str, Any]] = None
         self.is_connected: bool = False
         self.is_authenticated: bool = False
+        
+        # Preloaded sprite hashes (to avoid re-downloading)
+        self._preloaded_hashes: set = set()
     
     def update_entity(self, entity_id: Union[int, str], data: Dict[str, Any]) -> None:
         """Update or create an entity."""
         if entity_id not in self.entities:
-            # Create new entity
-            entity_type = EntityType(data.get("type", "npc").lower())
+            # Create new entity - read entity_type field, fallback to type or "monster"
+            entity_type_str = data.get("entity_type", data.get("type", "monster")).lower()
+            entity_type = EntityType(entity_type_str)
             self.entities[entity_id] = Entity(
                 entity_id=entity_id,
                 entity_type=entity_type,
-                name=data.get("name", "Unknown"),
+                name=data.get("display_name", data.get("name", "Unknown")),
                 x=data.get("x", 0),
                 y=data.get("y", 0)
             )
         
         entity = self.entities[entity_id]
         
-        # Update position
-        if "x" in data:
-            entity.x = data["x"]
-        if "y" in data:
-            entity.y = data["y"]
+        # Detect movement and start interpolation
+        new_x = data.get("x", entity.x)
+        new_y = data.get("y", entity.y)
+        if new_x != entity.x or new_y != entity.y:
+            entity.start_x = entity.x
+            entity.start_y = entity.y
+            entity.target_x = new_x
+            entity.target_y = new_y
+            entity.is_moving = True
+            entity.move_progress = 0.0
+        entity.x = new_x
+        entity.y = new_y
         
         # Update HP
         if "current_hp" in data:
@@ -185,10 +197,12 @@ class ClientGameState:
         # Update visual
         if "visual_hash" in data:
             entity.visual_hash = data["visual_hash"]
+        if "visual_state" in data:
+            entity.visual_state = data["visual_state"]
         
         # Update facing direction
-        if "direction" in data:
-            entity.facing_direction = data["direction"]
+        if "facing_direction" in data:
+            entity.facing_direction = data["facing_direction"]
     
     def update_other_player(self, player_id: int, data: Dict[str, Any]) -> None:
         """Update other player position with smooth interpolation."""
@@ -332,6 +346,16 @@ class ClientGameState:
         """Remove expired hit splats."""
         current_time = time.time()
         self.hit_splats = [s for s in self.hit_splats if not s.is_expired(current_time)]
+    
+    def should_preload_sprites(self, visual_hash: str) -> bool:
+        """Check if sprites for this visual hash need preloading.
+        
+        Returns True if preloading should be triggered, False if already preloaded.
+        """
+        if visual_hash in self._preloaded_hashes:
+            return False
+        self._preloaded_hashes.add(visual_hash)
+        return True
     
     def clear(self) -> None:
         """Clear all game state (for logout/reset)."""

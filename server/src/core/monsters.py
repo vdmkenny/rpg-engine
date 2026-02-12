@@ -87,34 +87,13 @@ class MonsterDefinition:
 class MonsterID(Enum):
     """
     All monsters in the game.
-    
+
     Monsters use sprite sheet animations and have innate combat stats.
     """
-    
+
     # =========================================================================
     # LOW LEVEL MONSTERS
     # =========================================================================
-    GOBLIN = MonsterDefinition(
-        display_name="Goblin",
-        description="A small, green creature with a pointy nose.",
-        behavior=EntityBehavior.AGGRESSIVE,
-        sprite_sheet_id="goblin",
-        level=2,
-        xp_reward=15,
-        aggro_radius=5,
-        disengage_radius=15,
-        speed_bonus=5,
-        skills={
-            SkillType.ATTACK: 5,
-            SkillType.STRENGTH: 5,
-            SkillType.DEFENCE: 5,
-            SkillType.HITPOINTS: 10,
-        },
-        # Slight bonuses representing a small dagger
-        attack_bonus=2,
-        strength_bonus=1,
-    )
-    
     GIANT_RAT = MonsterDefinition(
         display_name="Giant Rat",
         description="An overgrown vermin with sharp teeth.",

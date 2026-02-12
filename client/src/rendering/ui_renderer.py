@@ -521,12 +521,12 @@ class Minimap:
         
         # NPCs (yellow) and Monsters (red) - single pass iteration (H8 fix)
         for entity_id, entity in getattr(game_state, 'entities', {}).items():
-            entity_type = entity.get('entity_type')
-            if entity_type not in ('npc', 'monster'):
+            entity_type = entity.entity_type.value
+            if entity_type not in ('humanoid_npc', 'monster'):
                 continue
                 
-            ex = entity.get("x", 0)
-            ey = entity.get("y", 0)
+            ex = entity.x
+            ey = entity.y
             
             dx = (ex - my_x) * scale
             dy = (ey - my_y) * scale
@@ -536,7 +536,7 @@ class Minimap:
             
             dist = ((dot_x - center[0]) ** 2 + (dot_y - center[1]) ** 2) ** 0.5
             if dist < self.radius - 8:
-                if entity_type == 'npc':
+                if entity_type == 'humanoid_npc':
                     pygame.draw.circle(screen, Colors.MINIMAP_NPC, (int(dot_x), int(dot_y)), 2)
                 else:  # monster
                     pygame.draw.circle(screen, Colors.MINIMAP_MONSTER, (int(dot_x), int(dot_y)), 2)

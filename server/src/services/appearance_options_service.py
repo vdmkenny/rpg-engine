@@ -115,6 +115,7 @@ RESTRICTIONS: Dict[str, Dict[str, Any]] = {
             "tunic": ["female"],
             "robe": ["female"],
             "vest": ["male"],
+            "shirt": ["child"],  # SHIRT only available for child body type (sprite limitation)
         }
     },
     # Shirt colors restricted by shirt style (robe has limited palette)

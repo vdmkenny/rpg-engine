@@ -100,7 +100,18 @@ async def spawned_goblin(game_state_managers, ai_test_map):
         current_hp=100,
         max_hp=100,
     )
-    
+
+    # Store spawn metadata so AI service knows spawn position
+    await entity_mgr.store_spawn_metadata(
+        instance_id=instance_id,
+        entity_name="GOBLIN",
+        entity_type="humanoid_npc",
+        spawn_x=50,
+        spawn_y=50,
+        wander_radius=5,
+        spawn_point_id=1,
+    )
+
     yield {
         "instance_id": instance_id,
         "map_id": map_id,

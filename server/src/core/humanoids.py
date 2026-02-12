@@ -59,7 +59,11 @@ class HumanoidDefinition:
     
     # Innate skill levels (base levels before equipment bonuses)
     skills: Dict[SkillType, int] = field(default_factory=dict)
-    
+
+    # AI behavior settings (for AGGRESSIVE/GUARD behaviors)
+    aggro_radius: int = 0  # Tiles within which entity will chase players
+    disengage_radius: int = 0  # Max tiles from spawn before returning
+
     @property
     def max_hp(self) -> int:
         """Calculate max HP from hitpoints skill level."""
@@ -83,11 +87,33 @@ class HumanoidDefinition:
 class HumanoidID(Enum):
     """
     All humanoid NPCs in the game.
-    
+
     Humanoid NPCs use paperdoll sprites with visible equipment.
     Their combat stats are derived from equipped items.
     """
-    
+
+    GOBLIN = HumanoidDefinition(
+        display_name="Goblin",
+        description="A small, green creature with a pointy nose.",
+        behavior=EntityBehavior.AGGRESSIVE,
+        appearance=AppearancePresets.GOBLIN,
+        is_attackable=True,
+        level=2,
+        respawn_time=30,
+        skills={
+            SkillType.ATTACK: 5,
+            SkillType.STRENGTH: 5,
+            SkillType.DEFENCE: 5,
+            SkillType.HITPOINTS: 10,
+        },
+        equipped_items={
+            EquipmentSlot.WEAPON: ItemType.COPPER_DAGGER,
+        },
+        # AI behavior settings (required for AGGRESSIVE behavior)
+        aggro_radius=5,
+        disengage_radius=15,
+    )
+
     VILLAGE_GUARD = HumanoidDefinition(
         display_name="Village Guard",
         description="Keeps the peace in the village.",
@@ -112,6 +138,9 @@ class HumanoidID(Enum):
             EquipmentSlot.GLOVES: ItemType.LEATHER_GLOVES,
         },
         dialogue=["Move along, citizen.", "I'm watching you."],
+        # Guards have moderate detection range
+        aggro_radius=8,
+        disengage_radius=20,
     )
     
     SHOPKEEPER_BOB = HumanoidDefinition(

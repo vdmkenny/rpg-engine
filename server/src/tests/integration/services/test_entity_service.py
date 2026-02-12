@@ -331,17 +331,20 @@ class TestSyncEntitiesToDb:
 class TestEntityServiceWithRealEntities:
     """Tests using real HumanoidID and MonsterID definitions."""
 
-    def test_goblin_monster_conversion(self):
-        """Test converting the GOBLIN monster definition."""
-        goblin_def = MonsterID.GOBLIN.value
-        
+    def test_goblin_humanoid_conversion(self):
+        """Test converting the GOBLIN humanoid definition."""
+        from server.src.core.humanoids import HumanoidID
+        goblin_def = HumanoidID.GOBLIN.value
+
         result = EntityService.entity_def_to_dict("GOBLIN", goblin_def)
-        
+
         assert result["name"] == "GOBLIN"
-        assert result["entity_type"] == "monster"
+        assert result["entity_type"] == "humanoid_npc"
         assert result["display_name"] == "Goblin"
         assert result["behavior"] == "aggressive"
         assert "skills" in result
+        assert "appearance" in result
+        assert "equipped_items" in result
 
     def test_village_guard_humanoid_conversion(self):
         """Test converting the VILLAGE_GUARD humanoid definition."""

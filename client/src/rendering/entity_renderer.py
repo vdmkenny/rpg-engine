@@ -57,6 +57,14 @@ class EntityRenderer:
                 if player["move_progress"] >= 1.0:
                     player["move_progress"] = 1.0
                     player["is_moving"] = False
+        
+        # Update entity movement interpolation
+        for entity_id, entity in game_state.entities.items():
+            if entity.is_moving:
+                entity.move_progress += delta_time / self.move_animation_duration
+                if entity.move_progress >= 1.0:
+                    entity.move_progress = 1.0
+                    entity.is_moving = False
     
     def render_all_sorted(
         self,
@@ -75,7 +83,14 @@ class EntityRenderer:
         
         # 1. NPCs and monsters
         for entity_id, entity in entities.items():
-            y = entity.y
+            # Get interpolated Y position if moving
+            if entity.is_moving:
+                t = entity.move_progress
+                start_y = entity.start_y
+                target_y = entity.target_y
+                y = start_y + (target_y - start_y) * t
+            else:
+                y = entity.y
             render_list.append((y, "entity", entity_id, entity))
         
         # 2. Other players
@@ -107,18 +122,65 @@ class EntityRenderer:
                 self._render_single_local_player(data)
     
     def _render_single_entity(self, entity_id: Union[int, str], entity) -> None:
-        """Render a single NPC/monster entity."""
-        x = entity.x
-        y = entity.y
+        """Render a single NPC/monster entity with paperdoll if available."""
+        # Use interpolated position if moving
+        if entity.is_moving:
+            t = entity.move_progress
+            x = entity.start_x + (entity.target_x - entity.start_x) * t
+            y = entity.start_y + (entity.target_y - entity.start_y) * t
+        else:
+            x = entity.x
+            y = entity.y
         entity_type = entity.entity_type
         
-        # Get color based on type
-        if entity_type.value == "monster":
-            color = self.monster_color
-        else:
-            color = self.npc_color
+        # Check if entity has paperdoll data (humanoid NPCs)
+        visual_hash = entity.visual_hash
+        visual_state = entity.visual_state
         
-        self._render_entity_at(x, y, color, entity.name)
+        if visual_state and visual_hash:
+            # Render humanoid NPC with paperdoll sprite
+            screen_x, screen_y = self.camera.tile_to_screen(x, y)
+            if not self.camera.is_on_screen(x * self.tile_size, y * self.tile_size, margin=self.tile_size):
+                return
+            
+            # Render with paperdoll sprite
+            sprite = None
+            try:
+                direction = Direction[entity.facing_direction.upper()]
+                if entity.is_moving:
+                    sprite = self.paperdoll_renderer.get_walk_frame(
+                        visual_state, visual_hash, direction,
+                        progress=entity.move_progress, render_size=64
+                    )
+                else:
+                    sprite = self.paperdoll_renderer.get_idle_frame(
+                        visual_state, visual_hash, direction, render_size=64
+                    )
+            except Exception as e:
+                import logging
+                logging.warning(f"Error rendering entity {entity_id} sprite: {e}")
+            
+            # Blit sprite
+            if sprite:
+                sprite_x = int(screen_x + (self.tile_size - sprite.get_width()) // 2)
+                sprite_y = int(screen_y + self.tile_size - sprite.get_height())
+                self.screen.blit(sprite, (sprite_x, sprite_y))
+            else:
+                # Fallback to colored shape
+                self._render_entity_at(x, y, self.npc_color, entity.name)
+            
+            # Draw entity name label
+            text = self.label_font.render(entity.name[:20], True, (255, 255, 255))
+            text_rect = text.get_rect(center=(screen_x + self.tile_size / 2, screen_y - 37))
+            self.screen.blit(text, text_rect)
+        else:
+            # Legacy rendering for monsters without paperdoll data
+            if entity_type.value == "monster":
+                color = self.monster_color
+            else:
+                color = self.npc_color
+            
+            self._render_entity_at(x, y, color, entity.name)
     
     def _render_single_other_player(self, player_id: int, player: Dict[str, Any]) -> None:
         """Render a single other player with paperdoll sprite."""

@@ -279,7 +279,8 @@ class TestEntitySpawnService:
         assert entity["spawn_y"] == 15
         assert entity["wander_radius"] == 5
         assert entity["state"] == "idle"
-        assert entity["max_hp"] == MonsterID.GOBLIN.value.max_hp
+        from server.src.core.humanoids import HumanoidID
+        assert entity["max_hp"] == HumanoidID.GOBLIN.value.max_hp
     
     async def test_spawn_single_entity_with_overrides(self, game_state_managers):
         """Test spawning entity with aggro/disengage overrides."""

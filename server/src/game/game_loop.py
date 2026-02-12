@@ -33,6 +33,7 @@ from server.src.services.game_state import (
 )
 from server.src.services.visibility_service import get_visibility_service
 from server.src.services.visual_registry import get_visual_registry
+from server.src.services.visual_state_service import VisualStateService
 from server.src.services.ai_service import AIService
 from server.src.services.entity_spawn_service import EntitySpawnService
 from server.src.core.entities import EntityState
@@ -211,30 +212,30 @@ def is_in_visible_range(
 
 def _build_equipped_items_map(equipment_data: Optional[EquipmentData], reference_mgr) -> Optional[Dict[str, str]]:
     """
-    Convert equipment data to slot->item_name mapping for paperdoll rendering.
+    Convert equipment data to slot->sprite_id mapping for paperdoll rendering.
+    
+    Delegates to VisualStateService._build_equipped_items_map for single source of truth.
     
     Args:
         equipment_data: EquipmentData Pydantic model with slots list
         reference_mgr: ReferenceDataManager for item cache lookup
         
     Returns:
-        Dict of {slot: item_name} or None if no equipment
+        Dict of {slot: equipped_sprite_id} or None if no equipment
     """
-    
     if not equipment_data or not equipment_data.slots:
         return None
     
-    equipped_items = {}
+    # Convert EquipmentData to the format expected by VisualStateService
+    equipment_list = []
     for slot_data in equipment_data.slots:
-        if not slot_data.item:
-            continue
-        item_id = slot_data.item.id
-        item_meta = reference_mgr.get_item_meta(item_id)
-        if not item_meta:
-            continue
-        equipped_items[slot_data.slot.value] = item_meta.get("name", "")
+        if slot_data.item:
+            equipment_list.append({
+                "slot": slot_data.slot.value,
+                "item_id": slot_data.item.id
+            })
     
-    return equipped_items if equipped_items else None
+    return VisualStateService._build_equipped_items_map(equipment_list, reference_mgr)
 
 
 def _build_visual_state(
@@ -243,37 +244,17 @@ def _build_visual_state(
 ) -> VisualState:
     """
     Build a VisualState from appearance dict and equipped items map.
+    
+    Delegates to VisualStateService._build_visual_state for single source of truth.
 
     Args:
         appearance: Appearance dictionary from player state
-        equipped_items: Dict mapping slot names to item names/sprite IDs
+        equipped_items: Dict mapping slot names to equipped_sprite_ids
 
     Returns:
         VisualState instance for hash computation and serialization
     """
-    # Build AppearanceData from dict
-    appearance_data = AppearanceData.from_dict(appearance)
-
-    # Build EquippedVisuals from equipped items
-    # The equipped_items dict maps slot -> item_name
-    # We use item_name as the sprite ID for now (will be improved with proper sprite mapping)
-    # Updated to use unified slot names: weapon, shield, cape, gloves, boots
-    if equipped_items:
-        equipped_visuals = EquippedVisuals(
-            head=equipped_items.get("head"),
-            cape=equipped_items.get("cape") or equipped_items.get("back"),
-            weapon=equipped_items.get("weapon") or equipped_items.get("main_hand"),
-            body=equipped_items.get("body"),
-            shield=equipped_items.get("shield") or equipped_items.get("off_hand"),
-            legs=equipped_items.get("legs"),
-            gloves=equipped_items.get("gloves") or equipped_items.get("hands"),
-            boots=equipped_items.get("boots") or equipped_items.get("feet"),
-            ammo=equipped_items.get("ammo"),
-        )
-    else:
-        equipped_visuals = EquippedVisuals()
-
-    return VisualState(appearance=appearance_data, equipment=equipped_visuals)
+    return VisualStateService._build_visual_state(appearance, equipped_items)
 
 
 def get_visible_players(
@@ -356,7 +337,7 @@ def get_visible_npc_entities(
         entity_y = int(entity.get("y", 0))
         
         if is_in_visible_range(player_x, player_y, entity_x, entity_y):
-            entity_id = entity.get("id")
+            entity_id = entity.get("instance_id")
             entity_name = entity.get("entity_name", "")
             entity_type = entity.get("entity_type", EntityType.MONSTER.value)
             
@@ -383,7 +364,9 @@ def get_visible_npc_entities(
                     equipped_items = None
                     if entity_def.equipped_items:
                         equipped_items = {
-                            slot.value: item.name for slot, item in entity_def.equipped_items.items()
+                            slot.value: item.value.equipped_sprite_id 
+                            for slot, item in entity_def.equipped_items.items()
+                            if item.value.equipped_sprite_id
                         }
                     visual_state = _build_visual_state(appearance, equipped_items)
                 elif isinstance(entity_def, MonsterDefinition):
@@ -400,6 +383,7 @@ def get_visible_npc_entities(
                 "behavior_type": behavior_type,
                 "x": entity_x,
                 "y": entity_y,
+                "facing_direction": entity.get("facing_direction", "DOWN"),
                 "current_hp": int(entity.get("current_hp", 0)),
                 "max_hp": int(entity.get("max_hp", 0)),
                 "state": entity_state,

@@ -123,7 +123,7 @@ class AIService:
                 logger.error(
                     "Error processing entity AI",
                     extra={
-                        "instance_id": entity.get("id"),
+                        "instance_id": entity.get("instance_id"),
                         "entity_name": entity.get("entity_name"),
                         "error": str(e),
                     }
@@ -333,7 +333,7 @@ class AIService:
         """
         Handle IDLE state: wait for random timer, then transition to WANDER.
         """
-        instance_id = entity.get("id")
+        instance_id = entity.get("instance_id")
         wander_radius = entity.get("wander_radius", 0)
         
         # If no wander radius, stay idle forever
@@ -367,6 +367,17 @@ class AIService:
             )
     
     @staticmethod
+    def _direction_from_delta(old_x: int, old_y: int, new_x: int, new_y: int) -> str:
+        """Calculate facing direction from movement delta."""
+        dx = new_x - old_x
+        dy = new_y - old_y
+        if abs(dx) > abs(dy):
+            return "RIGHT" if dx > 0 else "LEFT"
+        elif dy != 0:
+            return "DOWN" if dy > 0 else "UP"
+        return "DOWN"
+
+    @staticmethod
     async def _handle_wander_state(
         entity_mgr: EntityManager,
         entity: Dict[str, Any],
@@ -379,8 +390,8 @@ class AIService:
         """
         Handle WANDER state: move toward target, return to IDLE when reached.
         """
-        instance_id = entity.get("id")
-        
+        instance_id = entity.get("instance_id")
+
         # Check move interval
         if current_tick - timers["last_move_tick"] < settings.ENTITY_AI_WANDER_INTERVAL:
             return
@@ -413,8 +424,9 @@ class AIService:
         )
         
         if next_step:
-            # Move entity
-            await entity_mgr.update_entity_position(instance_id, next_step[0], next_step[1])
+            # Compute facing direction and move entity
+            facing_direction = AIService._direction_from_delta(entity_x, entity_y, next_step[0], next_step[1])
+            await entity_mgr.update_entity_position(instance_id, next_step[0], next_step[1], facing_direction)
             timers["last_move_tick"] = current_tick
         else:
             # No path, give up and return to idle
@@ -443,7 +455,7 @@ class AIService:
         Returns:
             EntityCombatEvent if an attack occurred, None otherwise.
         """
-        instance_id = entity.get("id")
+        instance_id = entity.get("instance_id")
         entity_x = entity.get("x", 0)
         entity_y = entity.get("y", 0)
         entity_pos = (entity_x, entity_y)
@@ -558,9 +570,10 @@ class AIService:
                     max_distance=settings.ENTITY_AI_MAX_PATHFINDING_DISTANCE,
                 )
                 
-                if next_step:
-                    await entity_mgr.update_entity_position(instance_id, next_step[0], next_step[1])
-                    timers["last_move_tick"] = current_tick
+        if next_step:
+            facing_direction = AIService._direction_from_delta(entity_x, entity_y, next_step[0], next_step[1])
+            await entity_mgr.update_entity_position(instance_id, next_step[0], next_step[1], facing_direction)
+            timers["last_move_tick"] = current_tick
         
         return None
     
@@ -579,7 +592,7 @@ class AIService:
         
         Transitions to IDLE when reached spawn.
         """
-        instance_id = entity.get("id")
+        instance_id = entity.get("instance_id")
         entity_x = entity.get("x", 0)
         entity_y = entity.get("y", 0)
         entity_pos = (entity_x, entity_y)
@@ -612,7 +625,8 @@ class AIService:
         )
         
         if next_step:
-            await entity_mgr.update_entity_position(instance_id, next_step[0], next_step[1])
+            facing_direction = AIService._direction_from_delta(entity_x, entity_y, next_step[0], next_step[1])
+            await entity_mgr.update_entity_position(instance_id, next_step[0], next_step[1], facing_direction)
             timers["last_move_tick"] = current_tick
         else:
             # Can't reach spawn (blocked), teleport to spawn
@@ -620,7 +634,8 @@ class AIService:
                 "Entity teleporting to spawn - path blocked",
                 extra={"instance_id": instance_id}
             )
-            await entity_mgr.update_entity_position(instance_id, spawn_x, spawn_y)
+            facing_direction = AIService._direction_from_delta(entity_x, entity_y, spawn_x, spawn_y)
+            await entity_mgr.update_entity_position(instance_id, spawn_x, spawn_y, facing_direction)
             max_hp = entity.get("max_hp", 10)
             await entity_mgr.update_entity_hp(instance_id, max_hp)
             await AIService._transition_to_idle(entity_mgr, instance_id, timers)
@@ -646,8 +661,8 @@ class AIService:
         """
         from server.src.services.combat_service import CombatService
         from common.src.protocol import CombatTargetType
-        
-        instance_id = entity.get("id")
+
+        instance_id = entity.get("instance_id")
         
         result = await CombatService.perform_attack(
             attacker_type=CombatTargetType.ENTITY,
@@ -760,7 +775,7 @@ class AIService:
         for entity in entities:
             target_player_id = entity.get("target_player_id")
             if target_player_id == player_id:
-                instance_id = entity.get("id")
+                instance_id = entity.get("instance_id")
                 if instance_id:
                     # Transition entity to RETURNING state
                     await entity_mgr.set_entity_state(

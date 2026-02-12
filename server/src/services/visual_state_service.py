@@ -44,8 +44,11 @@ class VisualStateService:
             if not item_def:
                 continue
             
-            # Use item sprite_id or fallback to item_id
-            sprite_id = getattr(item_def, "sprite_id", None) or item_id
+            # Use equipped_sprite_id from item definition (e.g., "equip_copper_dagger")
+            sprite_id = item_def.get("equipped_sprite_id")
+            if not sprite_id:
+                logger.warning(f"No equipped_sprite_id for item {item_id}, skipping")
+                continue
             equipped_items[slot] = sprite_id
         
         return equipped_items if equipped_items else None

@@ -125,6 +125,17 @@ class EntityManager(BaseManager):
             "respawn_delay_seconds": self._decode_from_valkey(
                 data.get("respawn_delay_seconds"), int
             ),
+            # Spawn metadata stored by store_spawn_metadata()
+            "entity_name": data.get("entity_name", ""),
+            "entity_type": data.get("entity_type", "monster"),
+            "spawn_x": self._decode_from_valkey(data.get("spawn_x"), int),
+            "spawn_y": self._decode_from_valkey(data.get("spawn_y"), int),
+            "wander_radius": self._decode_from_valkey(data.get("wander_radius"), int),
+            "spawn_point_id": self._decode_from_valkey(data.get("spawn_point_id"), int),
+            "aggro_radius": self._decode_from_valkey(data.get("aggro_radius"), int),
+            "disengage_radius": self._decode_from_valkey(data.get("disengage_radius"), int),
+            "death_tick": self._decode_from_valkey(data.get("death_tick"), int),
+            "facing_direction": data.get("facing_direction", "DOWN"),
         }
 
     async def get_map_entities(self, map_id: str) -> List[Dict[str, Any]]:
@@ -144,8 +155,8 @@ class EntityManager(BaseManager):
 
         return entities
 
-    async def update_entity_position(self, instance_id: int, x: int, y: int) -> None:
-        """Update entity position."""
+    async def update_entity_position(self, instance_id: int, x: int, y: int, facing_direction: str = "DOWN") -> None:
+        """Update entity position and facing direction."""
         if not self._valkey or not settings.USE_VALKEY:
             return
 
@@ -155,6 +166,7 @@ class EntityManager(BaseManager):
         if data:
             data["x"] = x
             data["y"] = y
+            data["facing_direction"] = facing_direction
             await self._cache_in_valkey(key, data, ENTITY_TTL)
 
     async def update_entity_hp(self, instance_id: int, current_hp: int) -> None:

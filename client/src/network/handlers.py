@@ -189,6 +189,23 @@ class MessageHandlers:
                 else:
                     # Update NPCs/monsters normally
                     self.game_state.update_entity(entity_id, entity)
+                    
+                    # Trigger sprite preloading for new NPCs with visual state
+                    visual_hash = entity.get("visual_hash")
+                    visual_state = entity.get("visual_state")
+                    if visual_hash and visual_state and self.game_state.should_preload_sprites(visual_hash):
+                        try:
+                            from ..rendering.sprite_manager import get_sprite_manager
+                            from ..rendering.paperdoll_renderer import PaperdollRenderer
+                            sprite_manager = get_sprite_manager()
+                            paperdoll = PaperdollRenderer(sprite_manager)
+                            import asyncio
+                            asyncio.create_task(
+                                paperdoll.preload_character(visual_state, visual_hash)
+                            )
+                            logger.debug(f"Started preloading NPC sprites: {entity_id}")
+                        except Exception as e:
+                            logger.warning(f"Failed to start NPC sprite preloading: {e}")
         
         # Remove despawned entities
         for entity_id in removed_entities:

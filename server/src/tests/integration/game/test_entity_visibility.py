@@ -25,6 +25,7 @@ class TestEntityVisibility:
             {
                 "id": 1,
                 "entity_name": "GOBLIN",
+                "entity_type": "humanoid_npc",
                 "x": 30,
                 "y": 30,
                 "current_hp": 10,
@@ -49,9 +50,8 @@ class TestEntityVisibility:
         assert entity_data["max_hp"] == 10
         assert entity_data["state"] == "idle"
         assert entity_data["is_attackable"] is True
-        # Monsters include sprite_sheet_id for rendering
-        assert "sprite_sheet_id" in entity_data
-        assert entity_data["entity_type"] == "monster"
+        # Entity type should be humanoid_npc for GOBLIN (now a humanoid)
+        assert entity_data["entity_type"] == "humanoid_npc"
     
     def test_get_visible_npc_entities_out_of_range(self):
         """Test entity outside visible range."""

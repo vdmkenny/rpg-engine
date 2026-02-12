@@ -355,3 +355,21 @@ class AppearancePresets:
         shoes_style=ShoesStyle.SHOES,
         shoes_color=ClothingColor.BROWN,
     )
+
+    # Goblin (child body with goblin head)
+    GOBLIN = AppearanceData(
+        body_type=BodyType.CHILD,
+        skin_tone=SkinTone.GREEN,
+        head_type=HeadType.GOBLIN,
+        hair_style=HairStyle.BALD,
+        hair_color=HairColor.GRAY,
+        eye_color=EyeColor.YELLOW,
+        facial_hair_style=FacialHairStyle.NONE,
+        facial_hair_color=HairColor.GRAY,
+        shirt_style=ClothingStyle.SHIRT,
+        shirt_color=ClothingColor.BROWN,
+        pants_style=PantsStyle.PANTS,
+        pants_color=ClothingColor.BROWN,
+        shoes_style=ShoesStyle.NONE,
+        shoes_color=ClothingColor.BROWN,
+    )

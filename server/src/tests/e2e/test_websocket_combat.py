@@ -32,15 +32,20 @@ class TestCombatIntegration:
     
     async def _spawn_test_entity(self, entity_manager, ref_manager, entity_name, map_id, x, y, max_hp):
         """Helper to spawn an entity by name, looking up the entity ID first."""
-        from server.src.core.monsters import MonsterID
-        
-        # Get entity ID from enum
-        entity_enum = getattr(MonsterID, entity_name, None)
+        from server.src.core.entities import get_entity_by_name
+        from server.src.services.game_state import get_reference_data_manager
+
+        # Get entity enum (works for both Humanoid and Monster)
+        entity_enum = get_entity_by_name(entity_name)
         if not entity_enum:
             raise ValueError(f"Unknown entity: {entity_name}")
-        
-        entity_id = entity_enum.value.value if hasattr(entity_enum.value, 'value') else entity_enum.value
-        
+
+        # Get numeric entity_id from reference data manager
+        ref_mgr = get_reference_data_manager()
+        entity_id = await ref_mgr.get_entity_id_by_name(entity_name)
+        if entity_id is None:
+            raise ValueError(f"Entity ID not found for: {entity_name}")
+
         return await entity_manager.spawn_entity_instance(
             entity_id=entity_id,
             map_id=map_id,
