@@ -1,0 +1,7 @@
+# Downloaded Idylwild icons - run scripts/setup_idylwild_icons.py to populate
+idylwild/
+
+# Keep these tracked
+!ATTRIBUTION.md
+!README.md
+!.gitignore

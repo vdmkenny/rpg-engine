@@ -685,6 +685,11 @@ class Client:
             sprite_manager = get_sprite_manager()
             sprite_manager.set_auth_token(self.jwt_token)
             
+            # Initialize icon manager for inventory and ground item icons
+            from client.src.rendering.icon_manager import IconManager, set_icon_manager
+            icon_manager = IconManager(self.config.server.base_url, self.jwt_token)
+            set_icon_manager(icon_manager)
+            
             # Connect WebSocket
             self.login_screen.set_status("Connecting...", Colors.TEXT_WHITE)
             success = await self.connection.connect(self.jwt_token)

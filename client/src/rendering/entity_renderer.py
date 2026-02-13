@@ -14,6 +14,7 @@ from ..ui.colors import Colors
 from .camera import Camera
 from .paperdoll_renderer import PaperdollRenderer
 from .sprite_manager import get_sprite_manager
+from .icon_manager import get_icon_manager
 
 
 class EntityRenderer:
@@ -276,7 +277,9 @@ class EntityRenderer:
             self.screen.blit(text, (center_x - text.get_width() // 2, center_y - text.get_height() // 2))
     
     def render_ground_items(self, ground_items: Dict[str, Dict[str, Any]]) -> None:
-        """Render items on the ground."""
+        """Render items on the ground using icons."""
+        icon_manager = get_icon_manager()
+        
         for item_id, item in ground_items.items():
             x = item.get("x", 0)
             y = item.get("y", 0)
@@ -285,7 +288,22 @@ class EntityRenderer:
             center_x = int(screen_x + self.tile_size / 2)
             center_y = int(screen_y + self.tile_size / 2)
             
-            # Draw item marker (small circle)
+            # Try to render icon if available
+            icon_sprite_id = item.get("icon_sprite_id")
+            if icon_manager and icon_sprite_id:
+                # Synchronously check cache (non-blocking)
+                icon_surface = icon_manager.get_icon_surface_sync(icon_sprite_id)
+                if icon_surface:
+                    # Center the icon on the tile
+                    icon_x = center_x - icon_surface.get_width() // 2
+                    icon_y = center_y - icon_surface.get_height() // 2
+                    self.screen.blit(icon_surface, (icon_x, icon_y))
+                    continue
+                else:
+                    # Not cached - schedule background download
+                    icon_manager.schedule_download(icon_sprite_id)
+            
+            # Fallback: draw item marker (small circle)
             radius = 4
             pygame.draw.circle(self.screen, self.item_color, (center_x, center_y), radius)
             pygame.draw.circle(self.screen, (255, 255, 255), (center_x, center_y), radius, 1)

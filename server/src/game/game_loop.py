@@ -1073,6 +1073,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             "y": ground_item.y,
                             "quantity": ground_item.quantity,
                             "is_protected": not ground_item.is_yours and ground_item.is_protected,
+                            "icon_sprite_id": ground_item.item.icon_sprite_id,
                         }
                     
                     # Combine players and ground items into single visibility state

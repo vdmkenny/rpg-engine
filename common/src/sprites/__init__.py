@@ -134,10 +134,23 @@ from .equipment_mapping import (
     EquipmentSprite,
     METAL_TINT_COLORS,
     EQUIPMENT_SPRITES,
+    EQUIPMENT_BODY_TYPE_MAP,
     get_equipment_sprite,
     resolve_equipment,
     get_all_sprite_ids,
     validate_sprite_id,
+)
+
+# =============================================================================
+# Icon Mapping - Item sprite ID to icon path resolution
+# =============================================================================
+
+from .icon_mapping import (
+    IconSprite,
+    ICON_SPRITES,
+    resolve_icon,
+    get_icon_info,
+    list_all_icons,
 )
 
 # =============================================================================
@@ -173,6 +186,7 @@ __all__ = [
     "DIRECTION_ROW_OFFSET",
     "METAL_TINT_COLORS",
     "EQUIPMENT_SPRITES",
+    "EQUIPMENT_BODY_TYPE_MAP",
     
     # Functions
     "supports_animation",
@@ -197,4 +211,11 @@ __all__ = [
     "resolve_equipment",
     "get_all_sprite_ids",
     "validate_sprite_id",
+    
+    # Icon mapping
+    "IconSprite",
+    "ICON_SPRITES",
+    "resolve_icon",
+    "get_icon_info",
+    "list_all_icons",
 ]

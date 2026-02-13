@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 
 from ..ui.colors import Colors
+from .icon_manager import get_icon_manager
 
 
 # =============================================================================
@@ -276,10 +277,33 @@ class TabbedSidePanel(UIPanel):
             # Item
             if slot in self.inventory_items:
                 item = self.inventory_items[slot]
-                pygame.draw.rect(screen, Colors.RARITY_UNCOMMON, slot_rect.inflate(-4, -4))
-                name = item.get("name", "?")[:3]
-                text = self.tiny_font.render(name, True, Colors.TEXT_ORANGE)
-                screen.blit(text, (slot_rect.x + 2, slot_rect.y + 2))
+                icon_sprite_id = item.get("icon_sprite_id")
+                icon_manager = get_icon_manager()
+                
+                # Try to render icon if available
+                icon_surface = None
+                if icon_manager and icon_sprite_id:
+                    icon_surface = icon_manager.get_icon_surface_sync(icon_sprite_id)
+                    if icon_surface is None:
+                        # Not cached - schedule background download
+                        icon_manager.schedule_download(icon_sprite_id)
+                
+                if icon_surface:
+                    # Scale icon to fit slot (32x32 icons should fit perfectly)
+                    icon_rect = icon_surface.get_rect(center=slot_rect.center)
+                    screen.blit(icon_surface, icon_rect)
+                else:
+                    # Fallback: show rarity-colored background with name abbreviation
+                    pygame.draw.rect(screen, Colors.RARITY_UNCOMMON, slot_rect.inflate(-4, -4))
+                    name = item.get("name", "?")[:2]
+                    text = self.tiny_font.render(name, True, Colors.TEXT_ORANGE)
+                    screen.blit(text, (slot_rect.x + 4, slot_rect.y + 4))
+                
+                # Draw quantity if stackable
+                quantity = item.get("quantity", 1)
+                if quantity > 1:
+                    qty_text = self.tiny_font.render(str(quantity), True, Colors.TEXT_WHITE)
+                    screen.blit(qty_text, (slot_rect.x + 2, slot_rect.y + slot_size - 12))
     
     def _draw_equipment_content(self, screen: pygame.Surface, content_rect: pygame.Rect) -> None:
         """Draw equipment paperdoll-style layout."""
@@ -323,16 +347,33 @@ class TabbedSidePanel(UIPanel):
             equipped_item = self.equipment_items.get(slot_name)
             
             if equipped_item:
-                # Draw equipped item slot
-                pygame.draw.rect(screen, Colors.RARITY_UNCOMMON, slot_rect)
-                pygame.draw.rect(screen, Colors.PANEL_BORDER, slot_rect, 1)
+                icon_sprite_id = equipped_item.get("icon_sprite_id")
+                icon_manager = get_icon_manager()
                 
-                # Draw item name (abbreviated)
-                item_name = equipped_item.get("name", "?")[:3]
-                text = self.tiny_font.render(item_name, True, Colors.TEXT_ORANGE)
-                text_x = slot_rect.x + (slot_size - text.get_width()) // 2
-                text_y = slot_rect.y + (slot_size - text.get_height()) // 2
-                screen.blit(text, (text_x, text_y))
+                # Try to render icon if available
+                icon_surface = None
+                if icon_manager and icon_sprite_id:
+                    icon_surface = icon_manager.get_icon_surface_sync(icon_sprite_id)
+                    if icon_surface is None:
+                        # Not cached - schedule background download
+                        icon_manager.schedule_download(icon_sprite_id)
+                
+                if icon_surface:
+                    # Draw icon centered in slot
+                    icon_rect = icon_surface.get_rect(center=slot_rect.center)
+                    screen.blit(icon_surface, icon_rect)
+                    # Add border around icon
+                    pygame.draw.rect(screen, Colors.PANEL_BORDER, slot_rect, 1)
+                else:
+                    # Fallback: show rarity-colored background with name abbreviation
+                    pygame.draw.rect(screen, Colors.RARITY_UNCOMMON, slot_rect)
+                    pygame.draw.rect(screen, Colors.PANEL_BORDER, slot_rect, 1)
+                    
+                    item_name = equipped_item.get("name", "?")[:3]
+                    text = self.tiny_font.render(item_name, True, Colors.TEXT_ORANGE)
+                    text_x = slot_rect.x + (slot_size - text.get_width()) // 2
+                    text_y = slot_rect.y + (slot_size - text.get_height()) // 2
+                    screen.blit(text, (text_x, text_y))
             else:
                 # Draw empty slot
                 pygame.draw.rect(screen, Colors.SLOT_BG, slot_rect)

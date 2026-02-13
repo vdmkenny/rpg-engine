@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="60" height="60" tilewidth="32" tileheight="32" infinite="0" nextlayerid="14" nextobjectid="3">
+<map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="60" height="60" tilewidth="32" tileheight="32" infinite="0" nextlayerid="14" nextobjectid="7">
  <tileset firstgid="1" source="../tilesets/[A]WaterFall_pipo.tsx"/>
  <tileset firstgid="577" name="[Base]BaseChip_pipo" tilewidth="32" tileheight="32" tilecount="1064" columns="8">
   <image source="../tilesets/[Base]BaseChip_pipo.png" width="256" height="4256"/>
@@ -584,13 +584,37 @@
 </data>
  </layer>
  <objectgroup id="13" name="spawn_points">
-  <object id="1" type="entity_spawn" x="1661.6" y="1085.55" width="32" height="32">
+  <object id="1" type="entity_spawn" x="987.095" y="1366.18" width="32" height="32">
    <properties>
     <property name="entity_id" value="GOBLIN"/>
     <property name="wander_radius" type="int" value="5"/>
    </properties>
   </object>
-  <object id="2" type="entity_spawn" x="1021.54" y="925.532" width="32" height="32">
+  <object id="2" type="entity_spawn" x="1243.09" y="969.843" width="32" height="32">
+   <properties>
+    <property name="entity_id" value="VILLAGE_GUARD"/>
+    <property name="wander_radius" type="int" value="3"/>
+   </properties>
+  </object>
+  <object id="3" type="entity_spawn" x="983.449" y="1456.09" width="32" height="32">
+   <properties>
+    <property name="entity_id" value="GOBLIN"/>
+    <property name="wander_radius" type="int" value="5"/>
+   </properties>
+  </object>
+  <object id="4" type="entity_spawn" x="924.368" y="1569.33" width="32" height="32">
+   <properties>
+    <property name="entity_id" value="GOBLIN"/>
+    <property name="wander_radius" type="int" value="5"/>
+   </properties>
+  </object>
+  <object id="5" type="entity_spawn" x="855.44" y="1773.65" width="32" height="32">
+   <properties>
+    <property name="entity_id" value="GOBLIN"/>
+    <property name="wander_radius" type="int" value="5"/>
+   </properties>
+  </object>
+  <object id="6" type="entity_spawn" x="892.366" y="919.445" width="32" height="32">
    <properties>
     <property name="entity_id" value="VILLAGE_GUARD"/>
     <property name="wander_radius" type="int" value="3"/>

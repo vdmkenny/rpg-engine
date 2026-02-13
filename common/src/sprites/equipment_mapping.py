@@ -167,21 +167,25 @@ EQUIPMENT_SPRITES: Dict[str, EquipmentSprite] = {
         base_path="weapon/sword/arming",
         variant="copper",
         has_layers=True,
+        has_idle=True,
     ),
     "equip_bronze_shortsword": EquipmentSprite(
         base_path="weapon/sword/arming",
         variant="bronze",
         has_layers=True,
+        has_idle=True,
     ),
     "equip_iron_shortsword": EquipmentSprite(
         base_path="weapon/sword/arming",
         variant="iron",
         has_layers=True,
+        has_idle=True,
     ),
     "equip_steel_shortsword": EquipmentSprite(
         base_path="weapon/sword/arming",
         variant="steel",
         has_layers=True,
+        has_idle=True,
     ),
     
     # =========================================================================
@@ -460,8 +464,10 @@ EQUIPMENT_SPRITES: Dict[str, EquipmentSprite] = {
         has_idle=False,
     ),
     "equip_leather_chaps": EquipmentSprite(
-        base_path="legs/leather/pants",
+        base_path="legs/pants",
         variant="leather",
+        body_type_category="armor_legs",
+        has_idle=True,
     ),
     "equip_leather_boots": EquipmentSprite(
         base_path="feet/boots/basic",
@@ -484,8 +490,10 @@ EQUIPMENT_SPRITES: Dict[str, EquipmentSprite] = {
         has_idle=False,
     ),
     "equip_hard_leather_chaps": EquipmentSprite(
-        base_path="legs/leather/pants",
+        base_path="legs/pants",
         variant="brown",
+        body_type_category="armor_legs",
+        has_idle=True,
     ),
     "equip_hard_leather_boots": EquipmentSprite(
         base_path="feet/boots/basic",
@@ -508,8 +516,10 @@ EQUIPMENT_SPRITES: Dict[str, EquipmentSprite] = {
         has_idle=False,
     ),
     "equip_studded_leather_chaps": EquipmentSprite(
-        base_path="legs/leather/pants",
+        base_path="legs/pants",
         variant="black",
+        body_type_category="armor_legs",
+        has_idle=True,
     ),
     "equip_studded_leather_boots": EquipmentSprite(
         base_path="feet/boots/basic",
@@ -561,11 +571,14 @@ EQUIPMENT_SPRITES: Dict[str, EquipmentSprite] = {
         base_path="tools/fishing",
         variant="net",
         has_idle=False,
+        flat_path="tools/fishing/walk/fishing.png",
     ),
     "equip_fishing_rod": EquipmentSprite(
         base_path="tools/rod",
         variant="rod",
         has_idle=False,
+        has_layers=True,
+        flat_path="tools/rod/foreground/rod.png",
     ),
     
     # =========================================================================
@@ -576,12 +589,14 @@ EQUIPMENT_SPRITES: Dict[str, EquipmentSprite] = {
         variant="arrows",
         tint=METAL_TINT_COLORS[MetalTier.BRONZE],
         has_idle=False,
+        flat_path="quiver/walk/quiver.png",
     ),
     "equip_iron_arrows": EquipmentSprite(
         base_path="quiver",
         variant="arrows",
         tint=METAL_TINT_COLORS[MetalTier.IRON],
         has_idle=False,
+        flat_path="quiver/walk/quiver.png",
     ),
 }
 

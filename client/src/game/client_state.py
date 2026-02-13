@@ -33,6 +33,7 @@ class InventoryItem:
     is_equippable: bool = False
     equipped_sprite: Optional[str] = None
     description: str = ""
+    icon_sprite_id: Optional[str] = None
 
 
 @dataclass
@@ -240,46 +241,53 @@ class ClientGameState:
     def update_inventory(self, data: Dict[str, Any]) -> None:
         """Update inventory from server data."""
         self.inventory.clear()
-        
-        items = data.get("items", [])
-        for item_data in items:
-            slot = item_data.get("slot", 0)
+
+        # Server sends InventoryData with "slots" key, not "items"
+        slots = data.get("slots", [])
+        for slot_data in slots:
+            slot = slot_data.get("slot", 0)
+            # Item data is nested under "item" key
+            item_info = slot_data.get("item", {})
             item = InventoryItem(
                 slot=slot,
-                item_id=item_data.get("item_id", ""),
-                name=item_data.get("name", "Unknown"),
-                quantity=item_data.get("quantity", 1),
-                category=item_data.get("category", ""),
-                rarity=item_data.get("rarity", "common"),
-                is_stackable=item_data.get("is_stackable", False),
-                is_equippable=item_data.get("is_equippable", False),
-                equipped_sprite=item_data.get("equipped_sprite"),
-                description=item_data.get("description", "")
+                item_id=item_info.get("id", ""),
+                name=item_info.get("display_name", item_info.get("name", "Unknown")),
+                quantity=item_info.get("quantity", 1),
+                category=item_info.get("category", ""),
+                rarity=item_info.get("rarity", "common"),
+                is_stackable=item_info.get("is_stackable", False),
+                is_equippable=item_info.get("is_equippable", False),
+                equipped_sprite=item_info.get("equipped_sprite"),
+                description=item_info.get("description", ""),
+                icon_sprite_id=item_info.get("icon_sprite_id")
             )
             self.inventory[slot] = item
-        
-        self.gold = data.get("gold", 0)
-        self.inventory_capacity = data.get("capacity", 28)
+
+        # Server sends max_slots, not capacity (but also keep capacity fallback)
+        self.inventory_capacity = data.get("max_slots", data.get("capacity", 28))
+        # Gold is not currently sent by server in InventoryData
     
     def update_equipment(self, data: Dict[str, Any]) -> None:
         """Update equipment from server data."""
         self.equipment.clear()
-        
+
         slots = data.get("slots", [])
         for slot_data in slots:
             slot_name = slot_data.get("slot")
             item_data = slot_data.get("item")
-            
+
             if slot_name and item_data:
                 item = InventoryItem(
                     slot=-1,  # Equipment doesn't have inventory slot
-                    item_id=item_data.get("item_id", ""),
-                    name=item_data.get("name", "Unknown"),
+                    item_id=item_data.get("id", ""),
+                    name=item_data.get("display_name", item_data.get("name", "Unknown")),
                     quantity=item_data.get("quantity", 1),
                     category=item_data.get("category", ""),
                     rarity=item_data.get("rarity", "common"),
                     is_equippable=True,
-                    equipped_sprite=item_data.get("equipped_sprite")
+                    equipped_sprite=item_data.get("equipped_sprite"),
+                    description=item_data.get("description", ""),
+                    icon_sprite_id=item_data.get("icon_sprite_id")
                 )
                 self.equipment[slot_name] = item
     

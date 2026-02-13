@@ -100,11 +100,15 @@ class UIRenderer:
                 "name": v.name,
                 "quantity": v.quantity,
                 "rarity": v.rarity,
-                "is_equippable": v.is_equippable
+                "is_equippable": v.is_equippable,
+                "icon_sprite_id": v.icon_sprite_id
             } for k, v in game_state.inventory.items()
         }
         self.side_panel.equipment_items = {
-            k: {"name": v.name} for k, v in game_state.equipment.items()
+            k: {
+                "name": v.name,
+                "icon_sprite_id": v.icon_sprite_id
+            } for k, v in game_state.equipment.items()
         }
         self.side_panel.skills = {
             k: {
