@@ -63,12 +63,15 @@ async def lifespan(app: FastAPI):
         # Ensure all ItemType entries exist in database
         from server.src.services.item_service import ItemService
         await ItemService.sync_items_to_db()
-        
+
         # Load item metadata cache (permanent cache for reference data)
         items_cached = await ref_manager.load_item_cache_from_db()
         logger.info("Items cached", extra={"item_count": items_cached})
+
+        if items_cached == 0:
+            logger.error("Item cache is empty - inventory will not work correctly")
     except Exception as e:
-        logger.warning("Could not load item cache", extra={"error": str(e)})
+        logger.error("Could not load item cache", extra={"error": str(e)})
         
     # Sync entities to database (mirroring code definitions)
     try:

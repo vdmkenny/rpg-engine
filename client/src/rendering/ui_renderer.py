@@ -290,11 +290,13 @@ class UIRenderer:
         
         slot_size = 32
         cols = 4
+        btn_height = 18
         grid_width = cols * (slot_size + 2) - 2
         content_rect = self.side_panel._get_content_rect()
         start_x = content_rect.x + (content_rect.width - grid_width) // 2
-        start_y = content_rect.y + 8
-        
+        # Must match _draw_inventory_content() in ui_panels.py: start_y + btn_height + 6 for buttons
+        start_y = content_rect.y + 8 + btn_height + 6
+
         for slot in range(28):
             col = slot % cols
             row = slot // cols

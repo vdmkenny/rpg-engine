@@ -75,6 +75,15 @@ class InventoryService:
                     quantity=item_data["quantity"],
                     current_durability=item_data.get("current_durability")
                 ))
+            else:
+                logger.warning(
+                    "Item not found in reference cache",
+                    extra={
+                        "player_id": player_id,
+                        "slot": slot_num,
+                        "item_id": item_data["item_id"],
+                    },
+                )
         
         return InventoryData(
             slots=inventory_slots,

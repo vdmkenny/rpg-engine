@@ -153,7 +153,25 @@ class MessageHandlers:
                 entity_id = entity_data.get("id")
                 if entity_id:
                     self.game_state.update_entity(entity_id, entity_data)
-        
+
+        # Update inventory
+        if "inventory" in systems:
+            logger.debug("Received inventory state update")
+            self.game_state.update_inventory(systems["inventory"])
+            self.event_bus.emit(EventType.INVENTORY_UPDATED, systems["inventory"])
+
+        # Update equipment
+        if "equipment" in systems:
+            logger.debug("Received equipment state update")
+            self.game_state.update_equipment(systems["equipment"])
+            self.event_bus.emit(EventType.EQUIPMENT_UPDATED, systems["equipment"])
+
+        # Update stats
+        if "stats" in systems:
+            logger.debug("Received stats state update")
+            self.game_state.update_stats(systems["stats"])
+            self.event_bus.emit(EventType.STATS_UPDATED, systems["stats"])
+
         self.event_bus.emit(EventType.STATE_CHANGED, {"systems": list(systems.keys())})
     
     async def handle_game_update(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:

@@ -252,12 +252,12 @@ class ClientGameState:
                 slot=slot,
                 item_id=item_info.get("id", ""),
                 name=item_info.get("display_name", item_info.get("name", "Unknown")),
-                quantity=item_info.get("quantity", 1),
+                quantity=slot_data.get("quantity", 1),
                 category=item_info.get("category", ""),
                 rarity=item_info.get("rarity", "common"),
-                is_stackable=item_info.get("is_stackable", False),
-                is_equippable=item_info.get("is_equippable", False),
-                equipped_sprite=item_info.get("equipped_sprite"),
+                is_stackable=item_info.get("max_stack_size", 1) > 1,
+                is_equippable=item_info.get("equipment_slot") is not None,
+                equipped_sprite=item_info.get("equipped_sprite_id"),
                 description=item_info.get("description", ""),
                 icon_sprite_id=item_info.get("icon_sprite_id")
             )
@@ -281,11 +281,11 @@ class ClientGameState:
                     slot=-1,  # Equipment doesn't have inventory slot
                     item_id=item_data.get("id", ""),
                     name=item_data.get("display_name", item_data.get("name", "Unknown")),
-                    quantity=item_data.get("quantity", 1),
+                    quantity=slot_data.get("quantity", 1),
                     category=item_data.get("category", ""),
                     rarity=item_data.get("rarity", "common"),
                     is_equippable=True,
-                    equipped_sprite=item_data.get("equipped_sprite"),
+                    equipped_sprite=item_data.get("equipped_sprite_id"),
                     description=item_data.get("description", ""),
                     icon_sprite_id=item_data.get("icon_sprite_id")
                 )
