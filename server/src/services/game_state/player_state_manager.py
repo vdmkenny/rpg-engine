@@ -413,7 +413,7 @@ class PlayerStateManager(BaseManager):
 
         async with self._db_session() as db:
             result = await db.execute(
-                select(Player.x, Player.y, Player.map_id, Player.last_move_time).where(
+                select(Player.x, Player.y, Player.map_id).where(
                     Player.id == player_id
                 )
             )
@@ -424,7 +424,7 @@ class PlayerStateManager(BaseManager):
                     "x": row.x or 0,
                     "y": row.y or 0,
                     "map_id": row.map_id or "",
-                    "last_move_time": (row.last_move_time or datetime.now(timezone.utc)).timestamp(),
+                    "last_move_time": datetime.now(timezone.utc).timestamp(),
                 }
             return None
 
@@ -482,10 +482,7 @@ class PlayerStateManager(BaseManager):
             player.x = position.get("x", player.x)
             player.y = position.get("y", player.y)
             player.map_id = position.get("map_id", player.map_id)
-            player.last_move_time = datetime.fromtimestamp(
-                position.get("last_movement_time", self._utc_timestamp()),
-                tz=timezone.utc
-            )
+            # Note: last_move_time is tracked in Valkey for rate-limiting, not persisted to database
             # Also sync current HP from Valkey to database
             state = await self.get_player_full_state(player_id)
             if state:
