@@ -1,0 +1,40 @@
+# Assets - mounted as volumes instead
+server/sprites/
+server/tilesets/
+server/maps/
+client_assets/
+tilesets/
+
+# Client - not run in Docker
+client/
+
+# Version control
+.git/
+.gitignore
+
+# Virtual environments
+.venv/
+venv/
+client_venv/
+env/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dev/temp files
+*.log
+*.tmp
+*.bak
+docs/

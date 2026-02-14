@@ -208,7 +208,6 @@ $RECYCLE.BIN/
 *~
 
 # Docker
-.dockerignore
 
 # Database files
 *.db

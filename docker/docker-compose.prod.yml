@@ -61,7 +61,10 @@ services:
       - PYTHONUNBUFFERED=1
     ports:
       - "8000:8000"
-    # No volume mounts in production for immutability
+    volumes:
+      - ../server/sprites:/app/server/sprites:ro
+      - ../server/tilesets:/app/server/tilesets:ro
+      - ../server/maps:/app/server/maps:ro
     restart: unless-stopped
     command: >
       poetry run uvicorn server.src.main:app 

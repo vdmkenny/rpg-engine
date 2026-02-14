@@ -59,39 +59,10 @@ services:
       - ../server/src:/app/server/src
       - ../server/alembic:/app/server/alembic
       - ../server/alembic.ini:/app/server/alembic.ini
-      - ../server/sprites:/app/server/sprites
+      - ../server/sprites:/app/server/sprites:ro
+      - ../server/tilesets:/app/server/tilesets:ro
+      - ../server/maps:/app/server/maps:ro
       - ../common/src:/app/common/src
-
-  client:
-    build:
-      context: ../
-      dockerfile: client/Dockerfile
-    container_name: rpg_client
-    depends_on:
-      server:
-        condition: service_healthy
-    environment:
-      - PYTHONPATH=/app
-      - SERVER_WS_URL=ws://server:8000
-      - SERVER_HTTP_URL=http://server:8000
-    volumes:
-      - ../:/app
-
-  test-collision:
-    build:
-      context: ../
-      dockerfile: client/Dockerfile
-    container_name: rpg_test_collision
-    depends_on:
-      server:
-        condition: service_healthy
-    environment:
-      - PYTHONPATH=/app
-    volumes:
-      - ../:/app
-    command: python /app/client/test_collision.py
-    profiles:
-      - test
 
 volumes:
   db_data:
