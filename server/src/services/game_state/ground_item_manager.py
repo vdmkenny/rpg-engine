@@ -171,16 +171,17 @@ class GroundItemManager(BaseManager):
                     "y": item.y,
                     "item_id": item.item_id,
                     "quantity": item.quantity,
-                    "durability": item.durability or 1.0,
-                    "dropped_by_player_id": item.dropped_by_player_id,
+                    "durability": item.current_durability or 1.0,
+                    "dropped_by_player_id": item.dropped_by,
                     "loot_protection_expires_at": (
-                        item.loot_protection_expires_at.timestamp()
-                        if item.loot_protection_expires_at
+                        item.public_at.timestamp()
+                        if item.public_at
                         else None
                     ),
                     "despawn_at": (
                         item.despawn_at.timestamp() if item.despawn_at else None
                     ),
+                    "created_at": item.dropped_at.timestamp() if item.dropped_at else None,
                 }
             return None
 
@@ -243,16 +244,17 @@ class GroundItemManager(BaseManager):
                     "y": item.y,
                     "item_id": item.item_id,
                     "quantity": item.quantity,
-                    "durability": item.durability or 1.0,
-                    "dropped_by_player_id": item.dropped_by_player_id,
+                    "durability": item.current_durability or 1.0,
+                    "dropped_by_player_id": item.dropped_by,
                     "loot_protection_expires_at": (
-                        item.loot_protection_expires_at.timestamp()
-                        if item.loot_protection_expires_at
+                        item.public_at.timestamp()
+                        if item.public_at
                         else None
                     ),
                     "despawn_at": (
                         item.despawn_at.timestamp() if item.despawn_at else None
                     ),
+                    "created_at": item.dropped_at.timestamp() if item.dropped_at else None,
                 }
                 for item in items
             ]
@@ -280,17 +282,17 @@ class GroundItemManager(BaseManager):
                     "y": item.y,
                     "item_id": item.item_id,
                     "quantity": item.quantity,
-                    "durability": item.durability or 1.0,
-                    "dropped_by_player_id": item.dropped_by_player_id,
+                    "durability": item.current_durability or 1.0,
+                    "dropped_by_player_id": item.dropped_by,
                     "loot_protection_expires_at": (
-                        item.loot_protection_expires_at.timestamp()
-                        if item.loot_protection_expires_at
+                        item.public_at.timestamp()
+                        if item.public_at
                         else None
                     ),
                     "despawn_at": (
                         item.despawn_at.timestamp() if item.despawn_at else None
                     ),
-                    "created_at": item.created_at.timestamp() if item.created_at else self._utc_timestamp(),
+                    "created_at": item.dropped_at.timestamp() if item.dropped_at else self._utc_timestamp(),
                 }
 
                 key = GROUND_ITEM_KEY.format(ground_item_id=item.id)
@@ -335,6 +337,7 @@ class GroundItemManager(BaseManager):
                 continue
 
             # Upsert to DB
+            # Map Valkey field names to SQLAlchemy model column names
             stmt = pg_insert(GroundItem).values(
                 id=item_id,
                 map_id=data.get("map_id"),
@@ -342,11 +345,11 @@ class GroundItemManager(BaseManager):
                 y=self._decode_from_valkey(data.get("y"), int),
                 item_id=self._decode_from_valkey(data.get("item_id"), int),
                 quantity=self._decode_from_valkey(data.get("quantity"), int),
-                durability=self._decode_from_valkey(data.get("durability"), float),
-                dropped_by_player_id=self._decode_from_valkey(
+                current_durability=self._decode_from_valkey(data.get("durability"), float),
+                dropped_by=self._decode_from_valkey(
                     data.get("dropped_by_player_id"), int
                 ),
-                loot_protection_expires_at=datetime.fromtimestamp(
+                public_at=datetime.fromtimestamp(
                     self._decode_from_valkey(data.get("loot_protection_expires_at"), float),
                     tz=timezone.utc,
                 )
@@ -358,7 +361,7 @@ class GroundItemManager(BaseManager):
                 )
                 if data.get("despawn_at")
                 else None,
-                created_at=datetime.fromtimestamp(
+                dropped_at=datetime.fromtimestamp(
                     self._decode_from_valkey(data.get("created_at"), float),
                     tz=timezone.utc,
                 )
@@ -372,7 +375,7 @@ class GroundItemManager(BaseManager):
                     "x": self._decode_from_valkey(data.get("x"), int),
                     "y": self._decode_from_valkey(data.get("y"), int),
                     "quantity": self._decode_from_valkey(data.get("quantity"), int),
-                    "durability": self._decode_from_valkey(data.get("durability"), float),
+                    "current_durability": self._decode_from_valkey(data.get("durability"), float),
                 },
             )
             await db.execute(stmt)
