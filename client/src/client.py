@@ -95,7 +95,8 @@ class Client:
         event_bus = get_event_bus()
         event_bus.subscribe(EventType.GAME_STARTED, self._on_game_started)
         event_bus.subscribe(EventType.CHAT_MESSAGE_RECEIVED, self._on_chat_message_received)
-        logger.debug("Subscribed to GAME_STARTED and CHAT_MESSAGE_RECEIVED events")
+        event_bus.subscribe(EventType.ERROR_RECEIVED, self._on_error_received)
+        logger.debug("Subscribed to GAME_STARTED, CHAT_MESSAGE_RECEIVED, and ERROR_RECEIVED events")
     
     async def _on_game_started(self, event: Event):
         """Handle game start - ensures renderer exists for reconnects."""
@@ -128,6 +129,13 @@ class Client:
         if self.renderer and self.renderer.ui_renderer:
             chat_window = self.renderer.ui_renderer.chat_window
             chat_window.add_message(channel, sender, message)
+
+    def _on_error_received(self, event: Event):
+        """Handle error responses from server - display in local chat."""
+        error_message = event.data.get("error", "Unknown error")
+        if self.renderer and self.renderer.ui_renderer:
+            chat_window = self.renderer.ui_renderer.chat_window
+            chat_window.add_message("local", "System", error_message)
 
     async def run(self):
         """Main client loop."""

@@ -433,7 +433,7 @@ class MessageHandlers:
     async def handle_error_response(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:
         """Handle error response."""
         error = payload.get("error", "Unknown error")
-        code = payload.get("code", "UNKNOWN")
+        code = payload.get("error_code", "UNKNOWN")
         category = payload.get("category", "system")
         
         logger.error(f"Server error [{code}]: {error}")
