@@ -533,6 +533,7 @@ class Client:
                 ground_item_id = data
                 self._safe_create_task(self.message_sender.item_pickup(ground_item_id))
         
+        logger.debug(f"_connect_ui_callbacks: Setting callbacks on ui_renderer")
         ui_renderer.on_inventory_action = on_inventory_action
         ui_renderer.on_equipment_action = on_equipment_action
         ui_renderer.on_world_action = on_world_action
@@ -798,6 +799,8 @@ class Client:
                 # Initialize game screen
                 self.renderer = Renderer(self.screen)
                 self.game_screen = GameScreen(self.screen, self.renderer)
+                # Reset callback setup flag since we have a new renderer instance
+                self._ui_callbacks_setup = False
 
                 # Set username in chat window for prefix display (Fix B)
                 self.renderer.ui_renderer.chat_window.username = username
