@@ -14,11 +14,14 @@ Notes for the next agent:
   production for performance and security reasons.
 """
 
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from glide import GlideClient, GlideClientConfiguration, NodeAddress, BackoffStrategy
 
 from server.src.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # --- PostgreSQL Database Setup ---
 engine = create_async_engine(
@@ -104,16 +107,73 @@ valkey_config = GlideClientConfiguration(
     ),
 )
 
-valkey_client: GlideClient | None = None
-
-
-async def get_valkey() -> GlideClient:
+class ResilientValkeyClient:
     """
-    Dependency to get a Valkey client.
+    Wrapper around GlideClient that automatically reconnects on connection failures.
+    
+    When a method call fails due to a closed connection, this wrapper recreates the
+    GlideClient and retries the operation. This ensures that Valkey idle disconnections
+    (after ~27 minutes) don't permanently break the server.
+    """
+
+    def __init__(self, config: GlideClientConfiguration):
+        self._config = config
+        self._client: GlideClient | None = None
+        self._lock_created = False
+
+    async def _ensure_connected(self) -> GlideClient:
+        """Ensure the client is connected, creating/recreating if necessary."""
+        if self._client is None:
+            self._client = await GlideClient.create(self._config)
+            logger.info("ResilientValkeyClient: Created new GlideClient connection")
+        return self._client
+
+    async def _call_with_reconnect(self, method_name: str, *args, **kwargs):
+        """
+        Execute a method on the Valkey client with automatic reconnection on failure.
+        """
+        try:
+            client = await self._ensure_connected()
+            method = getattr(client, method_name)
+            return await method(*args, **kwargs)
+        except Exception as e:
+            # Connection error — try to reconnect and retry once
+            logger.warning(
+                f"ResilientValkeyClient: Call to {method_name} failed with {type(e).__name__}, attempting reconnection",
+                extra={"error": str(e)}
+            )
+            self._client = None  # Force reconnection
+            try:
+                client = await self._ensure_connected()
+                method = getattr(client, method_name)
+                result = await method(*args, **kwargs)
+                logger.info(f"ResilientValkeyClient: Reconnection successful, {method_name} succeeded")
+                return result
+            except Exception as retry_error:
+                # Reconnection/retry failed — log and re-raise
+                logger.error(
+                    f"ResilientValkeyClient: Reconnection/retry of {method_name} failed",
+                    extra={"error": str(retry_error)}
+                )
+                raise
+
+    def __getattr__(self, name: str):
+        """Proxy all method calls through _call_with_reconnect."""
+        async def method_wrapper(*args, **kwargs):
+            return await self._call_with_reconnect(name, *args, **kwargs)
+        return method_wrapper
+
+
+valkey_client: ResilientValkeyClient | None = None
+
+
+async def get_valkey() -> ResilientValkeyClient:
+    """
+    Dependency to get a Valkey client wrapped with automatic reconnection.
     """
     global valkey_client
     if valkey_client is None:
-        valkey_client = await GlideClient.create(valkey_config)
+        valkey_client = ResilientValkeyClient(valkey_config)
     return valkey_client
 
 
@@ -129,4 +189,6 @@ def reset_valkey():
     The old client will be recreated on next get_valkey() call.
     """
     global valkey_client
+    if valkey_client is not None:
+        valkey_client._client = None  # Force reconnection on next use
     valkey_client = None

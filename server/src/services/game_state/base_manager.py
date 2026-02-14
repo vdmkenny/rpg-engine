@@ -77,8 +77,16 @@ class BaseManager:
         return value.decode() if isinstance(value, bytes) else value
 
     def _encode_for_valkey(self, value: Any) -> str:
+        """Encode a value for storage in Valkey as a string."""
+        if value is None:
+            return "None"
         if isinstance(value, (dict, list)):
             return json.dumps(value)
+        if isinstance(value, bool):
+            # Must check bool before int since bool is a subclass of int
+            return str(value)
+        if isinstance(value, (int, float)):
+            return str(value)
         return str(value)
 
     def _decode_from_valkey(self, value: Any, target_type: type = str) -> Any:
@@ -103,7 +111,7 @@ class BaseManager:
         return value
 
     async def _refresh_ttl(self, key: str, ttl: int) -> None:
-        if self._valkey:
+        if self._valkey and ttl > 0:
             await self._valkey.expire(key, ttl)
 
     async def _cache_in_valkey(

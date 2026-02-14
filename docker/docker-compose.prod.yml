@@ -26,6 +26,7 @@ services:
       - "6379:6379"
     volumes:
       - valkey_data:/data
+    command: valkey-server --timeout 0 --tcp-keepalive 60
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
@@ -66,7 +67,7 @@ services:
       poetry run uvicorn server.src.main:app 
       --host 0.0.0.0 
       --port 8000 
-      --workers 4 
+      --workers 1 
       --no-access-log
 
 volumes:

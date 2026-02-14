@@ -972,9 +972,9 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         death_tick = int(entity.get("death_tick", 0))
                         if current_tick >= death_tick:
                             # Death animation complete, finalize death
-                            await entity_mgr.finalize_entity_death(entity["id"])
+                            await entity_mgr.finalize_entity_death(entity["instance_id"])
                             # Clean up AI timer state for dead entity
-                            AIService.cleanup_entity_timers(entity["id"])
+                            AIService.cleanup_entity_timers(entity["instance_id"])
 
                 # Process entity AI for this map
                 entity_combat_events = await AIService.process_entities(

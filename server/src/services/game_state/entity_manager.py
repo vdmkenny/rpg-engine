@@ -26,8 +26,8 @@ MAP_ENTITIES_KEY = "map_entities:{map_id}"
 ENTITY_INSTANCE_COUNTER_KEY = "entity_instance_counter"
 ENTITY_RESPAWN_QUEUE_KEY = "entity_respawn_queue"
 
-# Entity instance TTL (30 minutes for active entities)
-ENTITY_TTL = 1800
+# Entity instance TTL (0 = permanent storage, entities never expire)
+ENTITY_TTL = 0
 
 
 class EntityManager(BaseManager):
@@ -78,10 +78,9 @@ class EntityManager(BaseManager):
             key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
             await self._cache_in_valkey(key, instance_data, ENTITY_TTL)
 
-            # Add to map index
+            # Add to map index (permanent storage, no expiration)
             map_key = MAP_ENTITIES_KEY.format(map_id=map_id)
             await self._valkey.sadd(map_key, [str(instance_id)])
-            await self._valkey.expire(map_key, ENTITY_TTL)
 
         return instance_id
 
