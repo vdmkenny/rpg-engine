@@ -476,6 +476,20 @@ class Client:
         # These will be connected once the renderer is initialized
         self._ui_callbacks_setup = False
     
+    def _safe_create_task(self, coro):
+        """Create an async task with error logging callback."""
+        task = asyncio.create_task(coro)
+        task.add_done_callback(self._on_task_done)
+        return task
+    
+    def _on_task_done(self, task):
+        """Log any exceptions from fire-and-forget tasks."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error(f"Async task failed: {exc}", exc_info=exc)
+    
     def _connect_ui_callbacks(self):
         """Connect UI callbacks to message sender."""
         if self._ui_callbacks_setup or not self.renderer:
@@ -486,26 +500,36 @@ class Client:
         # Inventory actions
         def on_inventory_action(action: str, slot: int):
             if action == "equip":
-                asyncio.create_task(self.message_sender.item_equip(slot))
+                self._safe_create_task(self.message_sender.item_equip(slot))
             elif action == "drop":
-                asyncio.create_task(self.message_sender.item_drop(slot))
+                self._safe_create_task(self.message_sender.item_drop(slot))
             elif action == "use":
                 # Use item - could be implemented based on item type
                 pass
+            elif action == "examine":
+                item = self.game_state.inventory.get(slot)
+                if item and self.renderer and self.renderer.ui_renderer:
+                    desc = item.description or "Nothing interesting."
+                    self.renderer.ui_renderer.chat_window.add_message("local", "", f"{item.name}: {desc}")
         
         # Equipment actions  
         def on_equipment_action(action: str, slot: str):
             if action == "unequip":
-                asyncio.create_task(self.message_sender.item_unequip(slot))
+                self._safe_create_task(self.message_sender.item_unequip(slot))
+            elif action == "examine":
+                item = self.game_state.equipment.get(slot)
+                if item and self.renderer and self.renderer.ui_renderer:
+                    desc = item.description or "Nothing interesting."
+                    self.renderer.ui_renderer.chat_window.add_message("local", "", f"{item.name}: {desc}")
         
         # World actions
         def on_world_action(action: str, data: any):
             if action == "attack":
                 target_type, target_id = data
-                asyncio.create_task(self.message_sender.attack(target_type, target_id))
+                self._safe_create_task(self.message_sender.attack(target_type, target_id))
             elif action == "pickup":
                 ground_item_id = data
-                asyncio.create_task(self.message_sender.item_pickup(ground_item_id))
+                self._safe_create_task(self.message_sender.item_pickup(ground_item_id))
         
         ui_renderer.on_inventory_action = on_inventory_action
         ui_renderer.on_equipment_action = on_equipment_action

@@ -920,9 +920,12 @@ class ContextMenu:
                 menu_rect = pygame.Rect(self.x, self.y, self.WIDTH, height)
                 
                 if menu_rect.collidepoint(event.pos):
-                    # Clicked on menu
-                    if 0 <= self.hovered_index < len(self.items):
-                        item = self.items[self.hovered_index]
+                    # Compute clicked index from click position directly (don't rely on hovered_index which may be stale)
+                    relative_y = event.pos[1] - self.y - self.PADDING
+                    if relative_y >= 0:
+                        clicked_index = relative_y // self.ITEM_HEIGHT
+                        clicked_index = max(0, min(clicked_index, len(self.items) - 1))
+                        item = self.items[clicked_index]
                         if self.on_select:
                             self.on_select(item)
                         self.hide()
