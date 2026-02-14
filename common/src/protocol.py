@@ -370,7 +370,7 @@ class ItemDropPayload(BaseModel):
 
 class ItemPickupPayload(BaseModel):
     """Payload for CMD_ITEM_PICKUP"""
-    ground_item_id: str = Field(..., description="Ground item ID to pickup")
+    ground_item_id: int = Field(..., description="Ground item ID to pickup")
 
 
 class ItemEquipPayload(BaseModel):

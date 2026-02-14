@@ -368,7 +368,7 @@ class Client:
         # Check for ground items at this tile
         for item_id, item in self.game_state.ground_items.items():
             if item.get("x") == tile_x and item.get("y") == tile_y:
-                item_name = item.get("name", "Unknown Item")
+                item_name = item.get("display_name", item.get("item_name", "Unknown Item"))
                 menu_items.append(ContextMenuItem(
                     f"Take {item_name}",
                     "pickup",

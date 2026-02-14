@@ -114,7 +114,7 @@ class GroundItemHandlerMixin:
             
             result = await GroundItemService.pickup_item(
                 player_id=self.player_id,
-                ground_item_id=int(payload.ground_item_id),
+                ground_item_id=payload.ground_item_id,
                 player_x=position["x"],
                 player_y=position["y"],
                 player_map_id=position["map_id"],

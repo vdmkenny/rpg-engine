@@ -139,7 +139,7 @@ class ClientGameState:
         self.other_players: Dict[int, Dict[str, Any]] = {}
         
         # Ground items
-        self.ground_items: Dict[str, Dict[str, Any]] = {}
+        self.ground_items: Dict[int, Dict[str, Any]] = {}
         
         # Map chunks
         self.chunks: Dict[Tuple[int, int], List[List[int]]] = {}

@@ -82,7 +82,7 @@ class MessageSender:
             {"inventory_slot": inventory_slot, "quantity": quantity}
         )
     
-    async def item_pickup(self, ground_item_id: str) -> bool:
+    async def item_pickup(self, ground_item_id: int) -> bool:
         """Pick up item from ground."""
         return await self._send(
             MessageType.CMD_ITEM_PICKUP,
