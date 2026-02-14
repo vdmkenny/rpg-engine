@@ -13,6 +13,17 @@ from ..ui.colors import Colors
 from .icon_manager import get_icon_manager
 
 
+# Map rarity strings to RGB colors
+RARITY_COLOR_MAP = {
+    "poor": Colors.RARITY_POOR,
+    "common": Colors.RARITY_COMMON,
+    "uncommon": Colors.RARITY_UNCOMMON,
+    "rare": Colors.RARITY_RARE,
+    "epic": Colors.RARITY_EPIC,
+    "legendary": Colors.RARITY_LEGENDARY,
+}
+
+
 # =============================================================================
 # BASE PANEL CLASS
 # =============================================================================
@@ -294,7 +305,9 @@ class TabbedSidePanel(UIPanel):
                     screen.blit(icon_surface, icon_rect)
                 else:
                     # Fallback: show rarity-colored background with name abbreviation
-                    pygame.draw.rect(screen, Colors.RARITY_UNCOMMON, slot_rect.inflate(-4, -4))
+                    rarity = item.get("rarity", "common")
+                    rarity_color = RARITY_COLOR_MAP.get(rarity, Colors.RARITY_COMMON)
+                    pygame.draw.rect(screen, rarity_color, slot_rect.inflate(-4, -4))
                     name = item.get("name", "?")[:2]
                     text = self.tiny_font.render(name, True, Colors.TEXT_ORANGE)
                     screen.blit(text, (slot_rect.x + 4, slot_rect.y + 4))
@@ -366,7 +379,9 @@ class TabbedSidePanel(UIPanel):
                     pygame.draw.rect(screen, Colors.PANEL_BORDER, slot_rect, 1)
                 else:
                     # Fallback: show rarity-colored background with name abbreviation
-                    pygame.draw.rect(screen, Colors.RARITY_UNCOMMON, slot_rect)
+                    rarity = equipped_item.get("rarity", "common")
+                    rarity_color = RARITY_COLOR_MAP.get(rarity, Colors.RARITY_COMMON)
+                    pygame.draw.rect(screen, rarity_color, slot_rect)
                     pygame.draw.rect(screen, Colors.PANEL_BORDER, slot_rect, 1)
                     
                     item_name = equipped_item.get("name", "?")[:3]

@@ -14,6 +14,17 @@ from .customisation_panel import CustomisationPanel
 from .help_modal import HelpModal, HelpButton
 
 
+# Map rarity strings to RGB colors
+RARITY_COLOR_MAP = {
+    "poor": Colors.RARITY_POOR,
+    "common": Colors.RARITY_COMMON,
+    "uncommon": Colors.RARITY_UNCOMMON,
+    "rare": Colors.RARITY_RARE,
+    "epic": Colors.RARITY_EPIC,
+    "legendary": Colors.RARITY_LEGENDARY,
+}
+
+
 class UIRenderer:
     """Renders UI panels and overlays using OSRS-style stone theme."""
     
@@ -391,10 +402,10 @@ class UIRenderer:
             hovered_slot = self._get_inventory_slot_at(pos, game_state)
             if hovered_slot is not None and hovered_slot in game_state.inventory:
                 item = game_state.inventory[hovered_slot]
+                rarity_color = RARITY_COLOR_MAP.get(item.rarity, Colors.TEXT_WHITE)
                 tooltip_data = [
-                    (item.name, Colors.TEXT_YELLOW),
+                    (item.name, rarity_color),
                     (f"Quantity: {item.quantity}", Colors.TEXT_WHITE),
-                    (f"Rarity: {item.rarity.title()}", Colors.TEXT_CYAN),
                 ]
                 if item.is_equippable:
                     tooltip_data.append(("Right-click for options", Colors.TEXT_GRAY))
@@ -404,8 +415,9 @@ class UIRenderer:
             hovered_slot = self._get_equipment_slot_at(pos)
             if hovered_slot and hovered_slot in game_state.equipment:
                 item = game_state.equipment[hovered_slot]
+                rarity_color = RARITY_COLOR_MAP.get(item.rarity, Colors.TEXT_WHITE)
                 tooltip_data = [
-                    (item.name, Colors.TEXT_YELLOW),
+                    (item.name, rarity_color),
                     (f"Slot: {hovered_slot.title()}", Colors.TEXT_WHITE),
                     ("Click to unequip", Colors.TEXT_GRAY),
                 ]

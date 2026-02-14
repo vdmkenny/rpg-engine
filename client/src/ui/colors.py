@@ -46,6 +46,7 @@ class Colors:
     XP_BG = (40, 40, 40)
     
     # Rarity colors
+    RARITY_POOR = (157, 157, 157)
     RARITY_COMMON = (255, 255, 255)
     RARITY_UNCOMMON = (30, 255, 0)
     RARITY_RARE = (0, 112, 221)
