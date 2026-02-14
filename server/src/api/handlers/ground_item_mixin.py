@@ -59,7 +59,7 @@ class GroundItemHandlerMixin:
             
             if result.success:
                 # Drop action breaks combat
-                await player_mgr.clear_combat_state(self.player_id)
+                await player_mgr.clear_player_combat_state(self.player_id)
                 
                 await self._send_success_response(
                     message.id,
@@ -122,7 +122,7 @@ class GroundItemHandlerMixin:
             
             if result.success:
                 # Pickup action breaks combat
-                await player_mgr.clear_combat_state(self.player_id)
+                await player_mgr.clear_player_combat_state(self.player_id)
                 
                 await self._send_success_response(
                     message.id,

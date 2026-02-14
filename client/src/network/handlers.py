@@ -233,11 +233,16 @@ class MessageHandlers:
         
         # Update ground items if present
         if "ground_items" in payload:
-            self.game_state.ground_items.clear()
             for item in payload["ground_items"]:
-                item_id = item.get("ground_item_id")
+                item_id = item.get("id")
                 if item_id:
                     self.game_state.ground_items[item_id] = item
+        
+        # Remove despawned ground items if present
+        if "removed_ground_item_ids" in payload:
+            for item_id in payload.get("removed_ground_item_ids", []):
+                if item_id in self.game_state.ground_items:
+                    del self.game_state.ground_items[item_id]
     
     async def handle_chat_message(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:
         """Handle incoming chat message."""

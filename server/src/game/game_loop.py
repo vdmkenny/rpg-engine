@@ -641,14 +641,31 @@ async def send_diff_update(
         
     try:
         # Combine added and updated into entities list
-        entities = diff["added"] + diff["updated"]
+        all_entities = diff["added"] + diff["updated"]
+        
+        # Separate ground items from other entities
+        entities = []
+        ground_items = []
+        for entity in all_entities:
+            if entity.get("type") == "ground_item":
+                ground_items.append(entity)
+            else:
+                entities.append(entity)
         
         # Build removed_entities list - use player_id for players, id for others
         removed_entities = []
+        removed_ground_item_ids = []
         for e in diff["removed"]:
             entity_id = e.get("id", "")
-            # Entity keys are like "player_123" or "entity_456" or "ground_item_xxx"
-            if isinstance(entity_id, str) and entity_id.startswith("player_"):
+            # Check if this is a ground item
+            if isinstance(entity_id, str) and entity_id.startswith("ground_item_"):
+                try:
+                    ground_item_id = int(entity_id.replace("ground_item_", ""))
+                    removed_ground_item_ids.append(ground_item_id)
+                except ValueError:
+                    removed_ground_item_ids.append(entity_id)
+            # Entity keys are like "player_123" or "entity_456"
+            elif isinstance(entity_id, str) and entity_id.startswith("player_"):
                 # Extract player_id from key
                 try:
                     removed_entities.append(int(entity_id.replace("player_", "")))
@@ -663,6 +680,8 @@ async def send_diff_update(
             payload={
                 "entities": entities,
                 "removed_entities": removed_entities,
+                "ground_items": ground_items,
+                "removed_ground_item_ids": removed_ground_item_ids,
                 "map_id": map_id,
             },
             version=PROTOCOL_VERSION
