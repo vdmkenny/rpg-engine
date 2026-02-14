@@ -857,6 +857,24 @@ class ContextMenu:
     
     def show(self, x: int, y: int, items: List[ContextMenuItem], on_select: Optional[Callable[[ContextMenuItem], None]] = None) -> None:
         """Show the context menu at the specified position."""
+        # Clamp to screen boundaries
+        screen = pygame.display.get_surface()
+        if screen:
+            height = len(items) * self.ITEM_HEIGHT + self.PADDING * 2
+            width = self.WIDTH
+            
+            # Clamp x coordinate (don't go off right edge)
+            if x + width > screen.get_width():
+                x = screen.get_width() - width
+            
+            # Clamp y coordinate (don't go off bottom edge)
+            if y + height > screen.get_height():
+                y = screen.get_height() - height
+            
+            # Clamp to left/top edges
+            x = max(0, x)
+            y = max(0, y)
+        
         self.x = x
         self.y = y
         self.items = items
@@ -930,6 +948,14 @@ class ContextMenu:
                             self.on_select(item)
                         self.hide()
                         return item.action
+                    else:
+                        # Click in padding zone at top of menu - treat as clicking first item
+                        if len(self.items) > 0:
+                            item = self.items[0]
+                            if self.on_select:
+                                self.on_select(item)
+                            self.hide()
+                            return item.action
                 else:
                     # Clicked outside - close menu
                     self.hide()

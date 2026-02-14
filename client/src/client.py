@@ -107,6 +107,8 @@ class Client:
             logger.info("Recreating renderer after reconnect")
             self.renderer = Renderer(self.screen)
             self.game_screen = GameScreen(self.screen, self.renderer)
+            # Reset callback setup flag since we have a new renderer instance
+            self._ui_callbacks_setup = False
             self._connect_ui_callbacks()
             
             # Transition to PLAYING state if we're in LOGIN
