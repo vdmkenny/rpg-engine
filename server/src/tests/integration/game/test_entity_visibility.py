@@ -23,7 +23,7 @@ class TestEntityVisibility:
         """Test entity within visible range."""
         entities = [
             {
-                "id": 1,
+                "instance_id": 1,
                 "entity_name": "GOBLIN",
                 "entity_type": "humanoid_npc",
                 "x": 30,
@@ -57,7 +57,7 @@ class TestEntityVisibility:
         """Test entity outside visible range."""
         entities = [
             {
-                "id": 1,
+                "instance_id": 1,
                 "entity_name": "GOBLIN",
                 "x": 100,  # Far away
                 "y": 100,
@@ -75,7 +75,7 @@ class TestEntityVisibility:
         """Test that dead entities are not visible."""
         entities = [
             {
-                "id": 1,
+                "instance_id": 1,
                 "entity_name": "GOBLIN",
                 "x": 30,
                 "y": 30,
@@ -93,7 +93,7 @@ class TestEntityVisibility:
         """Test that dying entities are visible (death animation)."""
         entities = [
             {
-                "id": 1,
+                "instance_id": 1,
                 "entity_name": "GOBLIN",
                 "x": 30,
                 "y": 30,
@@ -117,7 +117,7 @@ class TestEntityVisibility:
         """Test multiple entities with mixed visibility."""
         entities = [
             {
-                "id": 1,
+                "instance_id": 1,
                 "entity_name": "GOBLIN",
                 "x": 30,
                 "y": 30,
@@ -126,7 +126,7 @@ class TestEntityVisibility:
                 "state": "idle",
             },
             {
-                "id": 2,
+                "instance_id": 2,
                 "entity_name": "GIANT_RAT",
                 "x": 32,
                 "y": 28,
@@ -135,7 +135,7 @@ class TestEntityVisibility:
                 "state": "wandering",
             },
             {
-                "id": 3,
+                "instance_id": 3,
                 "entity_name": "FOREST_BEAR",
                 "x": 200,  # Out of range
                 "y": 200,
@@ -144,7 +144,7 @@ class TestEntityVisibility:
                 "state": "idle",
             },
             {
-                "id": 4,
+                "instance_id": 4,
                 "entity_name": "GOBLIN",
                 "x": 28,
                 "y": 27,
@@ -171,7 +171,7 @@ class TestEntityVisibility:
         """Test different NPC types (guards, merchants, quest givers)."""
         entities = [
             {
-                "id": 1,
+                "instance_id": 1,
                 "entity_name": "VILLAGE_GUARD",
                 "entity_type": "humanoid_npc",
                 "x": 30,
@@ -181,7 +181,7 @@ class TestEntityVisibility:
                 "state": "idle",
             },
             {
-                "id": 2,
+                "instance_id": 2,
                 "entity_name": "SHOPKEEPER_BOB",
                 "entity_type": "humanoid_npc",
                 "x": 32,
@@ -191,7 +191,7 @@ class TestEntityVisibility:
                 "state": "idle",
             },
             {
-                "id": 3,
+                "instance_id": 3,
                 "entity_name": "VILLAGE_ELDER",
                 "entity_type": "humanoid_npc",
                 "x": 28,
@@ -234,7 +234,7 @@ class TestEntityVisibility:
         """Test entity with unknown entity_name."""
         entities = [
             {
-                "id": 1,
+                "instance_id": 1,
                 "entity_name": "UNKNOWN_MONSTER",
                 "x": 30,
                 "y": 30,
