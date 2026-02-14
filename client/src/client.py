@@ -137,7 +137,8 @@ class Client:
         error_message = event.data.get("error", "Unknown error")
         if self.renderer and self.renderer.ui_renderer:
             chat_window = self.renderer.ui_renderer.chat_window
-            chat_window.add_message("local", "System", error_message)
+            # Pass empty username for system messages so they don't show "System: " prefix
+            chat_window.add_message("local", "", error_message)
 
     async def run(self):
         """Main client loop."""
@@ -512,7 +513,7 @@ class Client:
                 item = self.game_state.inventory.get(slot)
                 if item and self.renderer and self.renderer.ui_renderer:
                     desc = item.description or "Nothing interesting."
-                    self.renderer.ui_renderer.chat_window.add_message("local", "", f"{item.name}: {desc}")
+                    self.renderer.ui_renderer.chat_window.add_message("local", "", f"{item.name} {desc}")
         
         # Equipment actions  
         def on_equipment_action(action: str, slot: str):
@@ -522,7 +523,7 @@ class Client:
                 item = self.game_state.equipment.get(slot)
                 if item and self.renderer and self.renderer.ui_renderer:
                     desc = item.description or "Nothing interesting."
-                    self.renderer.ui_renderer.chat_window.add_message("local", "", f"{item.name}: {desc}")
+                    self.renderer.ui_renderer.chat_window.add_message("local", "", f"{item.name} {desc}")
         
         # World actions
         def on_world_action(action: str, data: any):

@@ -661,7 +661,8 @@ class ChatWindow(UIPanel):
         for msg_data in self.channels[self.active_channel]["messages"]:
             username = msg_data.get('username', '?')
             text = msg_data.get('text', '')
-            full_text = f"{username}: {text}"
+            # Don't show username and colon for system messages (empty username)
+            full_text = f"{username}: {text}" if username else text
             wrapped = self._wrap_text(full_text, max_text_width)
             color = self.channels[self.active_channel]["color"]
             for line in wrapped:
@@ -676,7 +677,8 @@ class ChatWindow(UIPanel):
             for msg_data in self.channels[self.active_channel]["messages"]:
                 username = msg_data.get('username', '?')
                 text = msg_data.get('text', '')
-                full_text = f"{username}: {text}"
+                # Don't show username and colon for system messages (empty username)
+                full_text = f"{username}: {text}" if username else text
                 wrapped = self._wrap_text(full_text, max_text_width)
                 color = self.channels[self.active_channel]["color"]
                 for line in wrapped:
