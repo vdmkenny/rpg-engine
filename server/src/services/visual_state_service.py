@@ -119,7 +119,7 @@ class VisualStateService:
                     if slot_data and slot_data.item:
                         equipment_list.append({
                             "slot": slot_data.slot.value,
-                            "item_id": slot_data.item.item_id
+                            "item_id": slot_data.item.id
                         })
             equipped_items = VisualStateService._build_equipped_items_map(equipment_list, ref_mgr)
             
