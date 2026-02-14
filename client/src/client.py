@@ -18,6 +18,7 @@ from client.src.network.connection import get_connection_manager
 from client.src.network.handlers import register_all_handlers
 from client.src.network.message_sender import get_message_sender
 from client.src.rendering.renderer import Renderer
+from client.src.rendering.ui_panels import RARITY_COLOR_MAP
 from client.src.ui.screens import ServerSelectScreen, LoginScreen, GameScreen
 from client.src.ui.colors import Colors
 from client.src.game_states import GameState
@@ -369,10 +370,12 @@ class Client:
         for item_id, item in self.game_state.ground_items.items():
             if item.get("x") == tile_x and item.get("y") == tile_y:
                 item_name = item.get("display_name", item.get("item_name", "Unknown Item"))
+                rarity = item.get("rarity", "common")
+                item_color = RARITY_COLOR_MAP.get(rarity, Colors.RARITY_COMMON)
                 menu_items.append(ContextMenuItem(
                     f"Take {item_name}",
                     "pickup",
-                    Colors.TEXT_WHITE,
+                    item_color,
                     item_id
                 ))
                 menu_items.append(ContextMenuItem(
