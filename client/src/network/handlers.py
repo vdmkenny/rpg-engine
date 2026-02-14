@@ -396,10 +396,17 @@ class MessageHandlers:
         
         # Handle admin give success response
         if "target_player_id" in data and "item_name" in data and "quantity" in data:
-            # This is an admin give response - display in chat
-            if self.renderer and self.renderer.ui_renderer:
-                chat_window = self.renderer.ui_renderer.chat_window
-                chat_window.add_message("local", "System", message)
+            # This is an admin give response - display in chat via event bus
+            chat_entry = {
+                "channel": "local",
+                "sender": "System",
+                "message": message,
+                "timestamp": 0
+            }
+            self.game_state.chat_history.append(chat_entry)
+            if len(self.game_state.chat_history) > 100:
+                self.game_state.chat_history.pop(0)
+            self.event_bus.emit(EventType.CHAT_MESSAGE_RECEIVED, chat_entry)
         
         # Update game state based on response data
         if "new_position" in data:
