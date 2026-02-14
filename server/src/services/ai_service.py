@@ -27,6 +27,7 @@ from server.src.services.map_service import get_map_manager
 from server.src.services.pathfinding_service import PathfindingService
 from server.src.services.player_service import PlayerService
 from server.src.services.entity_spawn_service import EntitySpawnService
+from server.src.schemas.player import NearbyPlayer
 
 logger = get_logger(__name__)
 
@@ -137,7 +138,7 @@ class AIService:
         entity: Dict[str, Any],
         collision_grid: List[List[bool]],
         blocked_positions: Set[Tuple[int, int]],
-        players_on_map: List[Dict[str, Any]],
+        players_on_map: List[NearbyPlayer],
         current_tick: int,
         map_id: str,
     ) -> Optional[EntityCombatEvent]:
@@ -221,14 +222,14 @@ class AIService:
                     await entity_mgr.set_entity_state(
                         instance_id=instance_id,
                         state=EntityState.COMBAT,
-                        target_player_id=aggro_target["player_id"],
+                        target_player_id=aggro_target.player_id,
                     )
                     timers["wander_target"] = None
                     logger.debug(
                         "Entity entering combat",
                         extra={
                             "instance_id": instance_id,
-                            "target_player_id": aggro_target["player_id"],
+                            "target_player_id": aggro_target.player_id,
                         }
                     )
                     return None
@@ -281,9 +282,9 @@ class AIService:
     async def _check_aggro(
         entity: Dict[str, Any],
         entity_def: MonsterDefinition,
-        players_on_map: List[Dict[str, Any]],
+        players_on_map: List[NearbyPlayer],
         collision_grid: List[List[bool]],
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[NearbyPlayer]:
         """
         Check if any player is within aggro range and has line of sight.
         
@@ -302,8 +303,8 @@ class AIService:
         closest_distance = float("inf")
         
         for player in players_on_map:
-            player_x = player.get("x", 0)
-            player_y = player.get("y", 0)
+            player_x = player.x
+            player_y = player.y
             player_pos = (player_x, player_y)
             
             # Check Manhattan distance
@@ -438,7 +439,7 @@ class AIService:
         entity: Dict[str, Any],
         entity_def: MonsterDefinition,
         timers: Dict[str, Any],
-        players_on_map: List[Dict[str, Any]],
+        players_on_map: List[NearbyPlayer],
         collision_grid: List[List[bool]],
         blocked_positions: Set[Tuple[int, int]],
         current_tick: int,
@@ -472,7 +473,7 @@ class AIService:
         # Find target in players list
         target_player = None
         for player in players_on_map:
-            if player.get("player_id") == target_player_id:
+            if player.player_id == target_player_id:
                 target_player = player
                 break
         
@@ -481,8 +482,8 @@ class AIService:
             await AIService._transition_to_returning(entity_mgr, instance_id, timers)
             return None
         
-        target_x = target_player.get("x", 0)
-        target_y = target_player.get("y", 0)
+        target_x = target_player.x
+        target_y = target_player.y
         target_pos = (target_x, target_y)
         
         # Check disengage distance (from spawn, not entity)

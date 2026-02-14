@@ -213,7 +213,11 @@ class InventoryManager(BaseManager):
             delete(PlayerInventory).where(PlayerInventory.player_id == player_id)
         )
 
-        # Insert current state
+        # Get reference data manager for item validation
+        from .reference_data_manager import get_reference_data_manager
+        ref_mgr = get_reference_data_manager()
+
+        # Insert current state, skipping items with stale item_ids
         for slot_str, item_data in inventory.items():
             slot = int(slot_str)
             item_id = self._decode_from_valkey(item_data.get("item_id"), int)
@@ -223,6 +227,18 @@ class InventoryManager(BaseManager):
             )
 
             if item_id and quantity:
+                # Validate item_id exists in reference data to prevent FK violations
+                if not ref_mgr.get_item_by_id(item_id):
+                    logger.warning(
+                        "Skipping stale inventory item",
+                        extra={
+                            "player_id": player_id,
+                            "item_id": item_id,
+                            "slot": slot,
+                        },
+                    )
+                    continue
+
                 new_inv = PlayerInventory(
                     player_id=player_id,
                     item_id=item_id,
