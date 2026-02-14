@@ -372,7 +372,7 @@ class TestDeathHandling:
         inventory_mgr = get_inventory_manager()
         
         # Give player some items via GSM
-        bronze_sword = await ItemService.get_item_by_name("bronze_sword")
+        bronze_sword = await ItemService.get_item_by_name("bronze_shortsword")
         if bronze_sword:
             await inventory_mgr.set_inventory_slot(player.id, 0, bronze_sword.id, 1, bronze_sword.max_durability)
         
@@ -397,7 +397,7 @@ class TestDeathHandling:
         inventory_mgr = get_inventory_manager()
         
         # Give player items
-        bronze_sword = await ItemService.get_item_by_name("bronze_sword")
+        bronze_sword = await ItemService.get_item_by_name("bronze_shortsword")
         if bronze_sword:
             await inventory_mgr.set_inventory_slot(player.id, 0, bronze_sword.id, 1, bronze_sword.max_durability)
             await inventory_mgr.set_inventory_slot(player.id, 1, bronze_sword.id, 1, bronze_sword.max_durability)

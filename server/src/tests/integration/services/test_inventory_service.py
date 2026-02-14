@@ -40,7 +40,7 @@ class TestAddItem:
     ):
         """Adding a single item should create inventory entry."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
 
         add_result = await InventoryService.add_item(player.id, item.id)
@@ -120,7 +120,7 @@ class TestMoveItem:
     ):
         """Moving to empty slot should work."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
 
         add_result = await InventoryService.add_item(player.id, item.id)
@@ -145,7 +145,7 @@ class TestMoveItem:
     ):
         """Moving to occupied slot should swap items."""
         player = player_with_inventory
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
         pickaxe = await ItemService.get_item_by_name("bronze_pickaxe")
         assert sword is not None
         assert pickaxe is not None
@@ -201,7 +201,7 @@ class TestMoveItem:
     ):
         """Moving to same slot should succeed (no-op)."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
 
         add_result = await InventoryService.add_item(player.id, item.id)
@@ -228,7 +228,7 @@ class TestMoveItem:
     ):
         """Moving to invalid slot should fail."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
 
         add_result = await InventoryService.add_item(player.id, item.id)
@@ -253,7 +253,7 @@ class TestSortInventory:
         """Sorting by category should group items correctly."""
         player = player_with_inventory
 
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
         ore = await ItemService.get_item_by_name("copper_ore")
         gold = await ItemService.get_item_by_name("gold_coins")
         assert sword is not None
@@ -293,7 +293,7 @@ class TestSortInventory:
         player = player_with_inventory
 
         shrimp = await ItemService.get_item_by_name("raw_shrimp")
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
         assert shrimp is not None
         assert sword is not None
 
@@ -327,7 +327,7 @@ class TestSortInventory:
         player = player_with_inventory
 
         ore = await ItemService.get_item_by_name("copper_ore")
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
         assert ore is not None
         assert sword is not None
 
@@ -355,7 +355,7 @@ class TestSortInventory:
         """Sorting by name should be alphabetical."""
         player = player_with_inventory
 
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
         arrows = await ItemService.get_item_by_name("bronze_arrows")
         assert sword is not None
         assert arrows is not None
@@ -385,7 +385,7 @@ class TestSortInventory:
         """Sorting should compact items to front of inventory."""
         player = player_with_inventory
 
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
         pickaxe = await ItemService.get_item_by_name("bronze_pickaxe")
         assert sword is not None
         assert pickaxe is not None
@@ -500,7 +500,7 @@ class TestInventoryResponse:
     ):
         """Inventory response should have all required fields."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
 
         await InventoryService.add_item(player.id, item.id)
@@ -518,7 +518,7 @@ class TestInventoryResponse:
     ):
         """Each slot should include item info."""
         player = player_with_inventory
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
 
         await InventoryService.add_item(player.id, item.id)

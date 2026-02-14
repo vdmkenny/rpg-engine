@@ -759,7 +759,7 @@ class TestDropPlayerItemsOnDeath:
     ):
         """Death should drop all equipped items."""
         player = player_for_ground_items
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
 
         await give_player_skill_level(session, player.id, "attack", 1)
 
@@ -796,7 +796,7 @@ class TestDropPlayerItemsOnDeath:
     ):
         """Death should drop inventory and equipment."""
         player = player_for_ground_items
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
         ore = await ItemService.get_item_by_name("copper_ore")
 
         await give_player_skill_level(session, player.id, "attack", 1)
@@ -858,7 +858,7 @@ class TestGetItemsAtPosition:
     ):
         """Should return all items at position."""
         player = player_for_ground_items
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
         ore = await ItemService.get_item_by_name("copper_ore")
 
         await GroundItemService.create_ground_item(

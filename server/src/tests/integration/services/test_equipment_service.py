@@ -82,7 +82,7 @@ class TestGetEquipment:
     ):
         """Equipment with items should return EquipmentData with filled slots."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         
         from server.src.services.player_service import PlayerService
         await PlayerService.login_player(player.id)
@@ -144,7 +144,7 @@ class TestCanEquip:
         from server.src.services.player_service import PlayerService
         await PlayerService.login_player(player.id)
         
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         
         result = await EquipmentService.can_equip(player.id, item._data)
         
@@ -205,7 +205,7 @@ class TestEquipFromInventory:
     ):
         """Basic equip should work."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, item.id)
@@ -319,7 +319,7 @@ class TestUnequipToInventory:
         self, session: AsyncSession, player_with_equipment):
         """Basic unequip should work."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, item.id)
@@ -352,7 +352,7 @@ class TestUnequipToInventory:
         self, session: AsyncSession, player_with_equipment):
         """Durability should be preserved when unequipping."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, item.id, durability=300)
@@ -388,7 +388,7 @@ class TestGetTotalStats:
         self, session: AsyncSession, player_with_equipment):
         """Single equipped item should contribute its stats."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, item.id)
@@ -438,7 +438,7 @@ class TestDurability:
         self, session: AsyncSession, player_with_equipment):
         """Degrading should reduce durability."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, item.id, durability=500)
@@ -465,7 +465,7 @@ class TestDurability:
         self, session: AsyncSession, player_with_equipment):
         """Durability should not go below zero."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, item.id, durability=1)
@@ -482,7 +482,7 @@ class TestDurability:
         self, session: AsyncSession, player_with_equipment):
         """Repairing should restore to max durability."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, item.id, durability=250)

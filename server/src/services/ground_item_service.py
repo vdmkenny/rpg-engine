@@ -202,15 +202,18 @@ class GroundItemService:
                     operation=OperationType.DROP,
                 )
 
-            if drop_quantity >= current_quantity:
-                await inventory_mgr.delete_inventory_slot(player_id, inventory_slot)
-            else:
-                await inventory_mgr.set_inventory_slot(
-                    player_id,
-                    inventory_slot,
-                    item_id,
-                    current_quantity - drop_quantity,
-                    durability or 1.0,
+            # Remove item from inventory using internal variant since we already hold the lock
+            remove_result = await InventoryService._remove_item_internal(
+                player_id, inventory_slot, drop_quantity
+            )
+
+            if not remove_result.success:
+                # Rollback: remove the ground item we just created
+                await ground_item_mgr.remove_ground_item(ground_item_id, map_id)
+                return OperationResult(
+                    success=False,
+                    message="Failed to remove item from inventory",
+                    operation=OperationType.DROP,
                 )
 
             logger.info(
@@ -308,77 +311,20 @@ class GroundItemService:
             if durability_val is not None:
                 durability_int = int(durability_val) if durability_val != 1.0 else None
             
-            # Add item directly via GSM to avoid nested lock with InventoryService.add_item()
-            # This mirrors the pattern used in drop_from_inventory
-            from .game_state import get_inventory_manager
-            
-            inventory_mgr = get_inventory_manager()
-            item = await ItemService.get_item_by_id(ground_item["item_id"])
-            if not item:
+            # Use internal variant since we already hold the inventory lock
+            add_result = await InventoryService._add_item_internal(
+                player_id=player_id,
+                item_id=ground_item["item_id"],
+                quantity=ground_item["quantity"],
+                durability=durability_int,
+            )
+
+            if not add_result.success:
                 return OperationResult(
                     success=False,
-                    message="Item not found",
+                    message=add_result.message,
                     operation=OperationType.PICKUP,
                 )
-            
-            # Set durability to max if not specified and item has durability
-            item_durability = durability_int
-            if item_durability is None and item.max_durability is not None:
-                item_durability = item.max_durability
-            
-            # Get current inventory to find suitable slot
-            inventory_data = await inventory_mgr.get_inventory(player_id)
-            added_quantity = 0
-            added_slot = None
-            
-            # Try to stack with existing items first
-            for slot_num, slot_data in inventory_data.items():
-                if (
-                    slot_data["item_id"] == item.id
-                    and item.max_stack_size > 1
-                    and slot_data.get("quantity", 1) < item.max_stack_size
-                ):
-                    current_qty = slot_data.get("quantity", 1)
-                    space_available = item.max_stack_size - current_qty
-                    add_amount = min(ground_item["quantity"], space_available)
-                    
-                    new_quantity = current_qty + add_amount
-                    await inventory_mgr.set_inventory_slot(
-                        player_id, slot_num, item.id, new_quantity, float(item_durability) if item_durability is not None else 1.0
-                    )
-                    
-                    added_quantity = add_amount
-                    added_slot = int(slot_num)
-                    break
-            
-            # If not fully stacked, find empty slot for remainder
-            remaining_qty = ground_item["quantity"] - added_quantity
-            if remaining_qty > 0:
-                empty_slot = None
-                for slot_num in range(30):  # Standard inventory size
-                    if str(slot_num) not in inventory_data:
-                        empty_slot = slot_num
-                        break
-                
-                if empty_slot is not None:
-                    await inventory_mgr.set_inventory_slot(
-                        player_id, empty_slot, item.id, remaining_qty, float(item_durability) if item_durability is not None else 1.0
-                    )
-                    if added_slot is None:
-                        added_slot = empty_slot
-                else:
-                    return OperationResult(
-                        success=False,
-                        message="Inventory is full",
-                        operation=OperationType.PICKUP,
-                    )
-            
-            add_result = OperationResult(
-                success=True,
-                message=f"Added {ground_item['quantity']} items to inventory",
-                operation=OperationType.ADD,
-                data={"slot": added_slot, "quantity": ground_item["quantity"]},
-            )
 
             await ground_item_mgr.remove_ground_item(ground_item_id, ground_item["map_id"])
 

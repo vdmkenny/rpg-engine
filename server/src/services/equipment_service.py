@@ -447,7 +447,7 @@ class EquipmentService:
                     await equipment_mgr.set_equipment_slot(
                         player_id, equipment_slot.value, item_data.get("id"), new_total, current_durability
                     )
-                    await InventoryService.remove_item(player_id, inventory_slot, add_qty)
+                    await InventoryService._remove_item_internal(player_id, inventory_slot, add_qty)
                     
                     updated_stats = await EquipmentService.get_total_stats(player_id)
                     
@@ -476,7 +476,7 @@ class EquipmentService:
                         player_id, equipment_slot.value, item_data.get("id"), max_stack, current_durability
                     )
                     
-                    await InventoryService.remove_item(player_id, inventory_slot, amount_to_add)
+                    await InventoryService._remove_item_internal(player_id, inventory_slot, amount_to_add)
                     
                     updated_stats = await EquipmentService.get_total_stats(player_id)
                     
@@ -533,7 +533,7 @@ class EquipmentService:
                     )
 
             equip_quantity = inv.quantity
-            await InventoryService.remove_item(player_id, inventory_slot, equip_quantity)
+            await InventoryService._remove_item_internal(player_id, inventory_slot, equip_quantity)
 
             for eq in items_to_unequip:
                 if eq.item:
@@ -548,7 +548,7 @@ class EquipmentService:
                             extra={"player_id": player_id, "slot": eq.slot.value}
                         )
 
-                    add_result = await InventoryService.add_item(
+                    add_result = await InventoryService._add_item_internal(
                         player_id=player_id,
                         item_id=eq.item.id,
                         quantity=unequip_qty,

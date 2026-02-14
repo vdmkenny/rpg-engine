@@ -191,7 +191,103 @@ game_state_cache:
 
 ## Cross-Service Communication
 
-**✅ Correct Pattern:**
+### Lock-Safe Service Coordination
+
+**Problem**: When one service calls another service while holding a player lock, nested lock acquisition causes deadlocks. `PlayerLockManager` uses one `asyncio.Lock` per player (keyed by `player_id` only), so acquiring the same lock twice from the same coroutine causes indefinite blocking.
+
+**Solution**: Internal Unlocked Variant Pattern
+
+Create two versions of service methods that need to participate in cross-service operations:
+1. **Public method**: Acquires lock, calls internal variant, releases lock
+2. **Internal method** (suffix `_internal`): Pure business logic, NO lock acquisition, called only from code that already holds the player lock
+
+**✅ Correct Pattern with Lock-Safe Coordination:**
+
+```python
+# INVENTORY SERVICE - Two variants of add_item
+class InventoryService:
+    @staticmethod
+    async def _add_item_internal(
+        player_id: int, item_id: int, quantity: int = 1
+    ) -> AddItemResult:
+        """
+        Add item to inventory (internal variant, no lock).
+        
+        Caller MUST already hold the player lock (PlayerLockManager.INVENTORY or EQUIPMENT).
+        This method is called from within other locked operations where nested lock
+        acquisition would cause deadlock.
+        """
+        # Pure business logic: validation, slot finding, etc.
+        gsm = get_game_state_manager()
+        item_meta = gsm.get_item_metadata(item_id)
+        if not item_meta:
+            return AddItemResult(success=False, error="Item not found")
+        
+        inventory = await gsm.get_player_inventory(player_id)
+        target_slot = InventoryService._find_best_slot(inventory, item_meta, quantity)
+        if target_slot is None:
+            return AddItemResult(success=False, error="Inventory full")
+        
+        # Update via GSM (no lock needed, GSM is thread-safe)
+        success = await gsm.update_inventory_slot(player_id, target_slot, new_data)
+        return AddItemResult(success=success, slot=target_slot)
+    
+    @staticmethod
+    async def add_item(
+        player_id: int, item_id: int, quantity: int = 1
+    ) -> AddItemResult:
+        """Public variant: thin wrapper that acquires lock then delegates."""
+        lock_manager = get_player_lock_manager()
+        async with lock_manager.acquire(player_id, LockType.INVENTORY):
+            return await InventoryService._add_item_internal(
+                player_id, item_id, quantity
+            )
+
+# EQUIPMENT SERVICE - Cross-service call using internal variant
+class EquipmentService:
+    @staticmethod
+    async def equip_from_inventory(
+        player_id: int, inv_slot: int, eq_slot: str
+    ) -> EquipResult:
+        lock_manager = get_player_lock_manager()
+        async with lock_manager.acquire(player_id, LockType.EQUIPMENT):
+            # ... validation logic ...
+            
+            # ✅ CORRECT: Call internal variant (no nested lock acquisition)
+            remove_result = await InventoryService._remove_item_internal(
+                player_id, inv_slot
+            )
+            if not remove_result.success:
+                return EquipResult(success=False, error=remove_result.error)
+            
+            # Update equipment via GSM
+            gsm = get_game_state_manager()
+            await gsm.update_equipment_slot(player_id, eq_slot, item_data)
+            
+            return EquipResult(success=True)
+
+# OLD PATTERN (DEADLOCK - DON'T DO THIS)
+async def equip_from_inventory(...):
+    async with lock_manager.acquire(player_id, LockType.EQUIPMENT):
+        # ❌ DEADLOCK: Nested lock acquisition
+        remove_result = await InventoryService.remove_item(player_id, inv_slot)
+        # ^ This tries to acquire the SAME lock again from within the lock!
+```
+
+**Pattern Summary**:
+- **Public methods** (`add_item`, `remove_item`): Acquire lock → call internal → release lock
+- **Internal methods** (`_add_item_internal`, `_remove_item_internal`): No lock, pure business logic
+- **Convention**: `_internal` suffix signals "caller must already hold the player lock"
+- **Usage**: Services call `_internal` variants when already holding a lock; external callers use public methods
+
+**Lock Architecture Details**:
+- `PlayerLockManager.acquire(player_id, lock_type)` returns one lock per player regardless of `LockType`
+- `LockType` (INVENTORY, EQUIPMENT, HP, SKILLS, etc.) is metadata for logging, not separate locks
+- Only INVENTORY and EQUIPMENT locks are currently used in service code
+- Once you hold a lock for a player, you can safely call any `_internal` method for that player
+
+### ✅ Correct Pattern (Standard Cross-Service Call):
+
 ```python
 class EquipmentService:
     @staticmethod
@@ -201,7 +297,7 @@ class EquipmentService:
         if not can_equip:
             return EquipResult(success=False, error="Requirements not met")
             
-        # 2. Coordinate with other services  
+        # 2. Coordinate with other services (public variants)
         inv_result = await InventoryService.remove_item(player_id, inv_slot)
         
         # 3. Update state via GSM
@@ -213,6 +309,14 @@ class EquipmentService:
         
         return EquipResult(success=True)
 ```
+
+### Extensibility
+
+To add locks to new functionality:
+1. Extract business logic into `_method_name_internal()` static method
+2. Make the public `method_name()` a thin lock-acquiring wrapper
+3. Document the lock requirement in docstrings
+4. Update all cross-service callers to use `_internal` variants where appropriate
 
 ## Error Handling Patterns
 
@@ -567,6 +671,7 @@ async def authenticate_with_password(username: str, password: str) -> Optional[P
 - **HP Calculation**: Max HP computed from hitpoints skill level, not stored separately
 - **Authentication**: Password verification is the only operation requiring direct database access
 - **Test Isolation**: Services must use `player_mgr._db_session()` for database access to maintain test isolation
+- **Lock-Safe Cross-Service Calls**: Use internal unlocked variants (`_method_internal`) when calling other services from within a locked operation to prevent deadlock from nested lock acquisition
 
 ### Rationale
 - Simplicity over complexity in data access patterns
