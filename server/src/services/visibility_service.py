@@ -134,17 +134,6 @@ class VisibilityService:
                 "removed": [{"id": entity_key} for entity_key in removed_keys]
             }
             
-            logger.debug(
-                "Updated player visibility state",
-                extra={
-                    "player_id": player_id,
-                    "added_count": len(added_keys),
-                    "updated_count": len(updated_keys), 
-                    "removed_count": len(removed_keys),
-                    "total_visible": len(current_entity_keys)
-                }
-            )
-            
             return diff
     
     async def remove_player(self, player_id: int) -> None:

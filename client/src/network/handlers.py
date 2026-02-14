@@ -394,6 +394,13 @@ class MessageHandlers:
         data = payload.get("data", payload)
         logger.debug(f"Success: {message}")
         
+        # Handle admin give success response
+        if "target_player_id" in data and "item_name" in data and "quantity" in data:
+            # This is an admin give response - display in chat
+            if self.renderer and self.renderer.ui_renderer:
+                chat_window = self.renderer.ui_renderer.chat_window
+                chat_window.add_message("local", "System", message)
+        
         # Update game state based on response data
         if "new_position" in data:
             new_pos = data["new_position"]

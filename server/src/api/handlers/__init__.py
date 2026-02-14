@@ -14,6 +14,7 @@ from server.src.api.handlers.equipment_mixin import EquipmentHandlerMixin
 from server.src.api.handlers.combat_mixin import CombatHandlerMixin
 from server.src.api.handlers.query_mixin import QueryHandlerMixin
 from server.src.api.handlers.appearance_mixin import AppearanceHandlerMixin
+from server.src.api.handlers.admin_mixin import AdminHandlerMixin
 
 __all__ = [
     "BaseHandlerMixin",
@@ -25,4 +26,5 @@ __all__ = [
     "CombatHandlerMixin",
     "QueryHandlerMixin",
     "AppearanceHandlerMixin",
+    "AdminHandlerMixin",
 ]

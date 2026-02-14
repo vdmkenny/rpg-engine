@@ -1202,18 +1202,22 @@ def set_player_timeout(
 from server.src.tests.websocket_test_utils import WebSocketTestClient
 
 
-@pytest_asyncio.fixture
-async def test_client(
-    fake_valkey: FakeValkey, game_state_managers, map_manager_loaded: None
+async def _create_websocket_test_client(
+    fake_valkey: FakeValkey, 
+    is_admin: bool = False
 ) -> AsyncGenerator[WebSocketTestClient, None]:
     """
-    Create a WebSocket test client with per-test data cleanup.
+    Helper to create a WebSocket test client with per-test data cleanup.
     
     Provides a pre-authenticated WebSocket connection with unique usernames
     to prevent conflicts. Uses PlayerService for player creation following
     the service-first architecture pattern.
     
     Uses AsyncExitStack for proper resource cleanup and timeouts to prevent hanging.
+    
+    Args:
+        fake_valkey: FakeValkey instance for testing
+        is_admin: If True, creates an admin player; otherwise creates regular player
     """
     import uuid
     from contextlib import AsyncExitStack
@@ -1224,6 +1228,8 @@ async def test_client(
     from server.src.schemas.player import PlayerCreate
     from common.src.protocol import WSMessage, MessageType, AuthenticatePayload
     from server.src.core.security import create_access_token
+    from server.src.core.constants import PlayerRole
+    from server.src.models.player import Player
     
     # Create a session for this integration test
     if TestingSessionLocal is None:
@@ -1260,6 +1266,13 @@ async def test_client(
                 map_id="samplemap"
             )
             player_id = player_result.id
+            
+            # If admin flag is set, update player role in database
+            if is_admin:
+                player = await session.get(Player, player_id)
+                if player:
+                    player.role = PlayerRole.ADMIN
+                    await session.commit()
             
             # Create JWT token
             token = create_access_token(data={"sub": username})
@@ -1323,6 +1336,9 @@ async def test_client(
                 
                 # Create WebSocket test client wrapper
                 client = WebSocketTestClient(websocket)
+                # Store username and player_id for tests to use
+                client.username = username
+                client.player_id = player_id
                 await client.__aenter__()
                 
                 yield client
@@ -1357,6 +1373,32 @@ async def test_client(
             
             # Clear dependency overrides
             app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def test_client(
+    fake_valkey: FakeValkey, game_state_managers, map_manager_loaded: None
+) -> AsyncGenerator[WebSocketTestClient, None]:
+    """
+    Create an admin WebSocket test client with per-test data cleanup.
+    
+    Provides a pre-authenticated WebSocket connection for an admin player.
+    """
+    async for client in _create_websocket_test_client(fake_valkey, is_admin=True):
+        yield client
+
+
+@pytest_asyncio.fixture
+async def test_client_regular(
+    fake_valkey: FakeValkey, game_state_managers, map_manager_loaded: None
+) -> AsyncGenerator[WebSocketTestClient, None]:
+    """
+    Create a regular (non-admin) WebSocket test client with per-test data cleanup.
+    
+    Provides a pre-authenticated WebSocket connection for a regular player.
+    """
+    async for client in _create_websocket_test_client(fake_valkey, is_admin=False):
+        yield client
 
 
 @pytest_asyncio.fixture

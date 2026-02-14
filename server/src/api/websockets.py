@@ -65,6 +65,7 @@ from server.src.api.handlers import (
     CombatHandlerMixin,
     QueryHandlerMixin,
     AppearanceHandlerMixin,
+    AdminHandlerMixin,
 )
 
 from server.src.api.helpers import (
@@ -97,6 +98,7 @@ class WebSocketHandler(
     CombatHandlerMixin,
     QueryHandlerMixin,
     AppearanceHandlerMixin,
+    AdminHandlerMixin,
     BaseHandlerMixin,
 ):
     """
@@ -136,6 +138,7 @@ class WebSocketHandler(
         self.router.register_handler(MessageType.CMD_ATTACK, self._handle_cmd_attack)
         self.router.register_handler(MessageType.CMD_TOGGLE_AUTO_RETALIATE, self._handle_cmd_toggle_auto_retaliate)
         self.router.register_handler(MessageType.CMD_UPDATE_APPEARANCE, self._handle_cmd_update_appearance)
+        self.router.register_handler(MessageType.CMD_ADMIN_GIVE, self._handle_cmd_admin_give)
         
         # Query handlers (data retrieval operations)
         self.router.register_handler(MessageType.QUERY_INVENTORY, self._handle_query_inventory)

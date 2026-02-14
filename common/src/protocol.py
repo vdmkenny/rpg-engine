@@ -105,6 +105,13 @@ class ErrorCodes(str, Enum):
     APPEARANCE_INVALID_VALUE = "appearance_invalid_value"
     APPEARANCE_UPDATE_FAILED = "appearance_update_failed"
 
+    # Admin errors
+    ADMIN_NOT_AUTHORIZED = "admin_not_authorized"
+    ADMIN_ITEM_NOT_FOUND = "admin_item_not_found"
+    ADMIN_PLAYER_NOT_FOUND = "admin_player_not_found"
+    ADMIN_INVENTORY_FULL = "admin_inventory_full"
+    ADMIN_INVALID_QUANTITY = "admin_invalid_quantity"
+
 
 class UpdateType(str, Enum):
     """State update types"""
@@ -148,6 +155,7 @@ class MessageType(str, Enum):
     CMD_ATTACK = "cmd_attack"
     CMD_TOGGLE_AUTO_RETALIATE = "cmd_toggle_auto_retaliate"
     CMD_UPDATE_APPEARANCE = "cmd_update_appearance"
+    CMD_ADMIN_GIVE = "cmd_admin_give"
 
     # Client → Server: Queries (Data Retrieval)
     QUERY_INVENTORY = "query_inventory"
@@ -194,6 +202,7 @@ COMMAND_TYPES = {
     MessageType.CMD_ATTACK,
     MessageType.CMD_TOGGLE_AUTO_RETALIATE,
     MessageType.CMD_UPDATE_APPEARANCE,
+    MessageType.CMD_ADMIN_GIVE,
 }
 
 QUERY_TYPES = {

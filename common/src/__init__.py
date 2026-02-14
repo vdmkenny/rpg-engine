@@ -22,6 +22,7 @@ from .protocol import (
     AttackPayload,
     ToggleAutoRetaliatePayload,
     AppearanceUpdatePayload,
+    AdminGivePayload,
     # Query payloads
     InventoryQueryPayload,
     EquipmentQueryPayload,

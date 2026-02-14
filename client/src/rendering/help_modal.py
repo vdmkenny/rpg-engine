@@ -229,6 +229,8 @@ class HelpModal:
         commands = [
             ("/help", "Show this help"),
             ("/customize", "Character customisation"),
+            ("/give", "Give item to player (admin)"),
+            ("/giveme", "Give item to self (admin)"),
             ("/logout", "Log out"),
         ]
         

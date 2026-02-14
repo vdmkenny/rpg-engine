@@ -124,6 +124,17 @@ class MessageSender:
             appearance_data
         )
     
+    async def admin_give(self, target_username: str, item_name: str, quantity: int = 1) -> bool:
+        """Give item to a player (admin only)."""
+        return await self._send(
+            MessageType.CMD_ADMIN_GIVE,
+            {
+                "target_username": target_username,
+                "item_name": item_name,
+                "quantity": quantity,
+            }
+        )
+    
     # =========================================================================
     # QUERIES
     # =========================================================================

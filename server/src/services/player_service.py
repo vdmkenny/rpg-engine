@@ -173,6 +173,22 @@ class PlayerService:
         return player_record
 
     @staticmethod
+    async def get_player_role(player_id: int) -> Optional[PlayerRole]:
+        """
+        Get player's role for permission checks.
+
+        Args:
+            player_id: Player ID
+
+        Returns:
+            PlayerRole if found, None otherwise
+        """
+        player = await PlayerService.get_player_by_id(player_id)
+        if not player:
+            return None
+        return player.role
+
+    @staticmethod
     async def get_player_position(player_id: int) -> Optional[PlayerPosition]:
         """
         Get player position for movement and visibility calculations.

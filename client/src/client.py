@@ -582,6 +582,69 @@ class Client:
             "Log out and return to login screen"
         )
         
+        # /give <player> <item> [amount] - Give item to a player (admin only)
+        def handle_give(command_text: str) -> None:
+            parts = command_text[1:].split(maxsplit=3)  # /give player item [amount]
+            if len(parts) < 3:
+                return "Usage: /give <player> <item> [amount]"
+            
+            target_player = parts[1]
+            item_name = parts[2].lower()
+            quantity = 1
+            
+            if len(parts) > 3:
+                try:
+                    quantity = int(parts[3])
+                except ValueError:
+                    return "Invalid quantity - must be a number"
+            
+            if quantity < 1:
+                return "Quantity must be at least 1"
+            
+            asyncio.create_task(
+                self.message_sender.admin_give(target_player, item_name, quantity)
+            )
+            return f"Sending give command for {quantity}x {item_name} to {target_player}..."
+        
+        registry.register(
+            "give",
+            handle_give,
+            "Give item to a player (admin only)"
+        )
+        
+        # /giveme <item> [amount] - Give item to yourself (admin only)
+        def handle_giveme(command_text: str) -> None:
+            parts = command_text[1:].split(maxsplit=2)  # /giveme item [amount]
+            if len(parts) < 2:
+                return "Usage: /giveme <item> [amount]"
+            
+            item_name = parts[1].lower()
+            quantity = 1
+            
+            if len(parts) > 2:
+                try:
+                    quantity = int(parts[2])
+                except ValueError:
+                    return "Invalid quantity - must be a number"
+            
+            if quantity < 1:
+                return "Quantity must be at least 1"
+            
+            # Use the current player's username
+            if not hasattr(self.game_state, 'username') or not self.game_state.username:
+                return "Error: Could not determine current player"
+            
+            asyncio.create_task(
+                self.message_sender.admin_give(self.game_state.username, item_name, quantity)
+            )
+            return f"Sending give command for {quantity}x {item_name} to yourself..."
+        
+        registry.register(
+            "giveme",
+            handle_giveme,
+            "Give item to yourself (admin only)"
+        )
+        
         logger.info("Customisation panel initialized and commands registered")
     
     async def _open_customisation_panel(self) -> None:
