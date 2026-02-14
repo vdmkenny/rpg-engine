@@ -376,7 +376,7 @@ class TestItemServiceLookup:
         """get_item_by_id should return the correct item."""
         await ItemService.sync_items_to_db()
 
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
 
         item_by_id = await ItemService.get_item_by_id(item.id)
@@ -399,7 +399,7 @@ class TestItemToInfo:
         """item_to_info should return all expected fields."""
         await ItemService.sync_items_to_db()
 
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
 
         info = ItemService.item_to_info(item._data)
@@ -458,7 +458,7 @@ class TestSQLAlchemyModelCompatibility:
         """Test that Item model fields are primitive types, not Column objects."""
         await ItemService.sync_items_to_db()
         
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
         
         # All fields should be primitive Python types
@@ -475,7 +475,7 @@ class TestSQLAlchemyModelCompatibility:
         """Test that item stat fields are integers."""
         await ItemService.sync_items_to_db()
         
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
         assert item is not None
         
         assert isinstance(item.attack_bonus, int)

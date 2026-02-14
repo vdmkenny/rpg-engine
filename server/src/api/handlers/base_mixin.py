@@ -165,12 +165,17 @@ class BaseHandlerMixin:
             )
     
     async def _send_equipment_state_update(self) -> None:
-        """Send consolidated equipment state update (inventory + equipment + stats)."""
+        """
+        Send consolidated equipment state update (inventory + equipment).
+        
+        Equipment bonuses are included in EquipmentData.total_stats.
+        Does NOT send player-level stats (combat_level, skills, etc.) which are
+        managed separately via _send_player_stats_update().
+        """
         try:
-            from server.src.schemas.item import InventoryData, EquipmentData, ItemStats
+            from server.src.schemas.item import InventoryData, EquipmentData
             inventory_data = await InventoryService.get_inventory(self.player_id)
             equipment_data = await EquipmentService.get_equipment(self.player_id)
-            stats_data = await EquipmentService.get_total_stats(self.player_id)
             
             state_update = WSMessage(
                 id=None,
@@ -180,8 +185,7 @@ class BaseHandlerMixin:
                     "target": "personal",
                     "systems": {
                         "inventory": inventory_data.model_dump(),
-                        "equipment": equipment_data.model_dump(),
-                        "stats": stats_data.model_dump()
+                        "equipment": equipment_data.model_dump()
                     }
                 },
                 version=PROTOCOL_VERSION

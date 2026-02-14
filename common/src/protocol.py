@@ -408,6 +408,13 @@ class AppearanceUpdatePayload(BaseModel):
     shoes_color: Optional[str] = Field(None, description="Shoes color")
 
 
+class AdminGivePayload(BaseModel):
+    """Payload for CMD_ADMIN_GIVE - Admin grants items to a player"""
+    target_username: str = Field(..., description="Username of target player")
+    item_name: str = Field(..., description="Internal name of item to give")
+    quantity: int = Field(..., description="Quantity to give (1-1000)")
+
+
 # =============================================================================
 # Query Payloads (Client → Server)
 # =============================================================================

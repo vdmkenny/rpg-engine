@@ -228,7 +228,7 @@ class InventoryManager(BaseManager):
 
             if item_id and quantity:
                 # Validate item_id exists in reference data to prevent FK violations
-                if not ref_mgr.get_item_by_id(item_id):
+                if not ref_mgr.get_cached_item_meta(item_id):
                     logger.warning(
                         "Skipping stale inventory item",
                         extra={

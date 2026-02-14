@@ -126,6 +126,9 @@ class ClientGameState:
         # Equipment
         self.equipment: Dict[str, InventoryItem] = {}
         
+        # Equipment bonuses (attack, defense, health, etc.)
+        self.equipment_stats: Dict[str, Any] = {}
+        
         # Skills
         self.skills: Dict[str, Skill] = {}
         self.total_level: int = 0
@@ -290,6 +293,9 @@ class ClientGameState:
                     icon_sprite_id=item_data.get("icon_sprite_id")
                 )
                 self.equipment[slot_name] = item
+        
+        # Store equipment bonuses (attack_bonus, strength_bonus, health_bonus, etc.)
+        self.equipment_stats = data.get("total_stats", {})
     
     def update_stats(self, data: Dict[str, Any]) -> None:
         """Update player stats and skills from server data."""

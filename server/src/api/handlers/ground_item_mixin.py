@@ -65,7 +65,7 @@ class GroundItemHandlerMixin:
                     message.id,
                     {
                         "message": result.message,
-                        "ground_item_id": result.ground_item_id
+                        "ground_item_id": result.data.get("ground_item_id")
                     }
                 )
                 await self._send_inventory_state_update()
