@@ -37,7 +37,7 @@ class InventoryManager(BaseManager):
     # Inventory CRUD
     # =========================================================================
 
-    async def get_inventory(self, player_id: int) -> Dict[int, Dict[str, Any]]:
+    async def get_inventory(self, player_id: int) -> Dict[str, Dict[str, Any]]:
         """Get entire inventory with transparent auto-loading from DB."""
         if not settings.USE_VALKEY or not self._valkey:
             return await self._load_inventory_from_db(player_id)
@@ -50,7 +50,7 @@ class InventoryManager(BaseManager):
         inventory = await self.auto_load_with_ttl(key, load_from_db, TIER2_TTL)
         return inventory or {}
 
-    async def _load_inventory_from_db(self, player_id: int) -> Dict[int, Dict[str, Any]]:
+    async def _load_inventory_from_db(self, player_id: int) -> Dict[str, Dict[str, Any]]:
         if not self._session_factory:
             return {}
 
@@ -64,7 +64,7 @@ class InventoryManager(BaseManager):
 
             inventory_data = {}
             for inv in inventories:
-                inventory_data[inv.slot] = {
+                inventory_data[str(inv.slot)] = {
                     "item_id": inv.item_id,
                     "quantity": inv.quantity,
                     "current_durability": inv.current_durability or 1.0,

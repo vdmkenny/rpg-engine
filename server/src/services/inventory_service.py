@@ -159,7 +159,7 @@ class InventoryService:
         max_slots = settings.INVENTORY_MAX_SLOTS
         inventory_data = await inventory_mgr.get_inventory(player_id)
         for i in range(max_slots):
-            if i not in inventory_data:
+            if str(i) not in inventory_data:
                 return i
         return None
 
