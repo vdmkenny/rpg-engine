@@ -10,7 +10,7 @@ Supports both database-only and Valkey-first operations:
 from typing import Optional, TYPE_CHECKING
 
 from ..core.config import settings
-from ..core.concurrency import PlayerLockManager, LockType
+from ..core.concurrency import get_player_lock_manager, LockType
 from ..core.items import (
     InventorySortType,
     ItemCategory,
@@ -37,8 +37,6 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Singleton lock manager instance for inventory operations
-_lock_manager = PlayerLockManager()
-
 
 class InventoryService:
     """Service for managing player inventory."""
@@ -240,7 +238,7 @@ class InventoryService:
         Returns:
             OperationResult with success status and details
         """
-        async with _lock_manager.acquire_player_lock(
+        async with get_player_lock_manager().acquire_player_lock(
             player_id, LockType.INVENTORY, "add_item"
         ):
             from .game_state import get_inventory_manager
@@ -369,7 +367,7 @@ class InventoryService:
         Returns:
             OperationResult with success status
         """
-        async with _lock_manager.acquire_player_lock(
+        async with get_player_lock_manager().acquire_player_lock(
             player_id, LockType.INVENTORY, "remove_item"
         ):
             from .game_state import get_inventory_manager
@@ -441,7 +439,7 @@ class InventoryService:
         Returns:
             OperationResult with success status
         """
-        async with _lock_manager.acquire_player_lock(
+        async with get_player_lock_manager().acquire_player_lock(
             player_id, LockType.INVENTORY, "move_item"
         ):
             from .game_state import get_inventory_manager

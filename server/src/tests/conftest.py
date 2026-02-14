@@ -35,6 +35,7 @@ from server.src.services.game_state import (
     init_all_managers,
     reset_all_managers,
 )
+from server.src.core.concurrency import initialize_concurrency_infrastructure
 
 # Configure logger for test fixtures
 logger = logging.getLogger(__name__)
@@ -753,6 +754,9 @@ async def game_state_managers(fake_valkey: FakeValkey, setup_test_db) -> AsyncGe
     """
     if TestingSessionLocal is None:
         raise RuntimeError("TestingSessionLocal not initialized")
+    
+    # Initialize concurrency infrastructure with fake Valkey
+    initialize_concurrency_infrastructure(fake_valkey)
     
     # Initialize all managers with test dependencies
     init_all_managers(fake_valkey, TestingSessionLocal)

@@ -142,7 +142,7 @@ class TestCreateGroundItem:
     ):
         """Basic ground item creation should work."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -170,7 +170,7 @@ class TestCreateGroundItem:
     ):
         """Ground items should have rarity-based despawn timers."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         now = datetime.now(timezone.utc).timestamp()
         ground_item_id = await GroundItemService.create_ground_item(
@@ -329,7 +329,7 @@ class TestPickupItem:
     ):
         """Owner should be able to pick up their item during protection."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -367,7 +367,7 @@ class TestPickupItem:
     ):
         """Cannot pick up item from different tile."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -395,7 +395,7 @@ class TestPickupItem:
         """Other players cannot pick up protected items."""
         player = player_for_ground_items
         other = second_player
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -423,7 +423,7 @@ class TestPickupItem:
         """Anyone can pick up public (unprotected) items."""
         player = player_for_ground_items
         other = second_player
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -472,7 +472,7 @@ class TestPickupItem:
     ):
         """Picking up despawned item should fail."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -504,7 +504,7 @@ class TestPickupItem:
     ):
         """Cannot pick up item from different map."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -545,7 +545,7 @@ class TestVisibility:
     ):
         """Own items should always be visible (even during protection)."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -572,7 +572,7 @@ class TestVisibility:
         """Other players' protected items should be hidden."""
         player = player_for_ground_items
         other = second_player
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -598,7 +598,7 @@ class TestVisibility:
         """Public items should be visible to everyone."""
         player = player_for_ground_items
         other = second_player
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -630,7 +630,7 @@ class TestVisibility:
     ):
         """Items outside range should not be visible."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -665,7 +665,7 @@ class TestCleanupExpiredItems:
     ):
         """Cleanup should remove expired items."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,
@@ -695,7 +695,7 @@ class TestCleanupExpiredItems:
     ):
         """Cleanup should not remove valid items."""
         player = player_for_ground_items
-        item = await ItemService.get_item_by_name("bronze_sword")
+        item = await ItemService.get_item_by_name("bronze_shortsword")
 
         ground_item_id = await GroundItemService.create_ground_item(
             item_id=item.id,

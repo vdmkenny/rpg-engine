@@ -86,19 +86,19 @@ class InventoryManager(BaseManager):
             return
 
         key = INVENTORY_KEY.format(player_id=player_id)
-
-        # Get current inventory
-        inventory = await self._get_from_valkey(key) or {}
-
-        # Update slot
         slot_str = str(slot)
-        inventory[slot_str] = {
+        
+        # Encode slot data for Valkey
+        slot_data = {
             "item_id": item_id,
             "quantity": quantity,
             "current_durability": durability,
         }
-
-        await self._cache_in_valkey(key, inventory, TIER2_TTL)
+        encoded_slot_data = self._encode_for_valkey(slot_data)
+        
+        # Write only this slot field to the hash (atomic field-level operation)
+        await self._valkey.hset(key, {slot_str: encoded_slot_data})
+        await self._valkey.expire(key, TIER2_TTL)
         await self._valkey.sadd(DIRTY_INVENTORY_KEY, [str(player_id)])
 
     async def _update_slot_in_db(

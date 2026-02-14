@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
 from ..core.config import settings
-from ..core.concurrency import PlayerLockManager, LockType
+from ..core.concurrency import get_player_lock_manager, LockType
 from ..core.items import ItemRarity
 from ..core.logging_config import get_logger
 from ..schemas.item import (
@@ -28,8 +28,6 @@ from .inventory_service import InventoryService
 from .item_service import ItemService
 
 logger = get_logger(__name__)
-
-_lock_manager = PlayerLockManager()
 
 
 class GroundItemService:
@@ -140,7 +138,7 @@ class GroundItemService:
         Returns:
             OperationResult with success status
         """
-        async with _lock_manager.acquire_player_lock(
+        async with get_player_lock_manager().acquire_player_lock(
             player_id, LockType.INVENTORY, "drop_from_inventory"
         ):
             inventory_mgr = get_inventory_manager()
@@ -257,7 +255,7 @@ class GroundItemService:
         Returns:
             OperationResult with success status and detailed error messages
         """
-        async with _lock_manager.acquire_player_lock(
+        async with get_player_lock_manager().acquire_player_lock(
             player_id, LockType.INVENTORY, "pickup_item"
         ):
             ground_item_mgr = get_ground_item_manager()

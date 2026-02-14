@@ -255,7 +255,7 @@ class TestEquipFromInventory:
     ):
         """Equipping should swap with currently equipped item."""
         player = player_with_equipment
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
         pickaxe = await ItemService.get_item_by_name("bronze_pickaxe")
 
         await give_player_skill_level(session, player.id, "attack", 1)
@@ -404,7 +404,7 @@ class TestGetTotalStats:
         self, session: AsyncSession, player_with_equipment):
         """Multiple items should aggregate stats."""
         player = player_with_equipment
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
         helmet = await ItemService.get_item_by_name("copper_helmet")
         platebody = await ItemService.get_item_by_name("copper_platebody")
 
@@ -506,7 +506,7 @@ class TestClearEquipment:
         self, session: AsyncSession, player_with_equipment):
         """Clear should remove all equipment."""
         player = player_with_equipment
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
         helmet = await ItemService.get_item_by_name("copper_helmet")
 
         await give_player_skill_level(session, player.id, "attack", 1)
@@ -546,7 +546,7 @@ class TestGetAllEquippedItems:
         self, session: AsyncSession, player_with_equipment):
         """Should return list of (equipment, item) tuples."""
         player = player_with_equipment
-        sword = await ItemService.get_item_by_name("bronze_sword")
+        sword = await ItemService.get_item_by_name("bronze_shortsword")
 
         await give_player_skill_level(session, player.id, "attack", 1)
         await InventoryService.add_item(player.id, sword.id)
