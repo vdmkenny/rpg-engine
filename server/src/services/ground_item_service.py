@@ -405,7 +405,8 @@ class GroundItemService:
                 continue
             
             # Skip items that have despawned
-            if gi.get("despawn_at", 0.0) <= now:
+            despawn_at = gi.get("despawn_at")
+            if despawn_at is not None and despawn_at <= now:
                 continue
 
             is_yours = gi.get("dropped_by_player_id") == player_id
