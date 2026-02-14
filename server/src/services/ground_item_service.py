@@ -405,6 +405,10 @@ class GroundItemService:
                 continue
             if abs(gi["y"] - center_y) > tile_radius:
                 continue
+            
+            # Skip items that have despawned
+            if gi.get("despawn_at", 0.0) <= now:
+                continue
 
             is_yours = gi.get("dropped_by_player_id") == player_id
             is_public = gi.get("loot_protection_expires_at", 0.0) <= now

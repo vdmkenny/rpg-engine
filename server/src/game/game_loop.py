@@ -837,6 +837,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
     tick_interval = 1 / settings.GAME_TICK_RATE
     hp_regen_interval = settings.HP_REGEN_INTERVAL_TICKS
     db_sync_interval = settings.DB_SYNC_INTERVAL_TICKS
+    cleanup_interval = settings.GROUND_ITEMS_CLEANUP_INTERVAL * settings.GAME_TICK_RATE
 
     while True:
         loop_start_time = time.time()
@@ -881,6 +882,36 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         "Entity respawn processing failed",
                         extra={
                             "error": str(respawn_error),
+                            "tick": current_tick,
+                            "traceback": traceback.format_exc(),
+                        },
+                    )
+
+            # Clean up expired ground items periodically
+            if current_tick % cleanup_interval == 0:
+                try:
+                    from ..services.ground_item_service import GroundItemService
+                    
+                    active_maps = list(manager.connections_by_map.keys())
+                    total_cleaned = 0
+                    for map_id in active_maps:
+                        cleaned = await GroundItemService.cleanup_expired_items(map_id)
+                        total_cleaned += cleaned
+                    
+                    if total_cleaned > 0:
+                        logger.info(
+                            "Cleaned up expired ground items",
+                            extra={
+                                "total_cleaned": total_cleaned,
+                                "maps_checked": len(active_maps),
+                                "tick": current_tick,
+                            },
+                        )
+                except Exception as cleanup_error:
+                    logger.error(
+                        "Ground item cleanup failed",
+                        extra={
+                            "error": str(cleanup_error),
                             "tick": current_tick,
                             "traceback": traceback.format_exc(),
                         },
