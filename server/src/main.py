@@ -169,6 +169,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Could not sync ground items to database", extra={"error": str(e)})
     
+    # Graceful shutdown - disconnect all WebSocket connections
+    await websockets.manager.disconnect_all()
+    logger.info("Disconnected all WebSocket connections")
+    
     # Cancel game loop
     if _game_loop_task:
         _game_loop_task.cancel()

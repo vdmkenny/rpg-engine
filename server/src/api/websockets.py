@@ -354,10 +354,3 @@ async def websocket_endpoint(
         duration = time.time() - start_time
         websocket_connection_duration_seconds.observe(duration)
         websocket_connections_active.dec()
-
-
-@router.on_event("shutdown")
-async def shutdown_event():
-    """Graceful shutdown - disconnect all players."""
-    logger.info("Shutting down WebSocket connections")
-    await manager.disconnect_all()
