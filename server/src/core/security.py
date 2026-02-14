@@ -1,4 +1,4 @@
-from passlib.context import CryptContext
+import bcrypt
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
@@ -10,12 +10,8 @@ from server.src.core.config import settings
 from server.src.models.player import Player
 from server.src.schemas.token import TokenData
 
-# Password Hashing - explicitly use bcrypt to avoid warnings
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__rounds=12,  # Explicit rounds for better security
-)
+# Password Hashing - use bcrypt directly
+BCRYPT_ROUNDS = 12
 
 ALGORITHM = settings.ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
@@ -24,13 +20,22 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verifies a plain-text password against a hashed one."""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verifies a plain-text password against a bcrypt hash."""
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"),
+            hashed_password.encode("utf-8"),
+        )
+    except Exception:
+        return False
 
 
 def get_password_hash(password: str) -> str:
-    """Hashes a plain-text password."""
-    return pwd_context.hash(password)
+    """Hashes a plain-text password using bcrypt."""
+    return bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt(rounds=BCRYPT_ROUNDS),
+    ).decode("utf-8")
 
 
 # JWT Token Handling
