@@ -219,37 +219,6 @@ class ReferenceDataManager(BaseManager):
                 await db.execute(stmt)
                 count += 1
 
-            # Remove stale items no longer in the enum (to prevent orphaned FK references)
-            from server.src.models.item import Item, PlayerInventory
-            
-            current_names = {item_enum.name.lower() for item_enum in ItemType}
-            result = await db.execute(
-                select(Item.id, Item.name).where(~Item.name.in_(current_names))
-            )
-            stale_items = result.all()
-            
-            if stale_items:
-                stale_ids = [row.id for row in stale_items]
-                stale_names = [row.name for row in stale_items]
-                
-                # Delete dependent player_inventory rows first (FK constraint)
-                await db.execute(
-                    delete(PlayerInventory).where(PlayerInventory.item_id.in_(stale_ids))
-                )
-                
-                # Delete stale items
-                await db.execute(
-                    delete(Item).where(Item.id.in_(stale_ids))
-                )
-                
-                logger.info(
-                    "Removed stale items from database",
-                    extra={
-                        "stale_item_count": len(stale_items),
-                        "stale_items": stale_names,
-                    },
-                )
-
             await self._commit_if_not_test_session(db)
 
             # Cache in Valkey
@@ -343,6 +312,37 @@ class ReferenceDataManager(BaseManager):
                 )
                 await db.execute(stmt)
                 count += 1
+
+            # Remove stale items no longer in the enum (to prevent orphaned FK references)
+            from server.src.models.item import PlayerInventory
+            
+            current_names = {item_enum.name.lower() for item_enum in ItemType}
+            result = await db.execute(
+                select(Item.id, Item.name).where(~Item.name.in_(current_names))
+            )
+            stale_items = result.all()
+            
+            if stale_items:
+                stale_ids = [row.id for row in stale_items]
+                stale_names = [row.name for row in stale_items]
+                
+                # Delete dependent player_inventory rows first (FK constraint)
+                await db.execute(
+                    delete(PlayerInventory).where(PlayerInventory.item_id.in_(stale_ids))
+                )
+                
+                # Delete stale items
+                await db.execute(
+                    delete(Item).where(Item.id.in_(stale_ids))
+                )
+                
+                logger.info(
+                    "Removed stale items from database",
+                    extra={
+                        "stale_item_count": len(stale_items),
+                        "stale_items": stale_names,
+                    },
+                )
 
             await self._commit_if_not_test_session(db)
 
