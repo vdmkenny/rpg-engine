@@ -308,19 +308,77 @@ class GroundItemService:
             if durability_val is not None:
                 durability_int = int(durability_val) if durability_val != 1.0 else None
             
-            add_result = await InventoryService.add_item(
-                player_id=player_id,
-                item_id=ground_item["item_id"],
-                quantity=ground_item["quantity"],
-                durability=durability_int,
-            )
+            # Add item directly via GSM to avoid nested lock with InventoryService.add_item()
+            # This mirrors the pattern used in drop_from_inventory
+            from .game_state import get_inventory_manager
             
-            if not add_result.success:
+            inventory_mgr = get_inventory_manager()
+            item = await ItemService.get_item_by_id(ground_item["item_id"])
+            if not item:
                 return OperationResult(
                     success=False,
-                    message=add_result.message or "Failed to add item to inventory",
+                    message="Item not found",
                     operation=OperationType.PICKUP,
                 )
+            
+            # Set durability to max if not specified and item has durability
+            item_durability = durability_int
+            if item_durability is None and item.max_durability is not None:
+                item_durability = item.max_durability
+            
+            # Get current inventory to find suitable slot
+            inventory_data = await inventory_mgr.get_inventory(player_id)
+            added_quantity = 0
+            added_slot = None
+            
+            # Try to stack with existing items first
+            for slot_num, slot_data in inventory_data.items():
+                if (
+                    slot_data["item_id"] == item.id
+                    and item.max_stack_size > 1
+                    and slot_data.get("quantity", 1) < item.max_stack_size
+                ):
+                    current_qty = slot_data.get("quantity", 1)
+                    space_available = item.max_stack_size - current_qty
+                    add_amount = min(ground_item["quantity"], space_available)
+                    
+                    new_quantity = current_qty + add_amount
+                    await inventory_mgr.set_inventory_slot(
+                        player_id, slot_num, item.id, new_quantity, float(item_durability) if item_durability is not None else 1.0
+                    )
+                    
+                    added_quantity = add_amount
+                    added_slot = int(slot_num)
+                    break
+            
+            # If not fully stacked, find empty slot for remainder
+            remaining_qty = ground_item["quantity"] - added_quantity
+            if remaining_qty > 0:
+                empty_slot = None
+                for slot_num in range(30):  # Standard inventory size
+                    if str(slot_num) not in inventory_data:
+                        empty_slot = slot_num
+                        break
+                
+                if empty_slot is not None:
+                    await inventory_mgr.set_inventory_slot(
+                        player_id, empty_slot, item.id, remaining_qty, float(item_durability) if item_durability is not None else 1.0
+                    )
+                    if added_slot is None:
+                        added_slot = empty_slot
+                else:
+                    return OperationResult(
+                        success=False,
+                        message="Inventory is full",
+                        operation=OperationType.PICKUP,
+                    )
+            
+            add_result = OperationResult(
+                success=True,
+                message=f"Added {ground_item['quantity']} items to inventory",
+                operation=OperationType.ADD,
+                data={"slot": added_slot, "quantity": ground_item["quantity"]},
+            )
 
             await ground_item_mgr.remove_ground_item(ground_item_id, ground_item["map_id"])
 
