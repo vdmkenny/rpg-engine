@@ -33,7 +33,18 @@ class AnimationState(str, Enum):
 class PlayerCreate(BaseModel):
     """Schema for creating a new player."""
     username: str = Field(min_length=3, max_length=50)
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=8, max_length=72)
+    
+    @field_validator("password", mode="after")
+    @classmethod
+    def validate_password_bytes(cls, v: str) -> str:
+        """
+        Validate that password is within bcrypt 5.0.0+ limit of 72 bytes.
+        bcrypt truncates passwords longer than 72 bytes, which is a security concern.
+        """
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("Password must be 72 bytes or less (UTF-8 encoded)")
+        return v
 
 
 class PlayerData(BaseModel):
