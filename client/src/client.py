@@ -135,6 +135,18 @@ class Client:
 
     def _on_error_received(self, event: Event):
         """Handle error responses from server - display in local chat."""
+        error_code = event.data.get("code", "")
+        
+        # Filter out movement-related errors (they're not displayed in chat)
+        movement_error_codes = {
+            "MOVE_RATE_LIMITED",
+            "MOVE_COLLISION_DETECTED",
+            "MOVE_INVALID_DIRECTION",
+        }
+        
+        if error_code in movement_error_codes:
+            return
+        
         error_message = event.data.get("error", "Unknown error")
         if self.renderer and self.renderer.ui_renderer:
             chat_window = self.renderer.ui_renderer.chat_window
