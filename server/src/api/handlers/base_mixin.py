@@ -65,7 +65,11 @@ class BaseHandlerMixin:
         retry_after: Optional[float] = None,
         suggested_action: Optional[str] = None
     ) -> None:
-        """Send RESP_ERROR with structured error information."""
+        """Send RESP_ERROR with structured error information.
+        
+        Silently handles closed WebSocket connections to prevent cascading
+        errors when the client disconnects before the error can be sent.
+        """
         error_payload = ErrorResponsePayload(
             error_code=error_code,
             error=message,
@@ -81,7 +85,10 @@ class BaseHandlerMixin:
             payload=error_payload.model_dump(),
             version=PROTOCOL_VERSION
         )
-        await self._send_message(response)
+        try:
+            await self._send_message(response)
+        except ConnectionError:
+            pass
     
     async def _send_data_response(
         self, 
@@ -119,6 +126,14 @@ class BaseHandlerMixin:
         try:
             await self.websocket.send_bytes(packed_message)
             metrics.track_websocket_message(str(message.type), "outbound")
+        except RuntimeError as e:
+            if "close message has been sent" in str(e) or "not connected" in str(e):
+                logger.warning(
+                    "WebSocket closed before message could be sent",
+                    extra={"username": self.username, "message_type": message.type}
+                )
+                raise ConnectionError("WebSocket connection is closed") from e
+            raise
         except Exception as e:
             logger.error(
                 "Error sending WebSocket message",
