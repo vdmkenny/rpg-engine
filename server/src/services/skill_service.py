@@ -96,7 +96,7 @@ class SkillService:
 
         lock_manager = get_player_lock_manager()
         async with lock_manager.acquire_player_lock(
-            player_id, LockType.SKILL, "add_experience"
+            player_id, LockType.SKILLS, "add_experience"
         ):
             skills_mgr = get_skills_manager()
             skill_name = skill.name.lower()
