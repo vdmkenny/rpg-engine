@@ -186,7 +186,7 @@ class MessageHandlers:
             player_id = entity.get("player_id")  # For player entities
             if entity_id:
                 if entity_type == "player":
-                    # Update local player HP from server state, but skip visual spawning/tracking
+                    # Update local player state from server (HP, facing, and visual appearance)
                     if player_id == self.game_state.player_id:
                         if "current_hp" in entity:
                             self.game_state.current_hp = entity["current_hp"]
@@ -194,6 +194,11 @@ class MessageHandlers:
                             self.game_state.max_hp = entity["max_hp"]
                         if "facing_direction" in entity:
                             self.game_state.facing_direction = entity["facing_direction"]
+                        # Also update visual state from game loop to keep appearance in sync
+                        if "visual_hash" in entity:
+                            self.game_state.visual_hash = entity["visual_hash"]
+                        if "visual_state" in entity:
+                            self.game_state.visual_state = entity["visual_state"]
                         continue
                     # Add new players to other_players if not already tracked
                     if player_id and player_id not in self.game_state.other_players:
