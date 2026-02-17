@@ -772,7 +772,25 @@ async def _handle_player_death(
             if packed_event:
                 await manager.broadcast_to_map(event_map_id, packed_event)
         
+        # Create callback to send personal "You died" message
+        async def send_death_message():
+            """Send a personal chat message to the dying player."""
+            death_chat = WSMessage(
+                id=None,
+                type=MessageType.EVENT_CHAT_MESSAGE,
+                payload={
+                    "sender": "Server",
+                    "message": "Oh dear, you have died!",
+                    "channel": "system",
+                },
+                version=PROTOCOL_VERSION,
+            )
+            packed_chat = msgpack.packb(death_chat.model_dump(), use_bin_type=True)
+            if packed_chat:
+                await manager.send_personal_message(player_id, packed_chat)
+        
         # Execute full death sequence
+        await send_death_message()
         result = await HpService.full_death_sequence(
             player_id=player_id,
             broadcast_callback=broadcast_callback,

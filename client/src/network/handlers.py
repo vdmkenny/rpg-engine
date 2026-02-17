@@ -321,6 +321,12 @@ class MessageHandlers:
             self.game_state.is_dead = False
             self.game_state.position = position
             self.game_state.current_hp = self.game_state.max_hp
+            
+            # Clear inventory and equipment since they were dropped on death
+            self.game_state.inventory.clear()
+            self.game_state.equipment.clear()
+            self.game_state.equipment_stats.clear()
+            
             self.event_bus.emit(EventType.PLAYER_RESPAWNED, {"position": position})
     
     async def handle_combat_action(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:

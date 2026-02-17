@@ -367,6 +367,7 @@ class HpService:
     async def full_death_sequence(
         player_id: int,
         broadcast_callback=None,
+        killed_by: Optional[str] = None,
     ) -> RespawnResult:
         """
         Execute the full death sequence:
@@ -380,6 +381,7 @@ class HpService:
             player_id: Player's database ID
             broadcast_callback: Optional async callback(message_type, payload, username)
                 for broadcasting messages to nearby players
+            killed_by: Optional name of killer (entity or player) for EVENT_PLAYER_DIED
 
         Returns:
             RespawnResult with respawn info
@@ -398,11 +400,9 @@ class HpService:
             await broadcast_callback(
                 "EVENT_PLAYER_DIED",
                 {
+                    "player_id": player_id,
                     "username": username,
-                    "x": death_x,
-                    "y": death_y,
-                    "map_id": death_map_id,
-                    "items_dropped": items_dropped,
+                    "killed_by": killed_by,
                 },
                 username,
             )
@@ -418,12 +418,12 @@ class HpService:
             await broadcast_callback(
                 "EVENT_PLAYER_RESPAWN",
                 {
+                    "player_id": player_id,
                     "username": username,
-                    "x": respawn_result.x,
-                    "y": respawn_result.y,
-                    "map_id": respawn_result.map_id,
-                    "current_hp": respawn_result.new_hp,
-                    "max_hp": respawn_result.new_hp,
+                    "position": {
+                        "x": respawn_result.x,
+                        "y": respawn_result.y,
+                    },
                 },
                 username,
             )
