@@ -36,6 +36,7 @@ from server.src.services.visual_registry import get_visual_registry
 from server.src.services.visual_state_service import VisualStateService
 from server.src.services.ai_service import AIService
 from server.src.services.entity_spawn_service import EntitySpawnService
+from server.src.services.player_service import PlayerService
 from server.src.core.entities import EntityState
 from common.src.protocol import (
     WSMessage,
@@ -501,15 +502,15 @@ async def _process_auto_attacks(
                     )
                     
                     # Get username for display in combat event
-                    username = await PlayerService.get_username_by_player_id(player_id)
-                    if username:
+                    player_data = await PlayerService.get_player_by_id(player_id)
+                    if player_data:
                         combat_event = WSMessage(
                             id=None,
                             type=MessageType.EVENT_COMBAT_ACTION,
                             payload={
                                 "attacker_type": CombatTargetType.PLAYER.value,
                                 "attacker_id": player_id,
-                                "attacker_name": username,
+                                "attacker_name": player_data.username,
                                 "defender_type": CombatTargetType.ENTITY.value,
                                 "defender_id": target_id,
                                 "defender_name": target_data.get("display_name", "Unknown"),
