@@ -309,7 +309,7 @@ class GroundItemManager(BaseManager):
                 max_id = max(item.id for item in items)
                 await self._valkey.set(GROUND_ITEMS_NEXT_ID_KEY, str(max_id + 1))
 
-            logger.info(f"Loaded {count} ground items from database")
+            logger.info("Loaded ground items from database", extra={"count": count})
             return count
 
     # =========================================================================

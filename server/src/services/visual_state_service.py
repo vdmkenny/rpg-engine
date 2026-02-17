@@ -47,7 +47,7 @@ class VisualStateService:
             # Use equipped_sprite_id from item definition (e.g., "equip_copper_dagger")
             sprite_id = item_def.get("equipped_sprite_id")
             if not sprite_id:
-                logger.warning(f"No equipped_sprite_id for item {item_id}, skipping")
+                logger.warning("No equipped_sprite_id for item, skipping", extra={"item_id": item_id})
                 continue
             equipped_items[slot] = sprite_id
         

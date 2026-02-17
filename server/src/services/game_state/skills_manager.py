@@ -130,7 +130,7 @@ class SkillsManager(BaseManager):
             skill_id = skill_result.scalar_one_or_none()
 
             if not skill_id:
-                logger.warning(f"Skill not found: {skill_name}")
+                logger.warning("Skill not found", extra={"skill_name": skill_name})
                 return
 
             # Upsert player skill

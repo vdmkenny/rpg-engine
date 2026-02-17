@@ -139,21 +139,24 @@ class ResilientValkeyClient:
         except Exception as e:
             # Connection error — try to reconnect and retry once
             logger.warning(
-                f"ResilientValkeyClient: Call to {method_name} failed with {type(e).__name__}, attempting reconnection",
-                extra={"error": str(e)}
+                "ResilientValkeyClient: Call to method failed, attempting reconnection",
+                extra={"method": method_name, "error": str(e), "error_type": type(e).__name__}
             )
             self._client = None  # Force reconnection
             try:
                 client = await self._ensure_connected()
                 method = getattr(client, method_name)
                 result = await method(*args, **kwargs)
-                logger.info(f"ResilientValkeyClient: Reconnection successful, {method_name} succeeded")
+                logger.info(
+                    "ResilientValkeyClient: Reconnection successful, method call succeeded",
+                    extra={"method": method_name}
+                )
                 return result
             except Exception as retry_error:
                 # Reconnection/retry failed — log and re-raise
                 logger.error(
-                    f"ResilientValkeyClient: Reconnection/retry of {method_name} failed",
-                    extra={"error": str(retry_error)}
+                    "ResilientValkeyClient: Reconnection/retry failed",
+                    extra={"method": method_name, "error": str(retry_error)}
                 )
                 raise
 

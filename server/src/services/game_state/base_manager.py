@@ -53,7 +53,7 @@ class BaseManager:
     @asynccontextmanager
     async def _db_session(self):
         if self._bound_test_session is not None:
-            logger.debug(f"Using bound test session: {id(self._bound_test_session)}")
+            logger.debug("Using bound test session", extra={"session_id": id(self._bound_test_session)})
             yield self._bound_test_session
             return
 
