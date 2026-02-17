@@ -6,6 +6,7 @@ server:
   host: localhost
   port: 8000
   websocket_path: /ws
+  use_tls: false  # Set to true for production HTTPS/WSS connections
 
 # Display and window settings  
 display:

@@ -20,14 +20,19 @@ class ServerConfig(BaseModel):
     host: str = Field(default="localhost", description="Server hostname or IP")
     port: int = Field(default=8000, description="Server HTTP port")
     websocket_path: str = Field(default="/ws", description="WebSocket endpoint path")
+    use_tls: bool = Field(default=False, description="Use HTTPS/WSS for secure connections")
     
     @property
     def base_url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        """Get HTTP or HTTPS base URL based on TLS configuration."""
+        scheme = "https" if self.use_tls else "http"
+        return f"{scheme}://{self.host}:{self.port}"
     
     @property
     def websocket_url(self) -> str:
-        return f"ws://{self.host}:{self.port}{self.websocket_path}"
+        """Get WS or WSS URL based on TLS configuration."""
+        scheme = "wss" if self.use_tls else "ws"
+        return f"{scheme}://{self.host}:{self.port}{self.websocket_path}"
 
 
 class DisplayConfig(BaseModel):
@@ -107,6 +112,7 @@ class ClientConfig(BaseModel):
         env_mappings = {
             "SERVER_HOST": ("server", "host"),
             "SERVER_PORT": ("server", "port"),
+            "SERVER_USE_TLS": ("server", "use_tls"),
             "DISPLAY_WIDTH": ("display", "width"),
             "DISPLAY_HEIGHT": ("display", "height"),
             "DISPLAY_FULLSCREEN": ("display", "fullscreen"),
@@ -123,7 +129,7 @@ class ClientConfig(BaseModel):
                 # Convert types based on default
                 if key in ("port", "width", "height"):
                     data[section][key] = int(value)
-                elif key in ("fullscreen", "enabled"):
+                elif key in ("fullscreen", "enabled", "use_tls"):
                     data[section][key] = value.lower() in ("true", "1", "yes")
                 else:
                     data[section][key] = value

@@ -150,8 +150,15 @@ class TilesetManager:
             print(f"Warning: No image source for tileset {tileset_id}")
             return
         
+        # Validate image_source to prevent path traversal
+        # Use only the filename, ignore any directory components
+        safe_filename = Path(image_source).name
+        if not safe_filename:
+            logger.warning(f"Invalid image source for tileset {tileset_id}: {image_source}")
+            return
+        
         # Check if already cached
-        cache_file = self.cache_dir / image_source
+        cache_file = self.cache_dir / safe_filename
         if cache_file.exists():
             # Load into pygame if not already loaded
             if tileset_id not in self.loaded_surfaces:
@@ -163,7 +170,7 @@ class TilesetManager:
             return
         
         # Download the tileset image
-        await self._download_tileset_image(tileset_id, image_source)
+        await self._download_tileset_image(tileset_id, safe_filename)
     
     async def _download_tileset_image(self, tileset_id: str, image_filename: str):
         """
@@ -171,16 +178,18 @@ class TilesetManager:
         
         Args:
             tileset_id: ID of the tileset
-            image_filename: Filename of the image to download
+            image_filename: Sanitized filename of the image to download
         """
         try:
             session = await self._get_session()
-            url = f"{get_config().server.base_url}/api/tilesets/{image_filename}"
+            # Use only the filename in API call to prevent path traversal in URLs
+            safe_filename = Path(image_filename).name
+            url = f"{get_config().server.base_url}/api/tilesets/{safe_filename}"
             
             async with session.get(url, headers=self._get_auth_headers()) as response:
                 if response.status == 200:
-                    # Save to cache
-                    cache_file = self.cache_dir / image_filename
+                    # Save to cache with sanitized filename
+                    cache_file = self.cache_dir / safe_filename
                     cache_file.parent.mkdir(parents=True, exist_ok=True)
                     
                     with open(cache_file, 'wb') as f:
