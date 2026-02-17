@@ -6,6 +6,7 @@ Handles token validation and player authentication.
 
 from datetime import datetime, timezone
 from typing import Tuple
+import asyncio
 
 import msgpack
 from fastapi import WebSocketDisconnect, status
@@ -24,6 +25,9 @@ from common.src.protocol import (
 
 logger = get_logger(__name__)
 
+# Timeout for authentication message (seconds)
+AUTH_MESSAGE_TIMEOUT = 10.0
+
 
 async def receive_auth_message(websocket) -> WSMessage:
     """
@@ -36,10 +40,14 @@ async def receive_auth_message(websocket) -> WSMessage:
         Validated WSMessage with authentication payload
         
     Raises:
-        WebSocketDisconnect: If message is invalid or not an auth message
+        WebSocketDisconnect: If message is invalid, not an auth message, or timeout occurs
     """
     try:
-        auth_bytes = await websocket.receive_bytes()
+        # Use timeout to prevent hanging connections
+        auth_bytes = await asyncio.wait_for(
+            websocket.receive_bytes(),
+            timeout=AUTH_MESSAGE_TIMEOUT
+        )
         auth_data = msgpack.unpackb(auth_bytes, raw=False)
         auth_message = WSMessage(**auth_data)
         
@@ -51,6 +59,12 @@ async def receive_auth_message(websocket) -> WSMessage:
         
         return auth_message
         
+    except asyncio.TimeoutError:
+        logger.warning("Authentication message timeout")
+        raise WebSocketDisconnect(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="Authentication timeout - no message received"
+        )
     except (msgpack.exceptions.UnpackException, ValueError) as e:
         logger.error("Invalid authentication message", extra={"error": str(e)})
         raise WebSocketDisconnect(
