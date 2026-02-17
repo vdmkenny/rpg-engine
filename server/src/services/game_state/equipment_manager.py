@@ -95,17 +95,14 @@ class EquipmentManager(BaseManager):
 
         key = EQUIPMENT_KEY.format(player_id=player_id)
 
-        # Get current equipment
-        equipment = await self._get_from_valkey(key) or {}
-
-        # Update slot
-        equipment[slot] = {
+        slot_data = self._encode_for_valkey({
             "item_id": item_id,
             "quantity": quantity,
             "current_durability": durability,
-        }
-
-        await self._cache_in_valkey(key, equipment, TIER2_TTL)
+        })
+        await self._valkey.hset(key, {slot: slot_data})
+        if TIER2_TTL > 0:
+            await self._valkey.expire(key, TIER2_TTL)
         await self._valkey.sadd(DIRTY_EQUIPMENT_KEY, [str(player_id)])
 
     async def _update_equipment_slot_in_db(
