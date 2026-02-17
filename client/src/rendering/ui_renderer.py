@@ -7,6 +7,7 @@ Uses stone-themed panels with 3D borders matching classic OSRS aesthetic.
 
 import pygame
 from typing import Dict, Any, Optional, Tuple, Callable
+import math
 
 from ..ui.colors import Colors
 from .ui_panels import TabbedSidePanel, ChatWindow, ContextMenu, ContextMenuItem, Tooltip
@@ -62,6 +63,14 @@ class UIRenderer:
             60
         )
         
+        # HP Orb - below minimap
+        orb_radius = 30
+        self.hp_orb = HPOrb(
+            self.minimap.x,
+            self.minimap.y + self.minimap.radius + orb_radius + 10,
+            orb_radius
+        )
+        
         # Context menu system
         self.context_menu = ContextMenu()
         
@@ -104,6 +113,9 @@ class UIRenderer:
         # Render minimap (if enabled)
         if self.show_minimap:
             self.minimap.draw(self.screen, game_state)
+        
+        # HP orb is always visible
+        self.hp_orb.draw(self.screen, game_state)
         
         # Render side panel (always visible in game)
         self.side_panel.inventory_items = {
@@ -168,7 +180,7 @@ class UIRenderer:
 
         # Small pill-shaped background
         hint_text = "Press C for chat"
-        text_surface = self.chat_window.tiny_font.render(hint_text, True, (150, 150, 150))
+        text_surface = self.chat_window.tiny_font.render(hint_text, True, Colors.CHAT_HINT_TEXT)
         padding = 6
         bg_rect = pygame.Rect(
             hint_x,
@@ -179,11 +191,11 @@ class UIRenderer:
 
         # Semi-transparent background
         bg_surface = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
-        bg_surface.fill((30, 30, 30, 180))
+        bg_surface.fill(Colors.CHAT_HINT_BG)
         self.screen.blit(bg_surface, (bg_rect.x, bg_rect.y))
 
         # Border
-        pygame.draw.rect(self.screen, (79, 67, 55), bg_rect, 1)
+        pygame.draw.rect(self.screen, Colors.STONE_MEDIUM, bg_rect, 1)
 
         # Text
         self.screen.blit(text_surface, (hint_x + padding, hint_y + 3))
@@ -197,18 +209,18 @@ class UIRenderer:
         
         # Draw warning box
         rect = pygame.Rect(x, y, width, height)
-        pygame.draw.rect(self.screen, (150, 50, 50), rect, border_radius=5)
-        pygame.draw.rect(self.screen, (255, 100, 100), rect, 3, border_radius=5)
+        pygame.draw.rect(self.screen, Colors.SHUTDOWN_BG, rect, border_radius=5)
+        pygame.draw.rect(self.screen, Colors.SHUTDOWN_BORDER, rect, 3, border_radius=5)
         
         # Text (use cached fonts)
-        title = self._shutdown_title_font.render("SERVER SHUTDOWN WARNING", True, (255, 255, 255))
+        title = self._shutdown_title_font.render("SERVER SHUTDOWN WARNING", True, Colors.TEXT_WHITE)
         self.screen.blit(title, (x + 10, y + 10))
         
         reason = warning.get("reason", "Maintenance")
         countdown = warning.get("countdown", 0)
         
         info_text = f"Reason: {reason} | Time: {countdown}s"
-        text = self._shutdown_text_font.render(info_text, True, (255, 200, 200))
+        text = self._shutdown_text_font.render(info_text, True, Colors.SHUTDOWN_INFO_TEXT)
         self.screen.blit(text, (x + 10, y + 45))
     
     def handle_event(self, event: pygame.event.Event, game_state: Any = None) -> Optional[str]:
@@ -561,3 +573,75 @@ class Minimap:
         
         # Player dot (white, larger, in center)
         pygame.draw.circle(screen, Colors.MINIMAP_PLAYER, center, 3)
+
+
+class HPOrb:
+    """Circular HP orb that fills from bottom to top based on current health."""
+    
+    def __init__(self, x: int, y: int, radius: int = 30):
+        self.x = x
+        self.y = y
+        self.radius = radius
+        self._font = pygame.font.SysFont("sans-serif", 11, bold=True)
+    
+    def draw(self, screen: pygame.Surface, game_state: Any) -> None:
+        """Render the HP orb with circular fill that grows from bottom up."""
+        center = (self.x, self.y)
+        r = self.radius
+        inner_r = r - 4
+        
+        current_hp = game_state.current_hp
+        max_hp = max(1, game_state.max_hp)
+        hp_ratio = max(0.0, min(1.0, current_hp / max_hp))
+        
+        # Stone-themed border
+        pygame.draw.circle(screen, Colors.STONE_DARK, center, r, 3)
+        pygame.draw.circle(screen, Colors.STONE_HIGHLIGHT, center, r - 2, 1)
+        
+        # Dark background fill
+        pygame.draw.circle(screen, Colors.HP_ORB_BG, center, inner_r)
+        
+        # Red HP fill from bottom up using direct scan lines (no intermediate surface)
+        if hp_ratio > 0:
+            # Calculate water level: how many pixels from top are filled
+            filled_height = int(inner_r * 2 * hp_ratio)  # Total height to fill
+            water_y = self.y + inner_r - filled_height  # Top of filled region
+            
+            # Draw horizontal scan lines from water level down to bottom of circle
+            for scan_y in range(int(water_y), self.y + inner_r + 1):
+                # Calculate distance from center
+                dy = scan_y - self.y
+                if abs(dy) > inner_r:
+                    continue
+                
+                # Calculate chord half-width at this y coordinate
+                # Circle equation: x^2 + y^2 = r^2, so x = sqrt(r^2 - y^2)
+                dx_half = math.sqrt(max(0, inner_r * inner_r - dy * dy))
+                x_left = int(self.x - dx_half)
+                x_right = int(self.x + dx_half)
+                
+                # Draw horizontal line for this row
+                pygame.draw.line(screen, Colors.HP_ORB_FILL, (x_left, scan_y), (x_right, scan_y), 1)
+            
+            # Add highlight at the waterline
+            if hp_ratio > 0 and hp_ratio < 1.0:
+                dy = self.y + inner_r - filled_height - self.y
+                if abs(dy) <= inner_r:
+                    chord_half = int(math.sqrt(max(0, inner_r * inner_r - dy * dy)))
+                    pygame.draw.line(
+                        screen, Colors.HP_ORB_HIGHLIGHT,
+                        (self.x - chord_half, int(water_y)),
+                        (self.x + chord_half, int(water_y)),
+                        2
+                    )
+        
+        # HP text centered in orb
+        hp_text = f"{current_hp}/{max_hp}"
+        text_surface = self._font.render(hp_text, True, Colors.TEXT_WHITE)
+        text_rect = text_surface.get_rect(center=center)
+        
+        # Dark text shadow for readability
+        shadow = self._font.render(hp_text, True, Colors.BLACK)
+        shadow_rect = shadow.get_rect(center=(center[0] + 1, center[1] + 1))
+        screen.blit(shadow, shadow_rect)
+        screen.blit(text_surface, text_rect)

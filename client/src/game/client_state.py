@@ -56,6 +56,8 @@ class Entity:
     current_hp: int = 100
     max_hp: int = 100
     level: int = 1
+    description: str = ""
+    state: str = "idle"
     visual_hash: Optional[str] = None
     visual_state: Optional[Dict[str, Any]] = None
     facing_direction: str = "DOWN"
@@ -149,6 +151,7 @@ class ClientGameState:
         self.combat_target: Optional[Dict[str, Any]] = None
         self.auto_retaliate: bool = True
         self.last_attack_time: float = 0.0
+        self.combat_timestamps: Dict[Union[int, str], float] = {}
         
         # UI state
         self.chat_history: List[Dict[str, Any]] = []
@@ -198,6 +201,10 @@ class ClientGameState:
         if "max_hp" in data:
             entity.max_hp = data["max_hp"]
         
+        # Update description
+        if "description" in data:
+            entity.description = data["description"]
+        
         # Update visual
         if "visual_hash" in data:
             entity.visual_hash = data["visual_hash"]
@@ -207,6 +214,10 @@ class ClientGameState:
         # Update facing direction
         if "facing_direction" in data:
             entity.facing_direction = data["facing_direction"]
+        
+        # Update entity state (idle, combat, dying, etc.)
+        if "state" in data:
+            entity.state = data["state"]
     
     def update_other_player(self, player_id: int, data: Dict[str, Any]) -> None:
         """Update other player position with smooth interpolation."""
@@ -340,6 +351,28 @@ class ClientGameState:
             self.skills[skill_name] = Skill(name=skill_name)
         
         self.skills[skill_name].xp += xp
+    
+    def mark_in_combat(self, entity_id: Union[int, str]) -> None:
+        """Record that an entity was recently involved in combat."""
+        self.combat_timestamps[entity_id] = time.time()
+    
+    def is_in_combat(self, entity_id: Union[int, str], timeout: float = 5.0) -> bool:
+        """Check if an entity was recently involved in combat."""
+        # For NPC/monster entities, check their server-reported state
+        if entity_id in self.entities:
+            entity = self.entities[entity_id]
+            if entity.state == "combat":
+                return True
+        
+        # For all entities (including players), check combat timestamps
+        last_combat = self.combat_timestamps.get(entity_id)
+        if last_combat is not None:
+            if time.time() - last_combat < timeout:
+                return True
+            else:
+                del self.combat_timestamps[entity_id]
+        
+        return False
     
     def get_entity_at(self, x: int, y: int) -> Optional[Entity]:
         """Get entity at a specific tile position."""

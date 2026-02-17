@@ -198,6 +198,16 @@ class MovementService:
         try:
             player_mgr = get_player_state_manager()
             
+            # Reject movement if player is dead
+            player_hp = await player_mgr.get_player_hp(player_id)
+            if player_hp and player_hp.get("current_hp", 0) <= 0:
+                return {
+                    "success": False,
+                    "reason": "dead",
+                    "new_position": None,
+                    "current_position": None
+                }
+            
             # Validate direction first
             if not MovementService.is_valid_direction(direction):
                 return {

@@ -8,6 +8,7 @@ import pygame
 from typing import Dict, Tuple, List, Optional, Any
 
 from ..config import get_config
+from ..ui.colors import Colors
 from .camera import Camera
 from ..tileset_manager import get_tileset_manager
 
@@ -28,17 +29,17 @@ class MapRenderer:
         
         # Tile colors (fallback if no tileset loaded)
         self.tile_colors = {
-            0: (34, 139, 34),    # Grass - green
-            1: (139, 69, 19),    # Dirt - brown
-            2: (100, 100, 100),  # Stone - gray
-            3: (0, 105, 148),    # Water - blue
-            4: (210, 180, 140),  # Sand - tan
-            5: (34, 100, 34),    # Forest - dark green
-            6: (80, 80, 80),     # Wall - dark gray
+            0: Colors.TILE_GRASS,
+            1: Colors.TILE_DIRT,
+            2: Colors.TILE_STONE,
+            3: Colors.TILE_WATER,
+            4: Colors.TILE_SAND,
+            5: Colors.TILE_FOREST,
+            6: Colors.TILE_WALL,
         }
         
         # Default color for unknown tiles
-        self.default_color = (128, 128, 128)
+        self.default_color = Colors.TILE_DEFAULT
         
         # Current map ID for sprite lookups
         self.current_map_id: Optional[str] = None
@@ -133,9 +134,9 @@ class MapRenderer:
         # Draw missing chunk indicator
         size = self.chunk_size * self.tile_size
         rect = pygame.Rect(int(screen_x), int(screen_y), size, size)
-        pygame.draw.rect(self.screen, (50, 50, 50), rect, 2)
+        pygame.draw.rect(self.screen, Colors.CHUNK_MISSING_BORDER, rect, 2)
         
         # Draw question mark
-        text = self._missing_chunk_font.render("?", True, (100, 100, 100))
+        text = self._missing_chunk_font.render("?", True, Colors.CHUNK_MISSING_TEXT)
         text_rect = text.get_rect(center=rect.center)
         self.screen.blit(text, text_rect)

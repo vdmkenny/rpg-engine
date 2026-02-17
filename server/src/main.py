@@ -81,6 +81,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Could not sync entities to database", extra={"error": str(e)})
     
+    # Sync skills to database and load skill cache
+    try:
+        skills_synced = await ref_manager.sync_skills_to_database()
+        if skills_synced > 0:
+            logger.info("New skills synced to database", extra={"skill_count": skills_synced})
+        
+        skills_cached = await ref_manager.load_skill_cache_from_db()
+        logger.info("Skills cached", extra={"skill_count": skills_cached})
+    except Exception as e:
+        logger.warning("Could not sync/cache skills", extra={"error": str(e)})
+    
     # Clear stale entity instances and spawn entities from Tiled maps
     try:
         # Clear any stale entity instances from previous server run

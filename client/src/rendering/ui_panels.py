@@ -24,6 +24,36 @@ RARITY_COLOR_MAP = {
 }
 
 
+# Skill-to-category mapping for color coding
+SKILL_CATEGORIES = {
+    "attack": "combat",
+    "strength": "combat",
+    "defence": "combat",
+    "ranged": "combat",
+    "magic": "combat",
+    "hitpoints": "combat",
+    "mining": "gathering",
+    "fishing": "gathering",
+    "woodcutting": "gathering",
+    "cooking": "crafting",
+    "crafting": "crafting",
+}
+
+CATEGORY_COLORS = {
+    "combat": Colors.SKILL_COMBAT_TEXT,
+    "gathering": Colors.SKILL_GATHERING_TEXT,
+    "crafting": Colors.SKILL_CRAFTING_TEXT,
+    "other": Colors.SKILL_OTHER_TEXT,
+}
+
+CATEGORY_ICON_COLORS = {
+    "combat": Colors.SKILL_COMBAT_ICON,
+    "gathering": Colors.SKILL_GATHERING_ICON,
+    "crafting": Colors.SKILL_CRAFTING_ICON,
+    "other": Colors.SKILL_OTHER_ICON,
+}
+
+
 # =============================================================================
 # BASE PANEL CLASS
 # =============================================================================
@@ -244,10 +274,10 @@ class TabbedSidePanel(UIPanel):
             
             # Button background
             if is_active:
-                pygame.draw.rect(screen, (100, 100, 140), btn_rect)  # Highlighted
-                pygame.draw.rect(screen, (140, 140, 180), btn_rect, 2)  # Bright border
+                pygame.draw.rect(screen, Colors.SORT_BUTTON_ACTIVE_BG, btn_rect)  # Highlighted
+                pygame.draw.rect(screen, Colors.SORT_BUTTON_ACTIVE_BORDER, btn_rect, 2)  # Bright border
             else:
-                pygame.draw.rect(screen, (60, 60, 80), btn_rect)  # Normal
+                pygame.draw.rect(screen, Colors.SORT_BUTTON_BG, btn_rect)  # Normal
                 pygame.draw.rect(screen, Colors.SLOT_BORDER, btn_rect, 1)  # Normal border
             
             # Button text
@@ -402,64 +432,104 @@ class TabbedSidePanel(UIPanel):
                 screen.blit(label_text, (text_x, text_y))
     
     def _draw_stats_content(self, screen: pygame.Surface, content_rect: pygame.Rect) -> None:
-        """Draw skills list with progress bars."""
+        """Draw skills list with rectangular blocks, icons, and progress bars."""
         # Title with total level
         title_text = f"Skills (Total: {self.total_level})"
         title = self.small_font.render(title_text, True, Colors.TEXT_YELLOW)
-        screen.blit(title, (content_rect.x + 8, content_rect.y + 6))
+        screen.blit(title, (content_rect.x + 8, content_rect.y + 4))
         
-        # Skill categories with colors
-        category_colors = {
-            "combat": (255, 100, 100),      # Red
-            "gathering": (100, 255, 100),   # Green
-            "crafting": (100, 200, 255),    # Blue
-            "other": (200, 200, 200)        # Gray
-        }
+        y = content_rect.y + 24
+        block_height = 24
+        block_margin = 1
+        icon_size = 14
+        bar_height = 5
+        padding_left = 8
+        padding_right = 8
+        available_width = content_rect.width - padding_left - padding_right
         
-        y = content_rect.y + 32
-        skill_height = 22
-        max_display = 10
-        
-        # Sort skills by category then by level
+        # Sort skills by category then by level descending
         sorted_skills = sorted(
             self.skills.items(),
-            key=lambda x: (x[1].get("category", "other"), -x[1].get("level", 1))
-        )[:max_display]
+            key=lambda x: (
+                list(CATEGORY_COLORS.keys()).index(
+                    SKILL_CATEGORIES.get(x[0], "other")
+                ) if SKILL_CATEGORIES.get(x[0], "other") in CATEGORY_COLORS else 99,
+                -x[1].get("level", 1)
+            )
+        )
         
-        for skill_name, skill_data in sorted_skills:
+        # Calculate how many skills can fit
+        max_display = (content_rect.height - 28) // (block_height + block_margin)
+        
+        for skill_name, skill_data in sorted_skills[:max_display]:
+            if y + block_height > content_rect.bottom - 2:
+                break
+            
             level = skill_data.get("level", 1)
             xp = skill_data.get("xp", 0)
             xp_to_next = skill_data.get("xp_to_next", 0)
-            category = skill_data.get("category", "other")
+            category = SKILL_CATEGORIES.get(skill_name, "other")
+            cat_color = CATEGORY_COLORS.get(category, CATEGORY_COLORS["other"])
+            icon_color = CATEGORY_ICON_COLORS.get(category, CATEGORY_ICON_COLORS["other"])
             
-            # Skill name and level
-            name_text = self.tiny_font.render(f"{skill_name.title()}", True, Colors.TEXT_WHITE)
-            screen.blit(name_text, (content_rect.x + 8, y))
+            block_x = content_rect.x + padding_left
             
-            # Level number on the right
-            level_text = self.tiny_font.render(str(level), True, Colors.TEXT_YELLOW)
-            level_x = content_rect.right - level_text.get_width() - 8
-            screen.blit(level_text, (level_x, y))
+            # Block background (slightly lighter than panel)
+            block_rect = pygame.Rect(block_x, y, available_width, block_height)
+            pygame.draw.rect(screen, Colors.SKILL_BLOCK_BG, block_rect)
+            pygame.draw.rect(screen, Colors.PANEL_INNER_BORDER, block_rect, 1)
             
-            # XP progress bar (thin, 3px height)
+            # Category icon placeholder (small colored square)
+            icon_x = block_x + 3
+            icon_y = y + (block_height - icon_size) // 2
+            icon_rect = pygame.Rect(icon_x, icon_y, icon_size, icon_size)
+            pygame.draw.rect(screen, icon_color, icon_rect)
+            pygame.draw.rect(screen, Colors.SKILL_ICON_BORDER, icon_rect, 1)
+            
+            # Skill initial in icon
+            initial = skill_name[0].upper()
+            initial_surf = self.tiny_font.render(initial, True, Colors.TEXT_WHITE)
+            initial_rect = initial_surf.get_rect(center=icon_rect.center)
+            screen.blit(initial_surf, initial_rect)
+            
+            # Skill name
+            text_x = icon_x + icon_size + 4
+            name_surf = self.tiny_font.render(skill_name.title(), True, Colors.TEXT_WHITE)
+            screen.blit(name_surf, (text_x, y + 1))
+            
+            # Level on the right
+            level_surf = self.tiny_font.render(str(level), True, Colors.TEXT_YELLOW)
+            level_x = block_x + available_width - level_surf.get_width() - 4
+            screen.blit(level_surf, (level_x, y + 1))
+            
+            # XP progress bar (bottom portion of block)
+            bar_x = text_x
+            bar_y = y + block_height - bar_height - 3
+            bar_width = available_width - (text_x - block_x) - 4
+            
+            # Progress calculation
+            progress = min(1.0, xp / xp_to_next) if xp_to_next > 0 else 0
+            fill_width = int(bar_width * progress)
+            
+            # Bar background
+            pygame.draw.rect(screen, Colors.XP_BG, (bar_x, bar_y, bar_width, bar_height))
+            
+            # Bar fill with category color
+            if fill_width > 0:
+                pygame.draw.rect(screen, cat_color, (bar_x, bar_y, fill_width, bar_height))
+            
+            # XP text overlay on the bar (tiny)
             if xp_to_next > 0:
-                bar_width = content_rect.width - 16
-                bar_x = content_rect.x + 8
-                bar_y = y + 14
-                
-                # Calculate progress
-                progress = min(1.0, xp / xp_to_next) if xp_to_next > 0 else 0
-                fill_width = int(bar_width * progress)
-                
-                # Background (dark)
-                pygame.draw.rect(screen, (40, 40, 40), (bar_x, bar_y, bar_width, 3))
-                
-                # Fill (category color or green)
-                cat_color = category_colors.get(category, (100, 255, 100))
-                if fill_width > 0:
-                    pygame.draw.rect(screen, cat_color, (bar_x, bar_y, fill_width, 3))
+                xp_text = f"{xp}/{xp_to_next}"
+            else:
+                xp_text = f"{xp} XP"
+            xp_surf = self.tiny_font.render(xp_text, True, Colors.TEXT_XP)
+            # Scale down the XP text if it doesn't fit
+            if xp_surf.get_width() <= bar_width:
+                xp_rect = xp_surf.get_rect(center=(bar_x + bar_width // 2, bar_y + bar_height // 2))
+                screen.blit(xp_surf, xp_rect)
             
-            y += skill_height
+            y += block_height + block_margin
     
     def _draw_settings_content(self, screen: pygame.Surface, content_rect: pygame.Rect) -> None:
         """Draw settings."""
@@ -471,10 +541,10 @@ class TabbedSidePanel(UIPanel):
 
         # Highlight if hovered - bright red for visibility
         if self.logout_hovered:
-            pygame.draw.rect(screen, (180, 80, 80), btn_rect)  # Much brighter red
-            pygame.draw.rect(screen, (220, 120, 120), btn_rect, 3)  # Bright border
+            pygame.draw.rect(screen, Colors.LOGOUT_HOVER_BG, btn_rect)  # Much brighter red
+            pygame.draw.rect(screen, Colors.LOGOUT_HOVER_BORDER, btn_rect, 3)  # Bright border
         else:
-            pygame.draw.rect(screen, (100, 50, 50), btn_rect)
+            pygame.draw.rect(screen, Colors.LOGOUT_BG, btn_rect)
             pygame.draw.rect(screen, Colors.STONE_HIGHLIGHT, btn_rect, 2)
 
         btn_text = self.font.render("Logout", True, Colors.TEXT_WHITE)
@@ -549,11 +619,13 @@ class ChatWindow(UIPanel):
         super().__init__(x, y, width, height, "")
         
         self.channels = {
-            "local": {"messages": [], "color": Colors.TEXT_GREEN},
+            "all": {"messages": [], "color": Colors.TEXT_WHITE},
+            "local": {"messages": [], "color": Colors.TEXT_WHITE},
             "global": {"messages": [], "color": Colors.TEXT_CYAN},
             "dm": {"messages": [], "color": Colors.TEXT_PURPLE},
+            "system": {"messages": [], "color": Colors.TEXT_GRAY},
         }
-        self.active_channel = "local"
+        self.active_channel = "all"
         
         self.input_text = ""
         self.pending_message = None  # Message pending to be sent (Fix A)
@@ -588,7 +660,7 @@ class ChatWindow(UIPanel):
         current_width = 0
 
         for word in words:
-            word_surface = self.tiny_font.render(word, True, (255, 255, 255))
+            word_surface = self.tiny_font.render(word, True, Colors.TEXT_WHITE)
             word_width = word_surface.get_width()
             space_width = self.tiny_font.size(" ")[0]
 
@@ -636,7 +708,8 @@ class ChatWindow(UIPanel):
         pygame.draw.rect(screen, Colors.PANEL_BORDER, (self.x, self.y, self.width, self.height), 2)
 
         # Tabs
-        tab_width = self.width // 3
+        num_tabs = len(self.channels)
+        tab_width = self.width // num_tabs
         for tab_idx, (ch_name, ch_data) in enumerate(self.channels.items()):
             tab_rect = pygame.Rect(self.x + tab_idx * tab_width, self.y, tab_width, self.TAB_HEIGHT)
 
@@ -658,13 +731,34 @@ class ChatWindow(UIPanel):
         scrollbar_visible = False
         all_lines = []
 
-        for msg_data in self.channels[self.active_channel]["messages"]:
+        # Collect messages: "all" tab shows messages from every real channel
+        if self.active_channel == "all":
+            messages_with_color = []
+            for ch_name, ch_data in self.channels.items():
+                if ch_name == "all":
+                    continue
+                for msg_data in ch_data["messages"]:
+                    messages_with_color.append((msg_data, ch_data["color"]))
+            # Sort by insertion order (index in original lists)
+            # Messages are appended chronologically, so merge by timestamp proxy
+            # Use the "all" channel's own message list which is kept in order
+            messages_with_color = []
+            for msg_data in self.channels["all"]["messages"]:
+                ch = msg_data.get("channel", "local")
+                color = self.channels.get(ch, self.channels["local"])["color"]
+                messages_with_color.append((msg_data, color))
+        else:
+            ch_color = self.channels[self.active_channel]["color"]
+            messages_with_color = [
+                (msg_data, ch_color)
+                for msg_data in self.channels[self.active_channel]["messages"]
+            ]
+
+        for msg_data, color in messages_with_color:
             username = msg_data.get('username', '?')
             text = msg_data.get('text', '')
-            # Don't show username and colon for system messages (empty username)
             full_text = f"{username}: {text}" if username else text
             wrapped = self._wrap_text(full_text, max_text_width)
-            color = self.channels[self.active_channel]["color"]
             for line in wrapped:
                 all_lines.append((line, color))
 
@@ -674,13 +768,11 @@ class ChatWindow(UIPanel):
             max_text_width -= 12  # Make room for scrollbar
             # Re-wrap with reduced width
             all_lines = []
-            for msg_data in self.channels[self.active_channel]["messages"]:
+            for msg_data, color in messages_with_color:
                 username = msg_data.get('username', '?')
                 text = msg_data.get('text', '')
-                # Don't show username and colon for system messages (empty username)
                 full_text = f"{username}: {text}" if username else text
                 wrapped = self._wrap_text(full_text, max_text_width)
-                color = self.channels[self.active_channel]["color"]
                 for line in wrapped:
                     all_lines.append((line, color))
             total_lines = len(all_lines)
@@ -738,8 +830,10 @@ class ChatWindow(UIPanel):
         pygame.draw.rect(screen, border_color, (self.x + 4, input_y, self.width - 8, 20), 1)
 
         # Input text with username prefix (Fix B)
+        # "all" tab is display-only; input uses "local" channel color
+        input_channel = "local" if self.active_channel == "all" else self.active_channel
         prefix = f"{self.username}: " if self.username else ""
-        prefix_surface = self.tiny_font.render(prefix, True, self.channels[self.active_channel]["color"])
+        prefix_surface = self.tiny_font.render(prefix, True, self.channels[input_channel]["color"])
         screen.blit(prefix_surface, (self.x + 6, input_y + 2))
 
         input_text_surface = self.tiny_font.render(self.input_text, True, Colors.TEXT_WHITE)
@@ -752,21 +846,30 @@ class ChatWindow(UIPanel):
             pygame.draw.line(screen, Colors.TEXT_WHITE, (cursor_x, input_y + 2), (cursor_x, input_y + 18))
     
     def add_message(self, channel: str, username: str, text: str) -> None:
-        """Add a message to a channel."""
-        if channel in self.channels:
+        """Add a message to a channel and to the 'all' feed."""
+        if channel in self.channels and channel != "all":
             self.channels[channel]["messages"].append({
                 "username": username,
                 "text": text,
             })
-            # Keep last 100 messages
+            # Keep last 100 messages per channel
             if len(self.channels[channel]["messages"]) > 100:
                 self.channels[channel]["messages"].pop(0)
+            # Also append to the "all" feed with channel tag for color lookup
+            self.channels["all"]["messages"].append({
+                "username": username,
+                "text": text,
+                "channel": channel,
+            })
+            if len(self.channels["all"]["messages"]) > 200:
+                self.channels["all"]["messages"].pop(0)
     
     def handle_event(self, event: pygame.event.Event) -> Optional[str]:
         """Handle chat input."""
         if event.type == pygame.MOUSEBUTTONDOWN:
             # Check tab clicks
-            tab_width = self.width // 3
+            num_tabs = len(self.channels)
+            tab_width = self.width // num_tabs
             for tab_idx, ch_name in enumerate(self.channels.keys()):
                 tab_rect = pygame.Rect(self.x + tab_idx * tab_width, self.y, tab_width, self.TAB_HEIGHT)
                 if tab_rect.collidepoint(event.pos):
@@ -785,7 +888,9 @@ class ChatWindow(UIPanel):
                     self.pending_message = self.input_text
                     # Only add to chat log if it's NOT a command (commands handled separately)
                     if not self.input_text.startswith("/"):
-                        self.add_message(self.active_channel, "You", self.input_text)
+                        # "all" tab is display-only; own messages go to "local"
+                        send_channel = "local" if self.active_channel == "all" else self.active_channel
+                        self.add_message(send_channel, "You", self.input_text)
                     self.scroll_offset = 0  # Scroll to bottom when sending
                     self.input_text = ""
                     self.input_cursor_pos = 0

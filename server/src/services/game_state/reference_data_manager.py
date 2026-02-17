@@ -352,6 +352,35 @@ class ReferenceDataManager(BaseManager):
             logger.info("Synced item definitions to database", extra={"item_count": count})
             return count
 
+    async def sync_skills_to_database(self) -> int:
+        """Sync SkillType enum definitions to database."""
+        from server.src.core.skills import SkillType
+        from server.src.models.skill import Skill
+
+        if not self._session_factory:
+            logger.warning("No database connection for skill sync")
+            return 0
+
+        async with self._db_session() as db:
+            # Get all existing skill names
+            result = await db.execute(select(Skill.name))
+            existing_skills = {row[0].lower() for row in result.all()}
+            
+            count = 0
+            # Insert missing skills from SkillType enum
+            for skill_name in SkillType.all_skill_names():
+                skill_name_lower = skill_name.lower()
+                if skill_name_lower not in existing_skills:
+                    new_skill = Skill(name=skill_name)
+                    db.add(new_skill)
+                    count += 1
+            
+            if count > 0:
+                await self._commit_if_not_test_session(db)
+                logger.info("Synced skill definitions to database", extra={"skill_count": count})
+            
+            return count
+
     async def _cache_entity_definitions(self) -> None:
         """Cache entity definitions in Valkey."""
         if not self._session_factory:

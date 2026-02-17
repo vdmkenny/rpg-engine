@@ -10,6 +10,7 @@ import time
 
 from ..config import get_config
 from ..logging_config import get_logger
+from ..ui.colors import Colors
 from ..game.client_state import get_game_state
 
 from .camera import Camera
@@ -90,7 +91,7 @@ class Renderer:
     def render(self) -> None:
         """Render one frame."""
         # 1. Clear game surface (for game world content)
-        self.game_surface.fill((0, 0, 0))
+        self.game_surface.fill(Colors.BLACK)
         
         # 2. Render game world to game_surface
         # Map/chunks
@@ -141,11 +142,11 @@ class Renderer:
     def _render_debug_info(self) -> None:
         """Render debug information overlay."""
         fps_text = f"FPS: {self.current_fps:.1f}"
-        text_surface = self.debug_font.render(fps_text, True, (255, 255, 0))
+        text_surface = self.debug_font.render(fps_text, True, Colors.DEBUG_TEXT)
         self.screen.blit(text_surface, (10, 10))
         
         pos_text = f"Pos: ({self.game_state.position.get('x', 0)}, {self.game_state.position.get('y', 0)})"
-        text_surface = self.debug_font.render(pos_text, True, (255, 255, 0))
+        text_surface = self.debug_font.render(pos_text, True, Colors.DEBUG_TEXT)
         self.screen.blit(text_surface, (10, 30))
     
     def handle_resize(self, screen: pygame.Surface, width: int, height: int) -> None:

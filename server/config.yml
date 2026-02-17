@@ -21,8 +21,8 @@ game:
   # HP regeneration configuration
   hp_regen:
     # Interval in ticks between HP regeneration (1 HP per interval)
-    # At 20 TPS: 200 ticks = 10 seconds
-    interval_ticks: 200
+    # At 20 TPS: 2000 ticks = 100 seconds
+    interval_ticks: 2000
   
   # Death and respawn configuration
   death:

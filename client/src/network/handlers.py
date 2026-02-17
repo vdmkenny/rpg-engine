@@ -186,8 +186,14 @@ class MessageHandlers:
             player_id = entity.get("player_id")  # For player entities
             if entity_id:
                 if entity_type == "player":
-                    # Skip if this is the local player (avoid ghost of yourself)
+                    # Update local player HP from server state, but skip visual spawning/tracking
                     if player_id == self.game_state.player_id:
+                        if "current_hp" in entity:
+                            self.game_state.current_hp = entity["current_hp"]
+                        if "max_hp" in entity:
+                            self.game_state.max_hp = entity["max_hp"]
+                        if "facing_direction" in entity:
+                            self.game_state.facing_direction = entity["facing_direction"]
                         continue
                     # Add new players to other_players if not already tracked
                     if player_id and player_id not in self.game_state.other_players:
@@ -331,36 +337,66 @@ class MessageHandlers:
     
     async def handle_combat_action(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:
         """Handle combat action event."""
-        action_type = payload.get("action_type")
-        attacker = payload.get("attacker", {})
-        target = payload.get("target", {})
+        # Server sends flat fields: hit, damage, attacker_id, attacker_name,
+        # defender_id, defender_name, defender_hp, defender_died, message
+        hit = payload.get("hit", True)
         damage = payload.get("damage", 0)
+        attacker_type = payload.get("attacker_type", "")
+        attacker_id = payload.get("attacker_id")
+        attacker_name = payload.get("attacker_name", "")
+        defender_type = payload.get("defender_type", "")
+        defender_id = payload.get("defender_id")
+        defender_name = payload.get("defender_name", "")
         
-        logger.debug(f"Combat action: {action_type} - {damage} damage")
+        # Build entity IDs in the format used by client state (e.g. "player_1" or raw int for entities)
+        attacker_entity_id = f"player_{attacker_id}" if attacker_type == "player" else attacker_id
+        defender_entity_id = f"player_{defender_id}" if defender_type == "player" else defender_id
         
-        # Add hit splat if damage was dealt
-        if damage > 0 or action_type == "miss":
-            target_id = target.get("id")
-            is_miss = action_type == "miss"
-            
-            hit_splat = HitSplat(
-                target_id=target_id,
-                damage=damage,
-                is_miss=is_miss,
-                timestamp=time.time()
-            )
-            self.game_state.hit_splats.append(hit_splat)
+        logger.debug(f"Combat action: hit={hit} damage={damage} {attacker_name} -> {defender_name}")
         
-        # Track XP gains
+        # Mark both attacker and target as in combat for health bar display
+        if attacker_entity_id is not None:
+            self.game_state.mark_in_combat(attacker_entity_id)
+        if defender_entity_id is not None:
+            self.game_state.mark_in_combat(defender_entity_id)
+        
+        # Mark local player as in combat if they are involved
+        local_player_id = self.game_state.player_id
+        if local_player_id is not None:
+            local_entity_id = f"player_{local_player_id}"
+            if attacker_entity_id == local_entity_id or defender_entity_id == local_entity_id:
+                self.game_state.mark_in_combat(local_entity_id)
+                self.game_state.in_combat = True
+        
+        # Add hit splat for hits and misses
+        is_miss = not hit
+        hit_splat = HitSplat(
+            target_id=defender_entity_id,
+            damage=damage,
+            is_miss=is_miss,
+            timestamp=time.time()
+        )
+        self.game_state.hit_splats.append(hit_splat)
+        
+        # Sync local player HP immediately on damage (supplementing 50ms game update tick)
+        if defender_entity_id == f"player_{self.game_state.player_id}":
+            self.game_state.current_hp = payload.get("defender_hp", self.game_state.current_hp)
+        
+        # Track XP gains and show floating notifications
         if "skill_xp" in payload:
             for skill, xp in payload["skill_xp"].items():
                 self.game_state.add_skill_xp(skill, xp)
+                self.game_state.floating_messages.append({
+                    "message": f"+{xp} {skill.title()} XP",
+                    "timestamp": time.time(),
+                    "duration": 2.0,
+                })
         
         self.event_bus.emit(EventType.COMBAT_ACTION_RECEIVED, {
-            "action_type": action_type,
+            "hit": hit,
             "damage": damage,
-            "attacker": attacker.get("id"),
-            "target": target.get("id")
+            "attacker": attacker_entity_id,
+            "target": defender_entity_id
         })
     
     async def handle_appearance_update(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:

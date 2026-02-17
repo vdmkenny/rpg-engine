@@ -350,13 +350,13 @@ class Client:
                 menu_items.append(ContextMenuItem(
                     f"Attack {entity_name}",
                     "attack_entity",
-                    (255, 100, 100),  # Red
+                    Colors.CONTEXT_ATTACK,
                     (entity_type, entity_id)
                 ))
                 menu_items.append(ContextMenuItem(
                     f"Examine {entity_name}",
                     "examine_entity",
-                    (100, 200, 255),  # Cyan
+                    Colors.CONTEXT_EXAMINE,
                     entity
                 ))
         
@@ -368,13 +368,13 @@ class Client:
                 menu_items.append(ContextMenuItem(
                     f"Attack {username}",
                     "attack_player",
-                    (255, 100, 100),  # Red
+                    Colors.CONTEXT_ATTACK,
                     ("player", player_id)
                 ))
                 menu_items.append(ContextMenuItem(
                     f"Examine {username}",
                     "examine_player",
-                    (100, 200, 255),  # Cyan
+                    Colors.CONTEXT_EXAMINE,
                     player
                 ))
         
@@ -393,7 +393,7 @@ class Client:
                 menu_items.append(ContextMenuItem(
                     f"Examine {item_name}",
                     "examine_item",
-                    (100, 200, 255),  # Cyan
+                    Colors.CONTEXT_EXAMINE,
                     item
                 ))
 
@@ -405,6 +405,28 @@ class Client:
                     self._safe_create_task(self.message_sender.attack(target_type, target_id))
                 elif item.action == "pickup":
                     self._safe_create_task(self.message_sender.item_pickup(item.data))
+                elif item.action == "examine_entity":
+                    entity = item.data
+                    desc = entity.description or "Nothing interesting."
+                    if self.renderer and self.renderer.ui_renderer:
+                        self.renderer.ui_renderer.chat_window.add_message(
+                            "local", "", f"{entity.name}: {desc}"
+                        )
+                elif item.action == "examine_player":
+                    player = item.data
+                    username = player.get("username", "Unknown")
+                    if self.renderer and self.renderer.ui_renderer:
+                        self.renderer.ui_renderer.chat_window.add_message(
+                            "local", "", f"{username}: A fellow adventurer."
+                        )
+                elif item.action == "examine_item":
+                    ground_item = item.data
+                    name = ground_item.get("display_name", ground_item.get("item_name", "Unknown"))
+                    desc = ground_item.get("description", "Nothing interesting.")
+                    if self.renderer and self.renderer.ui_renderer:
+                        self.renderer.ui_renderer.chat_window.add_message(
+                            "local", "", f"{name}: {desc}"
+                        )
             
             self.renderer.ui_renderer.context_menu.show(
                 menu_x, menu_y, menu_items, on_menu_select
@@ -477,7 +499,7 @@ class Client:
                             registry.try_handle(message)
                         else:
                             # Unknown command - show error in chat, don't send to server
-                            chat_window.add_message(chat_window.active_channel, "System", f"Unknown command: {message}")
+                            chat_window.add_message("system", "", f"Unknown command: {message}")
                         chat_window.pending_message = None
                         return
                     
@@ -910,6 +932,10 @@ class Client:
     
     def _process_movement(self):
         """Process held keys and send movement commands."""
+        # Skip movement if player is dead
+        if self.game_state.is_dead:
+            return
+        
         # Skip movement if chat input is focused (Fix E)
         if self.renderer and self.renderer.ui_renderer.is_chat_input_active():
             return
@@ -948,7 +974,7 @@ class Client:
         
         # Debug: Show current state
         state_text = f"State: {self.state.value}"
-        text_surface = self.debug_font.render(state_text, True, (255, 255, 0))
+        text_surface = self.debug_font.render(state_text, True, Colors.DEBUG_TEXT)
         self.screen.blit(text_surface, (10, 10))
 
     async def _handle_logout(self):

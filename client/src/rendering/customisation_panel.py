@@ -644,7 +644,7 @@ class CustomisationPanel:
         
         # Dark overlay
         overlay = pygame.Surface((self.screen_width, self.screen_height), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 180))
+        overlay.fill(Colors.OVERLAY_DARK)
         screen.blit(overlay, (0, 0))
         
         # Main panel background
@@ -758,7 +758,7 @@ class CustomisationPanel:
             self.preview_rect.width,
             self.preview_rect.height - 60
         )
-        pygame.draw.rect(screen, (40, 40, 40), preview_bg)
+        pygame.draw.rect(screen, Colors.PREVIEW_BG, preview_bg)
         pygame.draw.rect(screen, Colors.PANEL_BORDER, preview_bg, 2)
         
         # Draw character

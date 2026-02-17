@@ -153,7 +153,7 @@ class HelpModal:
         
         # Dark overlay
         overlay = pygame.Surface((self.screen_width, self.screen_height), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 180))
+        overlay.fill(Colors.OVERLAY_DARK)
         screen.blit(overlay, (0, 0))
         
         # Main panel background

@@ -19,6 +19,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from protocol import Direction
+from ..ui.colors import Colors
 from sprites.enums import (
     BodyType,
     SkinTone,
@@ -649,7 +650,7 @@ def create_fallback_sprite(
     pygame.draw.rect(surface, color, (0, 0, size, size))
     
     if with_border:
-        pygame.draw.rect(surface, (0, 0, 0), (0, 0, size, size), 1)
+        pygame.draw.rect(surface, Colors.BLACK, (0, 0, size, size), 1)
     
     return surface
 

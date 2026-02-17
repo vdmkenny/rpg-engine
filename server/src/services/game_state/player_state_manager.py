@@ -442,6 +442,14 @@ class PlayerStateManager(BaseManager):
         if self._valkey and settings.USE_VALKEY:
             await self._valkey.sadd(DIRTY_POSITIONS_KEY, [str(player_id)])
 
+    async def update_player_facing(self, player_id: int, facing_direction: str) -> None:
+        """Update player facing direction without changing position."""
+        key = PLAYER_KEY.format(player_id=player_id)
+        data = await self._get_from_valkey(key)
+        if data:
+            data["facing_direction"] = facing_direction
+            await self._cache_in_valkey(key, data, TIER1_TTL)
+
     # =========================================================================
     # Batch Sync Support
     # =========================================================================

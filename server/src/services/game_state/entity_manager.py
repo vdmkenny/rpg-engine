@@ -179,6 +179,18 @@ class EntityManager(BaseManager):
             data["current_hp"] = current_hp
             await self._cache_in_valkey(key, data, ENTITY_TTL)
 
+    async def update_entity_facing(self, instance_id: int, facing_direction: str) -> None:
+        """Update entity facing direction without changing position."""
+        if not self._valkey or not settings.USE_VALKEY:
+            return
+
+        key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
+        data = await self._get_from_valkey(key)
+
+        if data:
+            data["facing_direction"] = facing_direction
+            await self._cache_in_valkey(key, data, ENTITY_TTL)
+
     async def set_entity_state(
         self,
         instance_id: int,
@@ -284,16 +296,20 @@ class EntityManager(BaseManager):
         await self._cache_in_valkey(respawn_key, respawn_data, respawn_delay_seconds + 60)
 
     async def finalize_entity_death(self, instance_id: int) -> None:
-        """Finalize entity death (remove from respawn queue)."""
+        """Finalize entity death: remove from active data and queue for respawn."""
         if not self._valkey or not settings.USE_VALKEY:
             return
 
-        # Remove from respawn queue
-        await self._valkey.zrem(ENTITY_RESPAWN_QUEUE_KEY, [str(instance_id)])
+        key = ENTITY_INSTANCE_KEY.format(instance_id=instance_id)
+        data = await self._get_from_valkey(key)
 
-        # Clean up respawn data
-        respawn_key = f"entity_respawn:{instance_id}"
-        await self._delete_from_valkey(respawn_key)
+        if not data:
+            return
+
+        death_tick = int(data.get("death_tick", 0))
+        respawn_delay = int(data.get("respawn_delay_seconds", 30))
+
+        await self.despawn_entity(instance_id, death_tick, respawn_delay)
 
     async def clear_all_entity_instances(self) -> None:
         """Clear all entity instances (server shutdown)."""

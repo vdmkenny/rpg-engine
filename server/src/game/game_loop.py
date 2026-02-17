@@ -36,6 +36,7 @@ from server.src.services.visual_registry import get_visual_registry
 from server.src.services.visual_state_service import VisualStateService
 from server.src.services.ai_service import AIService
 from server.src.services.entity_spawn_service import EntitySpawnService
+from server.src.services.pathfinding_service import PathfindingService
 from server.src.services.player_service import PlayerService
 from server.src.core.entities import EntityState
 from common.src.protocol import (
@@ -342,11 +343,12 @@ def get_visible_npc_entities(
             entity_name = entity.get("entity_name", "")
             entity_type = entity.get("entity_type", EntityType.MONSTER.value)
             
-            # Get entity definition for display name and behavior
+            # Get entity definition for display name, behavior, and description
             entity_enum = get_entity_by_name(entity_name)
             display_name = entity_name
             behavior_type = "PASSIVE"
             is_attackable = True
+            description = ""
             
             # Entity-type specific rendering data
             sprite_sheet_id = None  # For monsters
@@ -356,6 +358,7 @@ def get_visible_npc_entities(
                 entity_def = entity_enum.value
                 display_name = entity_def.display_name
                 behavior_type = entity_def.behavior.name
+                description = entity_def.description
                 is_attackable = entity_def.is_attackable and entity_state != EntityState.DYING.value
                 
                 # Extract type-specific rendering data
@@ -381,6 +384,7 @@ def get_visible_npc_entities(
                 "entity_type": entity_type,
                 "entity_name": entity_name,
                 "display_name": display_name,
+                "description": description,
                 "behavior_type": behavior_type,
                 "x": entity_x,
                 "y": entity_y,
@@ -481,6 +485,17 @@ async def _process_auto_attacks(
                 if distance > 1:  # Melee range
                     await player_mgr.clear_player_combat_state(player_id)
                     continue
+                
+                # Face the target during combat
+                dx = target_x - player_pos["x"]
+                dy = target_y - player_pos["y"]
+                if abs(dx) > abs(dy):
+                    facing = "RIGHT" if dx > 0 else "LEFT"
+                elif dy != 0:
+                    facing = "DOWN" if dy > 0 else "UP"
+                else:
+                    facing = "DOWN"
+                await player_mgr.update_player_facing(player_id, facing)
                 
                 # Execute attack
                 result = await CombatService.perform_attack(
@@ -720,6 +735,7 @@ async def _handle_player_death(
     player_id: int,
     map_id: str,
     manager: ConnectionManager,
+    killed_by: Optional[str] = None,
 ) -> None:
     """
     Handle the full death sequence for a player who reached 0 HP.
@@ -735,6 +751,7 @@ async def _handle_player_death(
         player_id: Player's database ID
         map_id: Map where the player died
         manager: ConnectionManager for broadcasting
+        killed_by: Name of the attacker that dealt the killing blow
     """
     from server.src.services.hp_service import HpService
     
@@ -779,7 +796,7 @@ async def _handle_player_death(
                 id=None,
                 type=MessageType.EVENT_CHAT_MESSAGE,
                 payload={
-                    "sender": "Server",
+                    "sender": "",
                     "message": "Oh dear, you have died!",
                     "channel": "system",
                 },
@@ -789,11 +806,39 @@ async def _handle_player_death(
             if packed_chat:
                 await manager.send_personal_message(player_id, packed_chat)
         
+        # Create callback to broadcast kill message to the map
+        async def broadcast_kill_message(username: str):
+            """Broadcast a kill message so nearby players see it."""
+            if killed_by:
+                kill_text = f"{username} was killed by {killed_by}"
+            else:
+                kill_text = f"{username} has died"
+            kill_chat = WSMessage(
+                id=None,
+                type=MessageType.EVENT_CHAT_MESSAGE,
+                payload={
+                    "sender": "",
+                    "message": kill_text,
+                    "channel": "system",
+                },
+                version=PROTOCOL_VERSION,
+            )
+            packed_chat = msgpack.packb(kill_chat.model_dump(), use_bin_type=True)
+            if packed_chat:
+                await manager.broadcast_to_map(map_id, packed_chat)
+        
+        # Get username for broadcast
+        from ..services.player_service import PlayerService
+        player_data = await PlayerService.get_player_by_id(player_id)
+        death_username = player_data.username if player_data else "Unknown"
+        
         # Execute full death sequence
         await send_death_message()
+        await broadcast_kill_message(death_username)
         result = await HpService.full_death_sequence(
             player_id=player_id,
             broadcast_callback=broadcast_callback,
+            killed_by=killed_by,
         )
         
         if result.success:
@@ -839,6 +884,84 @@ async def register_player_login(player_id: int) -> None:
     """Register a player's login tick for staggered HP regen."""
     state = get_game_loop_state()
     await state.register_player_login(player_id)
+
+
+async def _resolve_entity_overlaps(
+    entity_mgr,
+    map_id: str,
+    player_positions: Dict[int, Tuple[int, int]],
+) -> None:
+    """
+    Move entities that overlap with players to the nearest free adjacent tile.
+
+    When a player stands on the same tile as an entity, the entity steps
+    to a free cardinal neighbor and faces the player. This prevents
+    visual stacking and ensures melee range is maintained correctly.
+    """
+    if not player_positions:
+        return
+
+    entity_positions = await EntitySpawnService.get_entity_positions(entity_mgr, map_id)
+    if not entity_positions:
+        return
+
+    player_pos_set = set(player_positions.values())
+    # Build set of all occupied tiles (players + entities) for collision checks
+    all_occupied: Set[Tuple[int, int]] = set(player_pos_set) | set(entity_positions.values())
+
+    # Get collision grid for walkability checks
+    map_manager = get_map_manager()
+    tile_map = map_manager.get_map(map_id)
+    if not tile_map:
+        return
+    collision_grid = tile_map.get_collision_grid()
+    height = len(collision_grid)
+    width = len(collision_grid[0]) if height > 0 else 0
+
+    # Cardinal directions: up, down, left, right
+    cardinal_offsets = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+
+    for instance_id, (ex, ey) in entity_positions.items():
+        if (ex, ey) not in player_pos_set:
+            continue
+
+        # Entity overlaps with a player - find the overlapping player for facing
+        overlapping_player_pos = (ex, ey)
+
+        # Try each cardinal direction for a free tile
+        moved = False
+        for dx, dy in cardinal_offsets:
+            nx, ny = ex + dx, ey + dy
+            if not (0 <= nx < width and 0 <= ny < height):
+                continue
+            if collision_grid[ny][nx]:
+                continue
+            if (nx, ny) in all_occupied:
+                continue
+
+            # Found a free tile - move entity there and face the player
+            facing = AIService._direction_from_delta(nx, ny, overlapping_player_pos[0], overlapping_player_pos[1])
+            await entity_mgr.update_entity_position(instance_id, nx, ny, facing)
+            # Update occupied set so subsequent entities don't pick the same tile
+            all_occupied.discard((ex, ey))
+            all_occupied.add((nx, ny))
+            moved = True
+            break
+
+        if not moved:
+            # No cardinal tile free - use spiral search as fallback
+            blocked = all_occupied - {(ex, ey)}
+            open_tile = PathfindingService.find_nearest_open_tile(
+                center=(ex, ey),
+                collision_grid=collision_grid,
+                blocked_positions=blocked,
+                max_radius=3,
+            )
+            if open_tile and open_tile != (ex, ey):
+                facing = AIService._direction_from_delta(open_tile[0], open_tile[1], overlapping_player_pos[0], overlapping_player_pos[1])
+                await entity_mgr.update_entity_position(instance_id, open_tile[0], open_tile[1], facing)
+                all_occupied.discard((ex, ey))
+                all_occupied.add(open_tile)
 
 
 async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
@@ -1055,7 +1178,8 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     current_tick=current_tick,
                 )
                 
-                # Broadcast any entity combat events
+                # Broadcast any entity combat events and track killing blows
+                killed_by_map: Dict[int, str] = {}
                 if entity_combat_events:
                     for combat_event in entity_combat_events:
                         event_message = WSMessage(
@@ -1079,6 +1203,9 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         packed_event = msgpack.packb(event_message.model_dump(), use_bin_type=True)
                         if packed_event:
                             await manager.broadcast_to_map(combat_event.map_id, packed_event)
+                        # Track who killed which player for death messages
+                        if combat_event.defender_died:
+                            killed_by_map[combat_event.defender_id] = combat_event.attacker_name
                 
                 # Check for player deaths and spawn death handlers
                 for player_id in player_ids:
@@ -1092,13 +1219,23 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         # Player died - add to dying set and spawn death handler
                         if await state.add_dying_player(player_id):
                             task = asyncio.create_task(
-                                _handle_player_death(player_id, map_id, manager),
+                                _handle_player_death(
+                                    player_id, map_id, manager,
+                                    killed_by=killed_by_map.get(player_id),
+                                ),
                                 name=f"death_handler_{player_id}"
                             )
                             state.track_task(task)
 
                 # Process auto-attacks for all players in combat
                 await _process_auto_attacks(player_mgr, entity_mgr, manager, current_tick)
+
+                # Nudge entities off player tiles so they don't stack visually
+                await _resolve_entity_overlaps(entity_mgr, map_id, player_positions)
+
+                # Re-fetch entity instances after AI processing and overlap resolution
+                # so the visibility diff uses up-to-date positions
+                all_map_entity_instances = await entity_mgr.get_map_entities(map_id)
 
                 # For each connected player, compute and send their personalized diff
                 for player_id in player_ids:
@@ -1140,6 +1277,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             "item_id": ground_item.item.id,
                             "item_name": ground_item.item.name,
                             "display_name": ground_item.item.display_name,
+                            "description": ground_item.item.description,
                             "rarity": ground_item.item.rarity.value,
                             "x": ground_item.x,
                             "y": ground_item.y,

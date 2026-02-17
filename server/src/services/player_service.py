@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 
 from ..core.config import settings
 from ..core.security import get_password_hash
+from ..core.skills import HITPOINTS_START_LEVEL
 from ..schemas.player import (
     PlayerCreate, PlayerData, PlayerPosition, NearbyPlayer,
     PlayerRole, Direction, AnimationState
@@ -74,8 +75,8 @@ class PlayerService:
                 x=final_x,
                 y=final_y,
                 map_id=final_map,
-                current_hp=100,
-                max_hp=100,
+                current_hp=HITPOINTS_START_LEVEL,
+                max_hp=HITPOINTS_START_LEVEL,
             )
             
             # Initialize skills for the player
@@ -93,8 +94,8 @@ class PlayerService:
                 x=final_x,
                 y=final_y,
                 map_id=final_map,
-                current_hp=100,
-                max_hp=100,
+                current_hp=HITPOINTS_START_LEVEL,
+                max_hp=HITPOINTS_START_LEVEL,
                 role=PlayerRole.PLAYER,
                 is_banned=False,
                 is_online=False,

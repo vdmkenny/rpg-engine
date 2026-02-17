@@ -545,6 +545,10 @@ class AIService:
         
         # If adjacent (distance 1), attempt attack
         if distance <= 1:
+            # Face the target during combat
+            facing = AIService._direction_from_delta(entity_x, entity_y, target_x, target_y)
+            await entity_mgr.update_entity_facing(instance_id, facing)
+            
             # Check attack cooldown
             if current_tick - timers["last_attack_tick"] >= settings.ENTITY_AI_ATTACK_INTERVAL:
                 return await AIService._execute_entity_attack(
@@ -698,7 +702,7 @@ class AIService:
             return EntityCombatEvent(
                 map_id=map_id,
                 attacker_id=instance_id,
-                attacker_name=entity.get("display_name", "Unknown"),
+                attacker_name=entity_def.display_name,
                 defender_id=target_player_id,
                 defender_name=defender_name,
                 hit=result.hit,

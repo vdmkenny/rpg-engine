@@ -20,5 +20,8 @@ RUN poetry config virtualenvs.create false && \
 # Copy all source code into the container
 COPY . /app/
 
-# Set the command to run the application
-CMD ["poetry", "run", "uvicorn", "server.src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Create entrypoint script that runs migrations then starts the server
+RUN echo '#!/bin/bash\nset -e\necho "Running database migrations..."\ncd /app/server && poetry run alembic upgrade head\necho "Migrations complete, starting server..."\ncd /app && poetry run uvicorn server.src.main:app --host 0.0.0.0 --port 8000' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+# Set the entrypoint to run migrations and then the app
+ENTRYPOINT ["/entrypoint.sh"]
