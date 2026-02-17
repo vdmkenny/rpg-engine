@@ -705,17 +705,13 @@ class EntityRenderer:
     def _render_hit_splat(self, x: int, y: int, damage: int, is_miss: bool, is_heal: bool) -> None:
         """Render a hit splat."""
         if is_miss:
-            text = "MISS"
+            text = "0"
             color = Colors.HIT_SPLAT_MISS_TEXT
             bg_color = Colors.HIT_SPLAT_MISS_BG
         elif is_heal:
             text = f"+{damage}"
             color = Colors.HIT_SPLAT_HEAL_TEXT
             bg_color = Colors.HIT_SPLAT_HEAL_BG
-        elif damage == 0:
-            text = "0"
-            color = Colors.HIT_SPLAT_ZERO_TEXT
-            bg_color = Colors.HIT_SPLAT_ZERO_BG
         else:
             text = str(damage)
             color = Colors.HIT_SPLAT_DAMAGE_TEXT

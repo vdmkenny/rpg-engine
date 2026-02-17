@@ -116,7 +116,7 @@ class TestCombatCalculations:
         )
 
         max_hit = CombatService.calculate_max_hit(attacker)
-        assert max_hit == 1, f"Expected max hit of 1, got {max_hit}"
+        assert max_hit == 2, f"Expected max hit of 2, got {max_hit}"
 
     def test_calculate_max_hit_with_bonuses(self):
         """Test max hit calculation with strength bonuses"""
@@ -133,7 +133,7 @@ class TestCombatCalculations:
         )
 
         max_hit = CombatService.calculate_max_hit(attacker)
-        assert max_hit == 9, f"Expected max hit of 9, got {max_hit}"
+        assert max_hit == 10, f"Expected max hit of 10, got {max_hit}"
 
     def test_calculate_max_hit_minimum(self):
         """Test max hit has minimum of 1"""
@@ -170,7 +170,7 @@ class TestCombatCalculations:
         assert damage == 0, f"Expected 0 damage on miss, got {damage}"
 
     def test_roll_damage_on_hit(self):
-        """Test damage is between 0 and max_hit on hit"""
+        """Test damage is between 1 and max_hit on hit"""
         attacker = CombatStats(
             attack_level=50,
             strength_level=50,
@@ -187,7 +187,7 @@ class TestCombatCalculations:
 
         for _ in range(100):
             damage = CombatService.roll_damage(attacker, did_hit=True)
-            assert 0 <= damage <= max_hit, f"Damage {damage} outside range [0, {max_hit}]"
+            assert 1 <= damage <= max_hit, f"Damage {damage} outside range [1, {max_hit}]"
 
     def test_calculate_combat_xp_no_damage(self):
         """Test XP calculation with no damage"""

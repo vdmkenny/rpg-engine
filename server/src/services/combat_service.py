@@ -15,7 +15,7 @@ Following GSM architecture:
 
 import random
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, List, Optional
 from enum import Enum
 
 from server.src.core.logging_config import get_logger
@@ -69,7 +69,12 @@ class CombatResult:
     defender_died: bool  # Did defender die?
     xp_gained: Dict[SkillType, int]  # XP rewards by skill
     message: str  # Combat message for display
+    level_ups: list = None  # List of XPGain objects for level-ups
     error: Optional[str] = None  # Error message if success=False
+    
+    def __post_init__(self):
+        if self.level_ups is None:
+            self.level_ups = []
 
 
 class CombatService:
@@ -259,7 +264,8 @@ class CombatService:
         """
         Calculate maximum possible hit damage.
         
-        Max hit = floor((strength_level * (strength_bonus + 64) + 320) / 640)
+        Max hit = floor(0.5 + effective_strength * (strength_bonus + 64) / 640)
+        Where effective_strength = strength_level + 8
         
         Args:
             attacker: Attacker's combat stats
@@ -267,18 +273,17 @@ class CombatService:
         Returns:
             Maximum hit damage
         """
-        max_hit = (
-            attacker.strength_level * (attacker.strength_bonus + 64) + 320
-        ) // 640
+        effective_strength = attacker.strength_level + 8
+        max_hit = int(0.5 + effective_strength * (attacker.strength_bonus + 64) / 640)
         
-        return max(1, max_hit)  # Minimum 1 damage
+        return max(1, max_hit)
     
     @staticmethod
     def roll_damage(attacker: CombatStats, did_hit: bool) -> int:
         """
         Roll actual damage dealt.
         
-        If hit: random damage between 0 and max_hit
+        If hit: random damage between 1 and max_hit (never 0)
         If miss: 0 damage
         
         Args:
@@ -292,7 +297,7 @@ class CombatService:
             return 0
         
         max_hit = CombatService.calculate_max_hit(attacker)
-        return random.randint(0, max_hit)
+        return random.randint(1, max_hit)
     
     @staticmethod
     def calculate_combat_xp(damage_dealt: int, defender_died: bool) -> Dict[SkillType, int]:
@@ -451,18 +456,23 @@ class CombatService:
         
         # Calculate XP (only for player attackers)
         xp_gained = {}
+        level_ups: List = []
         if attacker_type == CombatTargetType.PLAYER:
             xp_gained = CombatService.calculate_combat_xp(damage, defender_died)
             
-            # Award XP
+            # Award XP and capture level-ups
             for skill_type, xp_amount in xp_gained.items():
-                await SkillService.add_experience(attacker_id, skill_type, xp_amount)
+                xp_result = await SkillService.add_experience(attacker_id, skill_type, xp_amount)
+                if xp_result and xp_result.leveled_up:
+                    level_ups.append(xp_result)
         
         # Award defensive XP to player defenders (when attacked by entities)
         if defender_type == CombatTargetType.PLAYER and not defender_died:
             defensive_xp = CombatService.calculate_defensive_xp(did_hit, damage)
             for skill_type, xp_amount in defensive_xp.items():
-                await SkillService.add_experience(defender_id, skill_type, xp_amount)
+                xp_result = await SkillService.add_experience(defender_id, skill_type, xp_amount)
+                if xp_result and xp_result.leveled_up:
+                    level_ups.append(xp_result)
         
         # Build combat message
         if did_hit:
@@ -546,5 +556,6 @@ class CombatService:
             defender_hp=new_defender_hp,
             defender_died=defender_died,
             xp_gained=xp_gained,
-            message=message
+            message=message,
+            level_ups=level_ups
         )

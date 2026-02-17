@@ -67,15 +67,15 @@ class Colors:
     # Minimap
     MINIMAP_BG = (0, 0, 0)
     MINIMAP_PLAYER = (255, 255, 255)
-    MINIMAP_OTHER_PLAYER = (0, 255, 255)
+    MINIMAP_OTHER_PLAYER = (255, 255, 255)
     MINIMAP_NPC = (255, 255, 0)
     MINIMAP_MONSTER = (255, 0, 0)
+    MINIMAP_GROUND_ITEM = (0, 255, 255)
+    MINIMAP_COLORKEY = (255, 0, 255)  # Magenta, used for circular clipping
     
     # Hit splat colors
     HIT_SPLAT_DAMAGE_BG = (200, 0, 0)
     HIT_SPLAT_DAMAGE_TEXT = (255, 255, 255)
-    HIT_SPLAT_ZERO_BG = (0, 100, 200)
-    HIT_SPLAT_ZERO_TEXT = (255, 255, 255)
     HIT_SPLAT_MISS_BG = (100, 100, 100)
     HIT_SPLAT_MISS_TEXT = (200, 200, 200)
     HIT_SPLAT_HEAL_BG = (0, 200, 0)
