@@ -432,43 +432,46 @@ class SpriteLayer(int, Enum):
     """
     Rendering order for paperdoll sprite compositing.
 
+    Values follow the LPC Universal Spritesheet Character Generator z-ordering.
+    See: https://github.com/LiberatedPixelCup/Universal-LPC-Spritesheet-Character-Generator
+
     Lower values are rendered first (behind).
     Higher values are rendered on top.
     """
-    # Hair behind head (for multi-layer styles like ponytail)
-    HAIR_BEHIND = -1
-    # Base layers
-    BODY = 0
-    HEAD = 1
-    EYES = 2
+    # Behind body layers
+    SHIELD_BEHIND = 2     # Shield bg (behind body, used when facing UP)
+    CAPE_BEHIND = 5
+    BACK = 8              # Quivers, backpacks
+    HAIR_BEHIND = 9       # Hair back layer (ponytail behind body)
+    WEAPON_BEHIND = 10    # Weapon bg layer (handle/pommel behind body)
 
-    # Facial features
-    FACIAL_HAIR = 3
-    HAIR = 4
+    # Base body
+    BODY = 11
+    HEAD = 12
 
-    # Base clothing (new layers between body and armor)
-    CLOTHING_PANTS = 7
-    CLOTHING_SHOES = 8
-    CLOTHING_SHIRT = 9
+    # Lower body clothing and armor
+    CLOTHING_SHOES = 15
+    CLOTHING_PANTS = 20
+    ARMOR_LEGS = 21
+    ARMOR_FEET = 25       # Boots (over pants/leg armor)
 
-    # Equipment - body
-    ARMOR_BODY = 10
-    ARMOR_FEET = 11
-    ARMOR_LEGS = 12
-    ARMOR_HANDS = 13
-    ARMOR_HEAD = 14
+    # Upper body clothing and armor
+    CLOTHING_SHIRT = 35
+    ARMOR_BODY = 60
+    ARMOR_HANDS = 70
 
-    # Equipment - accessories
-    CAPE_BEHIND = 18
-    BACK = 19  # Backpacks, quivers
+    # Cape front drape
+    CAPE_FRONT = 85
 
-    # Equipment - weapons
-    WEAPON_BEHIND = 20
-    SHIELD = 22
-    WEAPON_FRONT = 25
+    # Head and face
+    EYES = 105
+    FACIAL_HAIR = 110
+    HAIR = 120
+    ARMOR_HEAD = 130      # Helmet/hat (always over hair)
+    SHIELD = 135          # Shield fg (above hair/helmet, swapped to SHIELD_BEHIND when facing UP)
 
-    # Overlay effects
-    CAPE_FRONT = 30
+    # Weapon front layer (topmost equipment)
+    WEAPON_FRONT = 140
 
 
 class EquipmentSlot(str, Enum):

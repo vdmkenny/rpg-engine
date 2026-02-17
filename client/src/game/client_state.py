@@ -10,7 +10,8 @@ from enum import Enum
 import time
 
 from protocol import Direction, ChatChannel
-from sprites.enums import EquipmentSlot
+from sprites.enums import AnimationType, EquipmentSlot
+from sprites.animation import AnimationState
 
 
 class EntityType(Enum):
@@ -67,6 +68,7 @@ class Entity:
     start_y: int = 0
     target_x: int = 0
     target_y: int = 0
+    anim_state: AnimationState = field(default_factory=AnimationState)
 
 
 @dataclass
@@ -140,6 +142,11 @@ class ClientGameState:
         self.entities: Dict[Union[int, str], Entity] = {}
         self.other_players: Dict[int, Dict[str, Any]] = {}
         
+        # Animation state for other players and local player
+        # (Entity.anim_state is used for NPC/monster entities)
+        self.player_anim_states: Dict[Union[int, str], AnimationState] = {}
+        self.local_anim_state: AnimationState = AnimationState()
+        
         # Ground items
         self.ground_items: Dict[int, Dict[str, Any]] = {}
         
@@ -147,7 +154,6 @@ class ClientGameState:
         self.chunks: Dict[Tuple[int, int], List[List[int]]] = {}
         
         # Combat state
-        self.in_combat: bool = False
         self.combat_target: Optional[Dict[str, Any]] = None
         self.auto_retaliate: bool = True
         self.last_attack_time: float = 0.0
@@ -356,7 +362,15 @@ class ClientGameState:
         """Record that an entity was recently involved in combat."""
         self.combat_timestamps[entity_id] = time.time()
     
-    def is_in_combat(self, entity_id: Union[int, str], timeout: float = 5.0) -> bool:
+    def get_anim_state(self, entity_id: Union[int, str]) -> AnimationState:
+        """Get or create an AnimationState for any entity or player."""
+        if entity_id in self.entities:
+            return self.entities[entity_id].anim_state
+        if entity_id not in self.player_anim_states:
+            self.player_anim_states[entity_id] = AnimationState()
+        return self.player_anim_states[entity_id]
+    
+    def is_in_combat(self, entity_id: Union[int, str], timeout: float = 3.5) -> bool:
         """Check if an entity was recently involved in combat."""
         # For NPC/monster entities, check their server-reported state
         if entity_id in self.entities:

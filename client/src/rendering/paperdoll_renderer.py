@@ -87,6 +87,8 @@ class RenderLayer:
     layer: SpriteLayer
     sprite_path: str
     tint: Optional[str] = None
+    frame_size: Optional[int] = None  # Override frame size for oversize sprites (e.g., 128 for attack_slash)
+    static_col: Optional[int] = None  # Pin to this column (e.g., 0 for walk standing frame when idle falls back to walk)
     
     def __lt__(self, other: "RenderLayer") -> bool:
         """Sort by layer order."""
@@ -155,11 +157,14 @@ class PaperdollRenderer:
         if cache_key in self._frame_cache:
             cached = self._frame_cache[cache_key]
             if render_size != FRAME_SIZE:
-                return pygame.transform.scale(cached, (render_size, render_size))
+                scale_factor = render_size / FRAME_SIZE
+                scaled_w = int(cached.get_width() * scale_factor)
+                scaled_h = int(cached.get_height() * scale_factor)
+                return pygame.transform.scale(cached, (scaled_w, scaled_h))
             return cached
         
-        # Get the layers to render
-        layers = self._get_render_layers(visual_state, animation)
+        # Get the layers to render (pass direction for direction-dependent z-ordering)
+        layers = self._get_render_layers(visual_state, animation, direction)
         if not layers:
             logger.debug(f"No layers returned for visual_hash={visual_hash}, animation={animation.value}")
             return None
@@ -178,6 +183,11 @@ class PaperdollRenderer:
         if composited is None:
             return None
         
+        # Flip DOWN-facing frames on X axis so weapon is in the character's
+        # right hand (viewer's left) and shield in the character's left hand
+        if direction == Direction.DOWN:
+            composited = pygame.transform.flip(composited, True, False)
+        
         # Check if the composited frame is actually visible (not completely transparent)
         # Using pygame masks instead of numpy surfarray to avoid numpy dependency
         # Note: This runs only on cache misses; cached frames skip this check (L7)
@@ -193,8 +203,12 @@ class PaperdollRenderer:
         # Cache the result
         self._cache_frame(cache_key, composited)
         
+        # Scale if render_size differs from FRAME_SIZE, preserving oversize proportions
         if render_size != FRAME_SIZE:
-            return pygame.transform.scale(composited, (render_size, render_size))
+            scale_factor = render_size / FRAME_SIZE
+            scaled_w = int(composited.get_width() * scale_factor)
+            scaled_h = int(composited.get_height() * scale_factor)
+            return pygame.transform.scale(composited, (scaled_w, scaled_h))
         return composited
     
     def get_idle_frame(
@@ -273,9 +287,9 @@ class PaperdollRenderer:
         self._loading.add(visual_hash)
         
         try:
-            # Preload sprites for both walk and idle animations
+            # Preload sprites for all combat-relevant animations
             all_paths = set()
-            for anim in [AnimationType.WALK, AnimationType.IDLE]:
+            for anim in [AnimationType.WALK, AnimationType.IDLE, AnimationType.SLASH, AnimationType.COMBAT_IDLE]:
                 layers = self._get_render_layers(visual_state, anim)
                 all_paths.update(layer.sprite_path for layer in layers)
             
@@ -295,7 +309,7 @@ class PaperdollRenderer:
         
         Returns True if all needed sprites are cached locally.
         """
-        for anim in [AnimationType.WALK, AnimationType.IDLE]:
+        for anim in [AnimationType.WALK, AnimationType.IDLE, AnimationType.SLASH, AnimationType.COMBAT_IDLE]:
             layers = self._get_render_layers(visual_state, anim)
             for layer in layers:
                 if self.sprite_manager.get_surface(layer.sprite_path) is None:
@@ -322,13 +336,14 @@ class PaperdollRenderer:
     # INTERNAL METHODS
     # =========================================================================
     
-    def _get_render_layers(self, visual_state: Dict[str, Any], animation: AnimationType = AnimationType.WALK) -> List[RenderLayer]:
+    def _get_render_layers(self, visual_state: Dict[str, Any], animation: AnimationType = AnimationType.WALK, direction: Optional[Direction] = None) -> List[RenderLayer]:
         """
         Build the list of sprite layers to render for a visual state.
         
         Args:
             visual_state: Character visual state data
             animation: Animation type to load sprites for (idle, walk, slash, etc.)
+            direction: Facing direction (used for direction-dependent z-ordering)
         
         Returns layers sorted by render order (back to front).
         """
@@ -518,8 +533,19 @@ class PaperdollRenderer:
             # Get the layer for this slot
             layer = SLOT_TO_LAYER.get(slot, SpriteLayer.ARMOR_BODY)
 
+            # Pin equipment to standing frame when it falls back to walk sheet
+            # during idle/combat_idle (walk col 0 = standing pose, other cols may be empty)
+            equip_static_col: Optional[int] = None
+            if anim_name in ("idle", "combat_idle") and not equip_sprite.has_idle:
+                equip_static_col = 0
+
+            # Detect oversize frames for attack_slash weapons (128x128 per frame)
+            equip_frame_size: Optional[int] = None
+            if anim_name == "slash" and equip_sprite.slash_dir == "attack_slash":
+                equip_frame_size = 128
+
             # Add foreground layer
-            layers.append(RenderLayer(layer, sprite_path, final_tint))
+            layers.append(RenderLayer(layer, sprite_path, final_tint, equip_frame_size, equip_static_col))
 
             # NEW: Handle layered equipment sprites (e.g., weapons with bg+fg layers)
             if equip_sprite.has_layers:
@@ -533,8 +559,16 @@ class PaperdollRenderer:
                     # For other layered equipment, use a lower priority
                     bg_layer = SpriteLayer(layer.value - 1)
                 
-                layers.append(RenderLayer(bg_layer, bg_sprite_path, final_tint))
+                layers.append(RenderLayer(bg_layer, bg_sprite_path, final_tint, equip_frame_size, equip_static_col))
         
+        # Direction-dependent shield z-ordering:
+        # UP: shield is behind the character's back, render below body
+        # DOWN/LEFT/RIGHT: shield default (SHIELD=135) is already above hair/helmet
+        if direction == Direction.UP:
+            for i, render_layer in enumerate(layers):
+                if render_layer.layer == SpriteLayer.SHIELD:
+                    layers[i] = RenderLayer(SpriteLayer.SHIELD_BEHIND, render_layer.sprite_path, render_layer.tint, render_layer.frame_size, render_layer.static_col)
+
         # Sort by layer order
         layers.sort()
         
@@ -554,6 +588,10 @@ class PaperdollRenderer:
         """
         Composite multiple sprite layers into a single frame.
 
+        Handles mixed frame sizes: if any layer has an oversize frame_size
+        (e.g., 128 for attack_slash weapons), the output surface expands to
+        accommodate it and standard 64x64 layers are centered within.
+
         Args:
             layers: List of layers to composite (in render order)
             row: Spritesheet row
@@ -566,8 +604,17 @@ class PaperdollRenderer:
             logger.debug("No layers to composite")
             return None
 
-        # Create output surface
-        result = pygame.Surface((FRAME_SIZE, FRAME_SIZE), pygame.SRCALPHA)
+        # Determine output size from the largest layer frame_size
+        output_size = FRAME_SIZE
+        for layer in layers:
+            if layer.frame_size and layer.frame_size > output_size:
+                output_size = layer.frame_size
+
+        # Create output surface at the determined size
+        result = pygame.Surface((output_size, output_size), pygame.SRCALPHA)
+
+        # Offset to center standard-size frames within an oversize surface
+        center_offset = (output_size - FRAME_SIZE) // 2
 
         rendered_layers = 0
         missing_sprites = []
@@ -580,27 +627,36 @@ class PaperdollRenderer:
                 missing_sprites.append(layer.sprite_path)
                 continue
 
+            # Determine this layer's frame size
+            layer_frame_size = layer.frame_size if layer.frame_size else FRAME_SIZE
+
             # Check if row/col are valid for this sheet
-            sheet_cols = sheet.get_width() // FRAME_SIZE
-            sheet_rows = sheet.get_height() // FRAME_SIZE
+            sheet_cols = sheet.get_width() // layer_frame_size
+            sheet_rows = sheet.get_height() // layer_frame_size
 
             actual_row = row
-            actual_col = col
+            actual_col = layer.static_col if layer.static_col is not None else col
 
             if actual_row >= sheet_rows or actual_col >= sheet_cols:
                 # Use fallback row
                 actual_row = min(10, sheet_rows - 1)
                 actual_col = 0
 
-            # Extract the frame
-            frame = self.sprite_manager.extract_frame(sheet, actual_row, actual_col)
+            # Extract the frame at this layer's native size
+            frame = self.sprite_manager.extract_frame(sheet, actual_row, actual_col, frame_size=layer_frame_size)
 
             # Apply tint if needed
             if layer.tint:
                 frame = self.sprite_manager.apply_tint(frame, layer.tint)
 
-            # Composite onto result
-            result.blit(frame, (0, 0))
+            # Blit onto result, centering standard-size layers in oversize output
+            if layer_frame_size >= output_size:
+                # Oversize or matching layer — blit at origin
+                result.blit(frame, (0, 0))
+            else:
+                # Standard layer in oversize output — center it
+                result.blit(frame, (center_offset, center_offset))
+
             rendered_layers += 1
 
         # Log debug info if some layers are missing

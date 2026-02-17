@@ -101,6 +101,10 @@ class EquipmentSprite:
                             None for items without body type dirs (weapons)
         has_idle: False if this equipment has no idle animation on disk
                   (idle will fall back to walk). Default True.
+        slash_dir: Directory name for slash animation sprites.
+                   "slash" for standard 6x4 layout at 64x64 per frame.
+                   "attack_slash" for oversize 6x4 layout at 128x128 per frame.
+                   None to fall back to walk (no slash sprite available).
         flat_path: Override path that bypasses the standard formula.
                    Used for items with unique directory structures (bows).
     """
@@ -110,6 +114,7 @@ class EquipmentSprite:
     has_layers: bool = False
     body_type_category: Optional[str] = None
     has_idle: bool = True
+    slash_dir: Optional[str] = "slash"
     flat_path: Optional[str] = None
 
     def get_path(self, animation: str = "walk", layer: str = "fg", body_type: str = "male") -> str:
@@ -117,7 +122,7 @@ class EquipmentSprite:
         Get the full sprite path for a specific animation.
 
         Args:
-            animation: Animation name (walk, slash, hurt, idle, etc.)
+            animation: Animation name (walk, slash, hurt, idle, combat_idle, etc.)
             layer: Layer name for layered sprites (fg, bg)
             body_type: Character body type for body type directory selection
 
@@ -128,8 +133,26 @@ class EquipmentSprite:
         if self.flat_path:
             return self.flat_path
 
-        if animation == "idle" and not self.has_idle:
+        # Animation fallback chain for equipment that lacks certain animation sprites
+        # combat_idle -> idle -> walk, hurt -> walk, idle -> walk (via has_idle flag)
+        # slash -> slash_dir mapping (attack_slash for oversize, None for walk fallback)
+        if animation == "combat_idle":
+            animation = "idle" if self.has_idle else "walk"
+        elif animation == "idle" and not self.has_idle:
             animation = "walk"
+        elif animation == "hurt" and not self.has_idle:
+            # Equipment without idle generally only has walk+slash
+            animation = "walk"
+        elif animation == "slash":
+            if self.slash_dir is None:
+                animation = "walk"
+            else:
+                animation = self.slash_dir
+
+        # attack_slash uses a different directory layout:
+        # {base_path}/attack_slash/{layer}/{variant}.png (not under universal/)
+        if animation == "attack_slash" and self.has_layers:
+            return f"{self.base_path}/{animation}/{layer}/{self.variant}.png"
 
         body_dir = ""
         if self.body_type_category:
@@ -168,24 +191,28 @@ EQUIPMENT_SPRITES: Dict[str, EquipmentSprite] = {
         variant="copper",
         has_layers=True,
         has_idle=True,
+        slash_dir="attack_slash",
     ),
     "equip_bronze_shortsword": EquipmentSprite(
         base_path="weapon/sword/arming",
         variant="bronze",
         has_layers=True,
         has_idle=True,
+        slash_dir="attack_slash",
     ),
     "equip_iron_shortsword": EquipmentSprite(
         base_path="weapon/sword/arming",
         variant="iron",
         has_layers=True,
         has_idle=True,
+        slash_dir="attack_slash",
     ),
     "equip_steel_shortsword": EquipmentSprite(
         base_path="weapon/sword/arming",
         variant="steel",
         has_layers=True,
         has_idle=True,
+        slash_dir="attack_slash",
     ),
     
     # =========================================================================
@@ -224,24 +251,28 @@ EQUIPMENT_SPRITES: Dict[str, EquipmentSprite] = {
         variant="longsword",
         tint=METAL_TINT_COLORS[MetalTier.COPPER],
         has_idle=False,
+        slash_dir=None,
     ),
     "equip_bronze_longsword": EquipmentSprite(
         base_path="weapon/sword/longsword",
         variant="longsword",
         tint=METAL_TINT_COLORS[MetalTier.BRONZE],
         has_idle=False,
+        slash_dir=None,
     ),
     "equip_iron_longsword": EquipmentSprite(
         base_path="weapon/sword/longsword",
         variant="longsword",
         tint=METAL_TINT_COLORS[MetalTier.IRON],
         has_idle=False,
+        slash_dir=None,
     ),
     "equip_steel_longsword": EquipmentSprite(
         base_path="weapon/sword/longsword",
         variant="longsword",
         tint=METAL_TINT_COLORS[MetalTier.STEEL],
         has_idle=False,
+        slash_dir=None,
     ),
     
     # =========================================================================
@@ -252,24 +283,28 @@ EQUIPMENT_SPRITES: Dict[str, EquipmentSprite] = {
         variant="mace",
         tint=METAL_TINT_COLORS[MetalTier.COPPER],
         has_idle=False,
+        slash_dir=None,
     ),
     "equip_bronze_mace": EquipmentSprite(
         base_path="weapon/blunt/mace",
         variant="mace",
         tint=METAL_TINT_COLORS[MetalTier.BRONZE],
         has_idle=False,
+        slash_dir=None,
     ),
     "equip_iron_mace": EquipmentSprite(
         base_path="weapon/blunt/mace",
         variant="mace",
         tint=METAL_TINT_COLORS[MetalTier.IRON],
         has_idle=False,
+        slash_dir=None,
     ),
     "equip_steel_mace": EquipmentSprite(
         base_path="weapon/blunt/mace",
         variant="mace",
         tint=METAL_TINT_COLORS[MetalTier.STEEL],
         has_idle=False,
+        slash_dir=None,
     ),
     
     # =========================================================================
@@ -280,24 +315,28 @@ EQUIPMENT_SPRITES: Dict[str, EquipmentSprite] = {
         variant="waraxe",
         tint=METAL_TINT_COLORS[MetalTier.COPPER],
         has_idle=False,
+        slash_dir=None,
     ),
     "equip_bronze_battleaxe": EquipmentSprite(
         base_path="weapon/blunt/waraxe",
         variant="waraxe",
         tint=METAL_TINT_COLORS[MetalTier.BRONZE],
         has_idle=False,
+        slash_dir=None,
     ),
     "equip_iron_battleaxe": EquipmentSprite(
         base_path="weapon/blunt/waraxe",
         variant="waraxe",
         tint=METAL_TINT_COLORS[MetalTier.IRON],
         has_idle=False,
+        slash_dir=None,
     ),
     "equip_steel_battleaxe": EquipmentSprite(
         base_path="weapon/blunt/waraxe",
         variant="waraxe",
         tint=METAL_TINT_COLORS[MetalTier.STEEL],
         has_idle=False,
+        slash_dir=None,
     ),
     
     # =========================================================================
@@ -346,37 +385,38 @@ EQUIPMENT_SPRITES: Dict[str, EquipmentSprite] = {
     ),
     
     # =========================================================================
-    # SHIELDS - Kite style (body type based: male/female)
+    # SHIELDS - Round style (body type based: male/female)
     # =========================================================================
     "equip_wooden_shield": EquipmentSprite(
-        base_path="shield/kite",
-        variant="kite_gray",
+        base_path="shield",
+        variant="round_brown",
         body_type_category="shield",
         has_idle=False,
     ),
     "equip_copper_shield": EquipmentSprite(
-        base_path="shield/kite",
-        variant="kite_orange",
+        base_path="shield",
+        variant="round_silver",
         tint=METAL_TINT_COLORS[MetalTier.COPPER],
         body_type_category="shield",
         has_idle=False,
     ),
     "equip_bronze_shield": EquipmentSprite(
-        base_path="shield/kite",
-        variant="kite_orange",
+        base_path="shield",
+        variant="round_silver",
         tint=METAL_TINT_COLORS[MetalTier.BRONZE],
         body_type_category="shield",
         has_idle=False,
     ),
     "equip_iron_shield": EquipmentSprite(
-        base_path="shield/kite",
-        variant="kite_gray",
+        base_path="shield",
+        variant="round_silver",
+        tint=METAL_TINT_COLORS[MetalTier.IRON],
         body_type_category="shield",
         has_idle=False,
     ),
     "equip_steel_shield": EquipmentSprite(
-        base_path="shield/kite",
-        variant="kite_gray_blue",
+        base_path="shield",
+        variant="round_silver",
         tint=METAL_TINT_COLORS[MetalTier.STEEL],
         body_type_category="shield",
         has_idle=False,

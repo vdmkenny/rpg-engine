@@ -77,7 +77,7 @@ class TestEquipmentIdleFallback:
     def test_items_without_idle_use_walk_fallback(self):
         """Items with has_idle=False should use walk in path."""
         for sprite_id, sprite in EQUIPMENT_SPRITES.items():
-            if not sprite.has_idle:
+            if not sprite.has_idle and not sprite.flat_path:
                 path = sprite.get_path(animation="idle", body_type="male")
                 assert "walk" in path, \
                     f"{sprite_id}: has_idle=False but idle path doesn't use walk: {path}"
@@ -256,7 +256,7 @@ class TestEquipmentSpecificPaths:
         sprite = get_equipment_sprite("equip_wooden_shield")
         path = sprite.get_path(animation="walk", body_type="female")
         assert "female" in path, f"Shield path missing body type: {path}"
-        assert "shield/kite" in path, f"Shield path wrong: {path}"
+        assert path == "shield/female/walk/round_brown.png", f"Shield path wrong: {path}"
 
     def test_dagger_paths_no_idle(self):
         """Dagger paths should fallback to walk for idle."""

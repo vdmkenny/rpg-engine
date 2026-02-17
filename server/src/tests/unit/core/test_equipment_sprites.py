@@ -372,7 +372,7 @@ class TestEquipmentBodyType:
         assert sprite is not None
         path = sprite.get_path(animation="walk", body_type="male")
         assert "male" in path
-        assert "shield/kite/male/walk" in path
+        assert "shield/male/walk" in path
     
     def test_leather_boots_inserts_body_type(self):
         """Leather boots should include body type directory."""
@@ -457,11 +457,11 @@ class TestFixedBasePaths:
         assert sprite is not None
         assert "torso/armour/leather" in sprite.base_path
     
-    def test_shield_uses_kite_path(self):
-        """Shields should use shield/kite base path."""
+    def test_shield_uses_correct_base_path(self):
+        """Wooden shield should use shield base path (round variant)."""
         sprite = get_equipment_sprite("equip_wooden_shield")
         assert sprite is not None
-        assert "shield/kite" in sprite.base_path
+        assert sprite.base_path == "shield"
     
     def test_arrows_use_quiver_path(self):
         """Arrows should use quiver base path."""

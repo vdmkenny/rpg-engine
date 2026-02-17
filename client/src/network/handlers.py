@@ -371,7 +371,17 @@ class MessageHandlers:
             local_entity_id = f"player_{local_player_id}"
             if attacker_entity_id == local_entity_id or defender_entity_id == local_entity_id:
                 self.game_state.mark_in_combat(local_entity_id)
-                self.game_state.in_combat = True
+        
+        # Trigger combat animations
+        from sprites.enums import AnimationType
+        
+        # Attacker plays SLASH
+        if attacker_entity_id is not None:
+            if local_player_id is not None and attacker_entity_id == f"player_{local_player_id}":
+                self.game_state.local_anim_state.play(AnimationType.SLASH, reset=True)
+            else:
+                anim = self.game_state.get_anim_state(attacker_entity_id)
+                anim.play(AnimationType.SLASH, reset=True)
         
         # Add hit splat for hits and misses
         is_miss = not hit

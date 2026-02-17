@@ -8,8 +8,8 @@ License: Part of the LPC sprite integration.
 See server/sprites/CREDITS.csv for sprite attribution.
 """
 
-from dataclasses import dataclass
-from typing import Dict, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 
 from .enums import AnimationType, BodyType, get_fallback_animation
 
@@ -23,16 +23,20 @@ class AnimationConfig:
     
     Attributes:
         row_offset: Starting row in spritesheet (each direction adds 1 row)
-        frame_count: Number of frames in the animation
+        frame_count: Number of unique sprite frames in the animation
         frame_duration: Seconds per frame (for playback timing)
         loops: Whether the animation should loop (False for one-shot like hurt)
         idle_frame: Which frame to use when showing static/idle (usually 0)
+        frame_sequence: Optional weighted frame sequence for non-uniform timing.
+            Each entry is (sprite_frame_index, duration_in_seconds).
+            When set, frame_count and frame_duration are only used as fallbacks.
     """
     row_offset: int
     frame_count: int
     frame_duration: float
     loops: bool = True
     idle_frame: int = 0
+    frame_sequence: Optional[Tuple[Tuple[int, float], ...]] = None
 
 
 # =============================================================================
@@ -93,13 +97,21 @@ ANIMATION_CONFIGS: Dict[AnimationType, AnimationConfig] = {
         loops=False,
     ),
     
-    # Idle: varies, but typically 1 frame or short loop
+    # Idle: 2 sprite frames with weighted breathing/sway pattern
+    # Based on LPC idle reference: 2s cycle with frame 0 dominant, brief frame 1 shifts.
+    # Pattern: hold(0, 0.8s) -> shift(1, 0.2s) -> hold(0, 0.8s) -> shift(1, 0.2s)
     # Note: Not available for skeleton/zombie - use WALK frame 0
     AnimationType.IDLE: AnimationConfig(
         row_offset=24,
-        frame_count=1,
-        frame_duration=1.0,  # Long duration for single frame
+        frame_count=2,
+        frame_duration=1.0,  # Fallback if frame_sequence not used
         loops=True,
+        frame_sequence=(
+            (0, 0.8),   # Standing pose held long
+            (1, 0.2),   # Brief sway/shift
+            (0, 0.8),   # Standing pose held long
+            (1, 0.2),   # Brief sway/shift back
+        ),
     ),
     
     # =========================================================================
@@ -122,11 +134,11 @@ ANIMATION_CONFIGS: Dict[AnimationType, AnimationConfig] = {
         loops=True,
     ),
     
-    # Combat Idle: 4 frames, rows 36-39
+    # Combat Idle: 2 sprite frames, subtle ready-stance sway
     AnimationType.COMBAT_IDLE: AnimationConfig(
         row_offset=36,
-        frame_count=4,
-        frame_duration=0.2,
+        frame_count=2,
+        frame_duration=0.4,
         loops=True,
     ),
     
@@ -226,14 +238,16 @@ class AnimationState:
     
     Attributes:
         animation: Current animation type
-        frame: Current frame index
-        elapsed: Time elapsed in current frame
+        frame: Current frame index (sprite frame for uniform, sequence index for weighted)
+        elapsed: Time elapsed in current frame/step
         finished: Whether a non-looping animation has completed
+        _seq_index: Current index in frame_sequence (for weighted animations)
     """
     animation: AnimationType = AnimationType.IDLE
     frame: int = 0
     elapsed: float = 0.0
     finished: bool = False
+    _seq_index: int = 0
     
     def update(self, dt: float, body_type: BodyType) -> bool:
         """
@@ -253,6 +267,30 @@ class AnimationState:
         
         self.elapsed += dt
         
+        # Weighted frame sequence (e.g., idle breathing pattern)
+        if config.frame_sequence:
+            seq = config.frame_sequence
+            step_frame, step_duration = seq[self._seq_index]
+            
+            if self.elapsed >= step_duration:
+                self.elapsed -= step_duration
+                self._seq_index += 1
+                
+                if self._seq_index >= len(seq):
+                    if config.loops:
+                        self._seq_index = 0
+                    else:
+                        self._seq_index = len(seq) - 1
+                        self.finished = True
+                
+                new_frame = seq[self._seq_index][0]
+                if new_frame != self.frame:
+                    self.frame = new_frame
+                    return True
+            
+            return False
+        
+        # Uniform frame timing
         if self.elapsed >= config.frame_duration:
             self.elapsed -= config.frame_duration
             self.frame += 1
@@ -282,7 +320,18 @@ class AnimationState:
             if reset:
                 self.frame = 0
                 self.elapsed = 0.0
+                self._seq_index = 0
             self.finished = False
+    
+    @property
+    def sprite_frame(self) -> int:
+        """
+        Get the current sprite frame index to render.
+        
+        For weighted animations, returns the sprite frame from the sequence.
+        For uniform animations, returns self.frame directly.
+        """
+        return self.frame
     
     def get_static_frame(self, body_type: BodyType) -> int:
         """

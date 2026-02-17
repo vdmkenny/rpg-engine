@@ -11,6 +11,7 @@ See server/sprites/CREDITS.csv for sprite attribution.
 from typing import Optional, List
 
 from .enums import (
+    AnimationType,
     BodyType,
     SkinTone,
     HeadType,
@@ -25,6 +26,7 @@ from .enums import (
     ShoesStyle,
     ClothingColor,
     get_eye_age_group,
+    get_fallback_animation,
 )
 from .appearance import AppearanceData
 
@@ -77,6 +79,13 @@ class SpritePaths:
         ("pants", "child"),
     }
 
+    # Clothing items that ONLY have walk animation on disk
+    # All other animations (idle, combat_idle, slash, hurt, etc.) fall back to walk
+    _CLOTHING_WALK_ONLY = {
+        ("shirt", "child"),
+        ("pants", "child"),
+    }
+
     @classmethod
     def _get_body_dir(cls, category: str, body_type: BodyType) -> str:
         """
@@ -91,12 +100,19 @@ class SpritePaths:
     @classmethod
     def _get_clothing_animation(cls, style: str, body_type: BodyType, animation: str) -> str:
         """
-        Get the correct animation for clothing, with fallback for missing IDLE.
+        Get the correct animation for clothing, with fallback for missing animations.
 
-        Some clothing styles don't have idle animations - fall back to walk.
+        Some clothing styles only have walk sprites on disk - all other animations
+        fall back to walk. Others lack only idle/combat_idle but have combat animations.
+        The composite renderer gracefully skips missing sprites, so stale paths are safe.
         """
-        if animation == "idle":
-            # Check if this clothing+body combination lacks idle
+        # Walk-only items: everything except walk falls back to walk
+        if (style, body_type.value) in cls._CLOTHING_WALK_ONLY:
+            if animation != "walk":
+                return "walk"
+            return animation
+        # Items that lack idle but have other animations
+        if animation in ("idle", "combat_idle"):
             if (style, body_type.value) in cls._CLOTHING_NO_IDLE:
                 return "walk"
         return animation
@@ -114,7 +130,13 @@ class SpritePaths:
         Returns:
             Path like "body/bodies/male/walk/light.png"
         """
-        return f"body/bodies/{body_type.value}/{animation}/{skin_tone.value}.png"
+        # Apply fallback for unsupported animations (e.g., child has no combat_idle)
+        try:
+            anim_type = AnimationType(animation)
+            actual_anim = get_fallback_animation(body_type, anim_type).value
+        except ValueError:
+            actual_anim = animation
+        return f"body/bodies/{body_type.value}/{actual_anim}/{skin_tone.value}.png"
     
     @staticmethod
     def head(head_type: HeadType, skin_tone: SkinTone, animation: str = "walk") -> str:
@@ -282,6 +304,12 @@ class SpritePaths:
         # Handle animation fallback for missing idle
         style_name = shirt_style.value
         actual_animation = cls._get_clothing_animation(style_name, body_type, animation)
+
+        # Handle tunic - only female variant exists on disk
+        if shirt_style == ClothingStyle.TUNIC:
+            if body_type != BodyType.FEMALE:
+                return ""  # Skip tunic layer for non-female body types
+            return f"torso/clothes/tunic/{body_type.value}/{actual_animation}/{shirt_color.value}.png"
 
         # Handle vest - no female/thin variant exists, only male
         if shirt_style == ClothingStyle.VEST:

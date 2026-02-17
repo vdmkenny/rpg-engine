@@ -6,15 +6,20 @@ Renders players, NPCs, monsters, ground items, and effects using paperdoll sprit
 
 import pygame
 from typing import Dict, Any, List, Tuple, Union, Optional
+import logging
 import time
 
 from protocol import Direction
+from sprites.enums import AnimationType, BodyType
+from sprites.animation import AnimationState, ANIMATION_CONFIGS
 from ..config import get_config
 from ..ui.colors import Colors
 from .camera import Camera
 from .paperdoll_renderer import PaperdollRenderer
 from .sprite_manager import get_sprite_manager
 from .icon_manager import get_icon_manager
+
+logger = logging.getLogger(__name__)
 
 # Combat health bar dimensions (in game surface pixels, will be zoomed)
 HEALTH_BAR_WIDTH = 30
@@ -52,25 +57,111 @@ class EntityRenderer:
         self.loading_font = pygame.font.SysFont("monospace", 10)
     
     def update(self, delta_time: float) -> None:
-        """Update entity animations."""
+        """Update entity movement interpolation and animation states."""
         from ..game.client_state import get_game_state
         game_state = get_game_state()
         
-        # Update other player movement interpolation
+        # Default body type for animation updates (used by AnimationState)
+        default_body = BodyType.MALE
+        
+        # Update other player movement interpolation and animation
         for player_id, player in game_state.other_players.items():
             if player.get("is_moving"):
                 player["move_progress"] = player.get("move_progress", 0.0) + delta_time / self.move_animation_duration
                 if player["move_progress"] >= 1.0:
                     player["move_progress"] = 1.0
                     player["is_moving"] = False
+            
+            # Drive animation state for other players
+            entity_id = f"player_{player_id}"
+            anim = game_state.get_anim_state(entity_id)
+            self._update_animation_state(
+                anim, default_body, delta_time,
+                is_moving=player.get("is_moving", False),
+                in_combat=game_state.is_in_combat(entity_id),
+            )
         
-        # Update entity movement interpolation
+        # Update entity movement interpolation and animation
         for entity_id, entity in game_state.entities.items():
             if entity.is_moving:
                 entity.move_progress += delta_time / self.move_animation_duration
                 if entity.move_progress >= 1.0:
                     entity.move_progress = 1.0
                     entity.is_moving = False
+            
+            # Drive animation state for entities
+            body = self._get_body_type(entity.visual_state) if entity.visual_state else default_body
+            self._update_animation_state(
+                entity.anim_state, body, delta_time,
+                is_moving=entity.is_moving,
+                in_combat=entity.state == "combat" or game_state.is_in_combat(entity.entity_id),
+            )
+        
+        # Drive local player animation state
+        local_anim = game_state.local_anim_state
+        local_entity_id = f"player_{game_state.player_id}" if game_state.player_id else None
+        local_in_combat = False
+        if local_entity_id:
+            local_in_combat = game_state.is_in_combat(local_entity_id)
+        self._update_animation_state(
+            local_anim, default_body, delta_time,
+            is_moving=game_state.is_moving,
+            in_combat=local_in_combat,
+        )
+    
+    @staticmethod
+    def _get_body_type(visual_state: Optional[Dict[str, Any]]) -> BodyType:
+        """Extract BodyType from visual state dict."""
+        if visual_state:
+            body_str = visual_state.get("body_type", "male")
+            try:
+                return BodyType(body_str)
+            except ValueError:
+                pass
+        return BodyType.MALE
+    
+    @staticmethod
+    def _update_animation_state(
+        anim: AnimationState,
+        body_type: BodyType,
+        dt: float,
+        is_moving: bool,
+        in_combat: bool,
+    ) -> None:
+        """
+        Drive animation state transitions.
+        
+        State machine:
+          - Moving -> WALK (always overrides)
+          - One-shot finished (SLASH) -> transition to COMBAT_IDLE or IDLE
+          - One-shot playing (SLASH) -> let it finish
+          - In combat, not moving -> COMBAT_IDLE
+          - Not in combat, not moving -> IDLE (transitions from WALK on stop)
+        """
+        current = anim.animation
+        
+        if is_moving:
+            # Movement always takes priority
+            if current != AnimationType.WALK:
+                anim.play(AnimationType.WALK, reset=True)
+        elif anim.finished:
+            # One-shot animation finished, transition to appropriate idle
+            if in_combat:
+                anim.play(AnimationType.COMBAT_IDLE, reset=True)
+            else:
+                anim.play(AnimationType.IDLE, reset=True)
+        elif current == AnimationType.SLASH:
+            # One-shot in progress, let it play out
+            pass
+        elif in_combat:
+            if current != AnimationType.COMBAT_IDLE:
+                anim.play(AnimationType.COMBAT_IDLE, reset=False)
+        else:
+            if current != AnimationType.IDLE:
+                anim.play(AnimationType.IDLE, reset=False)
+        
+        # Advance the animation timer
+        anim.update(dt, body_type)
     
     def render_all_sorted(
         self,
@@ -149,27 +240,33 @@ class EntityRenderer:
             if not self.camera.is_on_screen(x * self.tile_size, y * self.tile_size, margin=self.tile_size):
                 return
             
-            # Render with paperdoll sprite
+            # Render with paperdoll sprite using animation state
             sprite = None
             try:
                 direction = Direction[entity.facing_direction.upper()]
+                anim = entity.anim_state
                 if entity.is_moving:
                     sprite = self.paperdoll_renderer.get_walk_frame(
                         visual_state, visual_hash, direction,
                         progress=entity.move_progress, render_size=64
                     )
                 else:
-                    sprite = self.paperdoll_renderer.get_idle_frame(
-                        visual_state, visual_hash, direction, render_size=64
+                    sprite = self.paperdoll_renderer.get_frame(
+                        visual_state, visual_hash,
+                        anim.animation, direction,
+                        frame=anim.sprite_frame, render_size=64
                     )
             except Exception as e:
                 import logging
                 logging.warning(f"Error rendering entity {entity_id} sprite: {e}")
             
-            # Blit sprite
+            # Blit sprite (oversize frames have body centered, so shift back by margin)
             if sprite:
-                sprite_x = int(screen_x + (self.tile_size - sprite.get_width()) // 2)
-                sprite_y = int(screen_y + self.tile_size - sprite.get_height())
+                sw, sh = sprite.get_width(), sprite.get_height()
+                margin_x = (sw - self.tile_size) // 2 if sw > self.tile_size else 0
+                margin_y = (sh - self.tile_size) // 2 if sh > self.tile_size else 0
+                sprite_x = int(screen_x - margin_x)
+                sprite_y = int(screen_y + self.tile_size - sh + margin_y)
                 self.screen.blit(sprite, (sprite_x, sprite_y))
             else:
                 # Fallback to colored shape
@@ -234,11 +331,14 @@ class EntityRenderer:
         if not self.camera.is_on_screen(x * self.tile_size, y * self.tile_size, margin=self.tile_size):
             return
         
-        # Render with paperdoll sprite
+        # Render with paperdoll sprite using animation state
         sprite = None
         if visual_state and visual_hash:
             try:
                 direction = Direction[player.get("facing_direction", "DOWN").upper()]
+                entity_id_str = f"player_{player_id}"
+                from ..game.client_state import get_game_state
+                anim = get_game_state().get_anim_state(entity_id_str)
                 if player.get("is_moving"):
                     progress = player.get("move_progress", 0.0)
                     sprite = self.paperdoll_renderer.get_walk_frame(
@@ -246,17 +346,22 @@ class EntityRenderer:
                         progress=progress, render_size=64
                     )
                 else:
-                    sprite = self.paperdoll_renderer.get_idle_frame(
-                        visual_state, visual_hash, direction, render_size=64
+                    sprite = self.paperdoll_renderer.get_frame(
+                        visual_state, visual_hash,
+                        anim.animation, direction,
+                        frame=anim.sprite_frame, render_size=64
                     )
             except Exception as e:
                 import logging
                 logging.warning(f"Error rendering other player {username} sprite: {e}")
         
-        # Blit sprite
+        # Blit sprite (oversize frames have body centered, so shift back by margin)
         if sprite:
-            sprite_x = int(screen_x + (self.tile_size - sprite.get_width()) // 2)
-            sprite_y = int(screen_y + self.tile_size - sprite.get_height())
+            sw, sh = sprite.get_width(), sprite.get_height()
+            margin_x = (sw - self.tile_size) // 2 if sw > self.tile_size else 0
+            margin_y = (sh - self.tile_size) // 2 if sh > self.tile_size else 0
+            sprite_x = int(screen_x - margin_x)
+            sprite_y = int(screen_y + self.tile_size - sh + margin_y)
             self.screen.blit(sprite, (sprite_x, sprite_y))
         
         # Draw username label
@@ -290,28 +395,35 @@ class EntityRenderer:
         is_moving = player.get("is_moving", False)
         move_progress = player.get("move_progress", 0.0)
         
-        # Render with paperdoll sprite
+        # Render with paperdoll sprite using animation state
         sprite = None
         if visual_state and visual_hash:
             try:
                 direction = Direction[facing_direction.upper()]
+                from ..game.client_state import get_game_state
+                anim = get_game_state().local_anim_state
                 if is_moving:
                     sprite = self.paperdoll_renderer.get_walk_frame(
                         visual_state, visual_hash, direction,
                         progress=move_progress, render_size=64
                     )
                 else:
-                    sprite = self.paperdoll_renderer.get_idle_frame(
-                        visual_state, visual_hash, direction, render_size=64
+                    sprite = self.paperdoll_renderer.get_frame(
+                        visual_state, visual_hash,
+                        anim.animation, direction,
+                        frame=anim.sprite_frame, render_size=64
                     )
             except Exception as e:
                 import logging
                 logging.error(f"Error rendering player sprite: {e}")
         
-        # Blit sprite
+        # Blit sprite (oversize frames have body centered, so shift back by margin)
         if sprite:
-            sprite_x = int(center_x + (self.tile_size - sprite.get_width()) // 2)
-            sprite_y = int(center_y + self.tile_size - sprite.get_height())
+            sw, sh = sprite.get_width(), sprite.get_height()
+            margin_x = (sw - self.tile_size) // 2 if sw > self.tile_size else 0
+            margin_y = (sh - self.tile_size) // 2 if sh > self.tile_size else 0
+            sprite_x = int(center_x - margin_x)
+            sprite_y = int(center_y + self.tile_size - sh + margin_y)
             self.screen.blit(sprite, (sprite_x, sprite_y))
         else:
             # Sprite unavailable - draw placeholder
