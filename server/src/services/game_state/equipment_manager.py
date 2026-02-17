@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
 
-from .base_manager import BaseManager, TIER2_TTL
+from .base_manager import BaseManager, TIER2_TTL, SENTINEL_KEY, SENTINEL_VALUE
 
 logger = get_logger(__name__)
 
@@ -46,8 +46,12 @@ class EquipmentManager(BaseManager):
         async def load_from_db():
             return await self._load_equipment_from_db(player_id)
 
-        equipment = await self.auto_load_with_ttl(key, load_from_db, TIER2_TTL)
-        return equipment or {}
+        equipment = await self.auto_load_with_ttl(
+            key, load_from_db, TIER2_TTL, use_sentinel=True,
+        )
+        result = equipment or {}
+        result.pop(SENTINEL_KEY, None)
+        return result
 
     async def _load_equipment_from_db(self, player_id: int) -> Dict[str, Dict[str, Any]]:
         if not self._session_factory:
@@ -101,6 +105,8 @@ class EquipmentManager(BaseManager):
             "current_durability": durability,
         })
         await self._valkey.hset(key, {slot: slot_data})
+        # Ensure sentinel exists so hash survives if all real slots are removed
+        await self._valkey.hsetnx(key, SENTINEL_KEY, SENTINEL_VALUE)
         if TIER2_TTL > 0:
             await self._valkey.expire(key, TIER2_TTL)
         await self._valkey.sadd(DIRTY_EQUIPMENT_KEY, [str(player_id)])
@@ -209,16 +215,21 @@ class EquipmentManager(BaseManager):
         key = EQUIPMENT_KEY.format(player_id=player_id)
         equipment = await self._get_from_valkey(key)
 
-        if equipment is None:
-            return
-
-        # Delete existing equipment
+        # Always delete existing DB rows — even when Valkey hash is
+        # empty/gone this ensures DB doesn't hold stale data that could
+        # be resurrected by auto_load_with_ttl on a future cache miss.
         await db.execute(
             delete(PlayerEquipment).where(PlayerEquipment.player_id == player_id)
         )
 
-        # Insert current state
+        if not equipment:
+            return
+
+        # Insert current state, skipping sentinel field
         for slot, item_data in equipment.items():
+            if slot == SENTINEL_KEY:
+                continue
+
             item_id = self._decode_from_valkey(item_data.get("item_id"), int)
             quantity = self._decode_from_valkey(item_data.get("quantity"), int)
             durability = self._decode_from_valkey(

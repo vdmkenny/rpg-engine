@@ -25,6 +25,13 @@ TIER1_TTL = settings.GAME_STATE_CACHE.get("essential_data_ttl", 3600)
 TIER2_TTL = settings.GAME_STATE_CACHE.get("inventory_ttl", 1800)
 SKILLS_TTL = settings.GAME_STATE_CACHE.get("skills_ttl", 900)
 
+# Sentinel field name used to prevent Valkey hash auto-deletion when all
+# real data fields are removed.  Managers that do field-level HDEL (inventory,
+# equipment) must keep this field alive so that auto_load_with_ttl never
+# falls back to stale database data.
+SENTINEL_KEY = "_meta"
+SENTINEL_VALUE = "1"  # Minimal value — presence is what matters
+
 
 class BaseManager:
     """Base class providing shared infrastructure for all game state managers."""
@@ -189,15 +196,23 @@ class BaseManager:
         load_fn: Callable[[], Awaitable[Optional[Dict[str, Any]]]],
         ttl: int,
         decoder: Optional[Dict[str, type]] = None,
+        use_sentinel: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """
         Generic auto-loader: check Valkey first, load from DB if missing.
+
+        When *use_sentinel* is True the method writes a ``_meta`` sentinel
+        field into the Valkey hash on every DB-load so that the hash key
+        never disappears when all real data fields are HDEL'd.  This
+        prevents stale DB data from being resurrected on the next read.
 
         Args:
             key: Valkey key to check
             load_fn: Async function to load data from database
             ttl: TTL to set on cached data
             decoder: Optional dict mapping field names to types for decoding
+            use_sentinel: If True, write a sentinel field to prevent
+                          empty-hash auto-deletion by Valkey
 
         Returns:
             Data dict or None if not found anywhere
@@ -218,8 +233,14 @@ class BaseManager:
         # 2. Load from database
         try:
             db_data = await load_fn()
-            if db_data and self._valkey and settings.USE_VALKEY:
-                await self._cache_in_valkey(key, db_data, ttl)
+            if self._valkey and settings.USE_VALKEY:
+                if db_data:
+                    await self._cache_in_valkey(key, db_data, ttl)
+                if use_sentinel:
+                    # Ensure sentinel exists so the hash key is never empty
+                    await self._valkey.hsetnx(key, SENTINEL_KEY, SENTINEL_VALUE)
+                    if ttl > 0:
+                        await self._refresh_ttl(key, ttl)
             return db_data
         except Exception as e:
             logger.error(

@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
 
-from .base_manager import BaseManager, TIER2_TTL
+from .base_manager import BaseManager, TIER2_TTL, SENTINEL_KEY, SENTINEL_VALUE
 
 logger = get_logger(__name__)
 
@@ -46,8 +46,12 @@ class InventoryManager(BaseManager):
         async def load_from_db():
             return await self._load_inventory_from_db(player_id)
 
-        inventory = await self.auto_load_with_ttl(key, load_from_db, TIER2_TTL)
-        return inventory or {}
+        inventory = await self.auto_load_with_ttl(
+            key, load_from_db, TIER2_TTL, use_sentinel=True,
+        )
+        result = inventory or {}
+        result.pop(SENTINEL_KEY, None)
+        return result
 
     async def _load_inventory_from_db(self, player_id: int) -> Dict[str, Dict[str, Any]]:
         if not self._session_factory:
@@ -97,6 +101,8 @@ class InventoryManager(BaseManager):
         
         # Write only this slot field to the hash (atomic field-level operation)
         await self._valkey.hset(key, {slot_str: encoded_slot_data})
+        # Ensure sentinel exists so hash survives if all real slots are removed
+        await self._valkey.hsetnx(key, SENTINEL_KEY, SENTINEL_VALUE)
         await self._valkey.expire(key, TIER2_TTL)
         await self._valkey.sadd(DIRTY_INVENTORY_KEY, [str(player_id)])
 
@@ -205,20 +211,25 @@ class InventoryManager(BaseManager):
         key = INVENTORY_KEY.format(player_id=player_id)
         inventory = await self._get_from_valkey(key)
 
-        if inventory is None:
-            return
-
-        # Delete existing inventory
+        # Always delete existing DB rows — even when Valkey hash is
+        # empty/gone this ensures DB doesn't hold stale data that could
+        # be resurrected by auto_load_with_ttl on a future cache miss.
         await db.execute(
             delete(PlayerInventory).where(PlayerInventory.player_id == player_id)
         )
+
+        if not inventory:
+            return
 
         # Get reference data manager for item validation
         from .reference_data_manager import get_reference_data_manager
         ref_mgr = get_reference_data_manager()
 
-        # Insert current state, skipping items with stale item_ids
+        # Insert current state, skipping sentinel and stale items
         for slot_str, item_data in inventory.items():
+            if slot_str == SENTINEL_KEY:
+                continue
+
             slot = int(slot_str)
             item_id = self._decode_from_valkey(item_data.get("item_id"), int)
             quantity = self._decode_from_valkey(item_data.get("quantity"), int)
