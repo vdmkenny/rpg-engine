@@ -453,6 +453,55 @@ class PlayerStateManager(BaseManager):
     # =========================================================================
     # Batch Sync Support
     # =========================================================================
+    # Startup Cleanup
+    # =========================================================================
+
+    async def clear_all_stale_player_state(self) -> None:
+        """
+        Clear all player state from Valkey on server startup.
+
+        No players are connected at startup, so any existing player keys
+        are stale from a previous server run. Clearing them prevents
+        the batch sync from overwriting corrected DB values with stale data.
+        """
+        if not self._valkey or not settings.USE_VALKEY:
+            return
+
+        # Clear the dirty positions set so stale data doesn't get synced
+        await self._valkey.delete([DIRTY_POSITIONS_KEY])
+
+        # Delete all player state keys (player:{id})
+        cursor = "0"
+        keys_deleted = 0
+        patterns = [
+            PLAYER_KEY.format(player_id="*"),
+            PLAYER_SETTINGS_KEY.format(player_id="*"),
+            PLAYER_COMBAT_STATE_KEY.format(player_id="*"),
+        ]
+
+        for pattern in patterns:
+            cursor = "0"
+            while True:
+                result = await self._valkey.scan(cursor, match=pattern, count=100)
+                next_cursor = result[0]
+                keys = result[1]
+                if keys:
+                    key_strs = [self._decode_bytes(k) for k in keys]
+                    await self._valkey.delete(key_strs)
+                    keys_deleted += len(keys)
+                if self._decode_bytes(next_cursor) == "0":
+                    break
+                cursor = next_cursor
+
+        if keys_deleted > 0:
+            logger.info(
+                "Cleared stale player state keys",
+                extra={"keys_deleted": keys_deleted}
+            )
+
+    # =========================================================================
+    # Dirty Position Tracking (Batch Sync)
+    # =========================================================================
 
     async def get_dirty_positions(self) -> List[int]:
         """Get list of player IDs with dirty positions needing sync to database."""

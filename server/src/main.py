@@ -58,6 +58,15 @@ async def lifespan(app: FastAPI):
     # Initialize concurrency infrastructure with Valkey client
     initialize_concurrency_infrastructure(valkey)
     
+    # Clear stale player state from previous server run
+    try:
+        from server.src.services.game_state import get_player_state_manager as get_psm
+        player_mgr = get_psm()
+        await player_mgr.clear_all_stale_player_state()
+        logger.info("Cleared stale player state from Valkey")
+    except Exception as e:
+        logger.warning("Could not clear stale player state", extra={"error": str(e)})
+    
     # Sync items to database and load item cache for reference data
     try:
         # Ensure all ItemType entries exist in database
@@ -91,6 +100,15 @@ async def lifespan(app: FastAPI):
         logger.info("Skills cached", extra={"skill_count": skills_cached})
     except Exception as e:
         logger.warning("Could not sync/cache skills", extra={"error": str(e)})
+
+    # Backfill missing skills for existing players
+    try:
+        from server.src.services.skill_service import SkillService
+        backfilled = await SkillService.backfill_missing_skills()
+        if backfilled > 0:
+            logger.info("Backfilled missing skills for existing players", extra={"players_updated": backfilled})
+    except Exception as e:
+        logger.warning("Could not backfill player skills", extra={"error": str(e)})
     
     # Clear stale entity instances and spawn entities from Tiled maps
     try:

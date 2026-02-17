@@ -68,6 +68,94 @@ class SkillService:
         logger.info("Granted all skills to player", extra={"player_id": player_id})
 
     @staticmethod
+    async def backfill_missing_skills() -> int:
+        """
+        Ensure all existing players have all skills.
+
+        Players created before new skills were added may be missing rows.
+        Hitpoints is set to HITPOINTS_START_LEVEL (10) if missing or below that.
+        Other missing skills are created at level 1.
+
+        Returns:
+            Number of players that were updated
+        """
+        from server.src.core.skills import (
+            HITPOINTS_START_LEVEL, xp_for_level, get_skill_xp_multiplier
+        )
+        from server.src.models.player import Player
+        from server.src.models.skill import PlayerSkill, Skill
+        from server.src.core.database import AsyncSessionLocal
+        from sqlalchemy import select
+        from sqlalchemy.dialects.postgresql import insert
+
+        hitpoints_xp = xp_for_level(
+            HITPOINTS_START_LEVEL,
+            get_skill_xp_multiplier(SkillType.HITPOINTS),
+        )
+
+        players_updated = 0
+
+        async with AsyncSessionLocal() as db:
+            # Get all skill definitions
+            skill_result = await db.execute(select(Skill.id, Skill.name))
+            all_skills = skill_result.all()
+
+            # Get all player IDs
+            player_result = await db.execute(select(Player.id))
+            player_ids = [row[0] for row in player_result.all()]
+
+            for player_id in player_ids:
+                updated = False
+
+                for skill_id, skill_name in all_skills:
+                    is_hitpoints = skill_name.lower() == "hitpoints"
+
+                    if is_hitpoints:
+                        # Upsert: create at level 10 if missing, upgrade if below 10
+                        stmt = insert(PlayerSkill).values(
+                            player_id=player_id,
+                            skill_id=skill_id,
+                            current_level=HITPOINTS_START_LEVEL,
+                            experience=hitpoints_xp,
+                        )
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=["player_id", "skill_id"],
+                            set_={
+                                "current_level": HITPOINTS_START_LEVEL,
+                                "experience": hitpoints_xp,
+                            },
+                            where=PlayerSkill.current_level < HITPOINTS_START_LEVEL,
+                        )
+                    else:
+                        # Insert only if missing
+                        stmt = insert(PlayerSkill).values(
+                            player_id=player_id,
+                            skill_id=skill_id,
+                            current_level=1,
+                            experience=0,
+                        )
+                        stmt = stmt.on_conflict_do_nothing()
+
+                    result = await db.execute(stmt)
+                    if result.rowcount > 0:
+                        updated = True
+
+                if updated:
+                    players_updated += 1
+
+            # Also fix current_hp in players table for anyone below start level
+            from sqlalchemy import update
+            await db.execute(
+                update(Player)
+                .where(Player.current_hp < HITPOINTS_START_LEVEL)
+                .values(current_hp=HITPOINTS_START_LEVEL)
+            )
+
+            await db.commit()
+
+        return players_updated
+
+    @staticmethod
     async def add_experience(
         player_id: int,
         skill: SkillType,

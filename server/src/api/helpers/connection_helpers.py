@@ -3,6 +3,7 @@ WebSocket connection initialization helpers.
 """
 
 from server.src.core.logging_config import get_logger
+from server.src.core.skills import HITPOINTS_START_LEVEL
 from server.src.services.connection_service import ConnectionService
 from server.src.services.player_service import PlayerService
 from server.src.services.equipment_service import EquipmentService
@@ -62,6 +63,7 @@ async def initialize_player_connection(username: str, player_id: int, valkey) ->
         
         # Calculate max HP and validate current HP
         max_hp = await EquipmentService.get_max_hp(player.id)
+        max_hp = max(max_hp, HITPOINTS_START_LEVEL)
         current_hp = min(player.current_hp, max_hp)
         
         # Initialize player in service layer and GSM
