@@ -279,20 +279,20 @@ class PlayerLockManager:
             )
         
         contexts = []
-        acquired_locks = []
+        lock_cms = []
         
         try:
-            # Acquire locks in order
+            # Acquire all locks in order before yielding
             for player_id in sorted_player_ids:
-                async with self.acquire_player_lock(
+                cm = self.acquire_player_lock(
                     player_id, lock_type, f"{operation_name}_multi", timeout
-                ) as context:
-                    contexts.append(context)
-                    acquired_locks.append(context)
-                    
-                    # Keep reference to prevent early release
-                    if len(acquired_locks) < len(sorted_player_ids):
-                        continue
+                )
+                lock_cms.append(cm)
+            
+            # Enter all context managers to acquire locks
+            for cm in lock_cms:
+                context = await cm.__aenter__()
+                contexts.append(context)
                         
             logger.debug(
                 "Multiple player locks acquired",
@@ -316,6 +316,19 @@ class PlayerLockManager:
                 }
             )
             raise
+        finally:
+            # Release all locks in reverse order
+            for cm in reversed(lock_cms):
+                try:
+                    await cm.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.warning(
+                        "Error releasing lock",
+                        extra={
+                            "operation": operation_name,
+                            "error": str(e)
+                        }
+                    )
     
     def get_lock_stats(self) -> Dict[str, Any]:
         """Get current lock statistics for monitoring."""

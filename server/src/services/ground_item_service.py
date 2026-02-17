@@ -494,6 +494,7 @@ class GroundItemService:
         return 0
 
     @staticmethod
+    @staticmethod
     async def drop_player_items_on_death(
         player_id: int,
         map_id: str,
@@ -512,85 +513,89 @@ class GroundItemService:
         Returns:
             Number of items dropped
         """
-        inventory_mgr = get_inventory_manager()
-        equipment_mgr = get_equipment_manager()
-        items_dropped = 0
+        lock_manager = get_player_lock_manager()
+        async with lock_manager.acquire_player_lock(
+            player_id, LockType.INVENTORY, "drop_items_on_death"
+        ):
+            inventory_mgr = get_inventory_manager()
+            equipment_mgr = get_equipment_manager()
+            items_dropped = 0
 
-        inventory = await inventory_mgr.get_inventory(player_id)
-        equipment = await equipment_mgr.get_equipment(player_id)
+            inventory = await inventory_mgr.get_inventory(player_id)
+            equipment = await equipment_mgr.get_equipment(player_id)
 
-        all_item_ids = set()
-        for slot_data in inventory.values():
-            all_item_ids.add(slot_data["item_id"])
-        for slot_data in equipment.values():
-            all_item_ids.add(slot_data["item_id"])
+            all_item_ids = set()
+            for slot_data in inventory.values():
+                all_item_ids.add(slot_data["item_id"])
+            for slot_data in equipment.values():
+                all_item_ids.add(slot_data["item_id"])
 
-        if not all_item_ids:
+            if not all_item_ids:
+                logger.info(
+                    "Player died with no items to drop",
+                    extra={"player_id": player_id, "map_id": map_id, "x": x, "y": y},
+                )
+                return 0
+
+            items_by_id = {}
+            for item_id in all_item_ids:
+                item = await ItemService.get_item_by_id(item_id)
+                if item:
+                    items_by_id[item_id] = item
+
+            for slot, slot_data in inventory.items():
+                item_id = slot_data["item_id"]
+                item = items_by_id.get(item_id)
+                if not item:
+                    continue
+
+                # Use create_ground_item to ensure proper despawn_at handling
+                ground_item_id = await GroundItemService.create_ground_item(
+                    item_id=item_id,
+                    map_id=map_id,
+                    x=x,
+                    y=y,
+                    quantity=slot_data["quantity"],
+                    dropped_by=player_id,
+                    current_durability=slot_data.get("current_durability"),
+                )
+                if ground_item_id:
+                    items_dropped += 1
+
+            for slot_name, slot_data in equipment.items():
+                item_id = slot_data["item_id"]
+                item = items_by_id.get(item_id)
+                if not item:
+                    continue
+
+                # Use create_ground_item to ensure proper despawn_at handling
+                ground_item_id = await GroundItemService.create_ground_item(
+                    item_id=item_id,
+                    map_id=map_id,
+                    x=x,
+                    y=y,
+                    quantity=slot_data["quantity"],
+                    dropped_by=player_id,
+                    current_durability=slot_data.get("current_durability"),
+                )
+                if ground_item_id:
+                    items_dropped += 1
+
+            await inventory_mgr.clear_inventory(player_id)
+            await equipment_mgr.clear_equipment(player_id)
+
             logger.info(
-                "Player died with no items to drop",
-                extra={"player_id": player_id, "map_id": map_id, "x": x, "y": y},
+                "Dropped player items on death",
+                extra={
+                    "player_id": player_id,
+                    "items_dropped": items_dropped,
+                    "map_id": map_id,
+                    "x": x,
+                    "y": y,
+                },
             )
-            return 0
 
-        items_by_id = {}
-        for item_id in all_item_ids:
-            item = await ItemService.get_item_by_id(item_id)
-            if item:
-                items_by_id[item_id] = item
-
-        ground_item_mgr = get_ground_item_manager()
-
-        for slot, slot_data in inventory.items():
-            item_id = slot_data["item_id"]
-            item = items_by_id.get(item_id)
-            if not item:
-                continue
-
-            ground_item_id = await ground_item_mgr.add_ground_item(
-                map_id=map_id,
-                x=x,
-                y=y,
-                item_id=item_id,
-                quantity=slot_data["quantity"],
-                durability=slot_data.get("current_durability", 1.0),
-                dropped_by_player_id=player_id,
-            )
-            if ground_item_id:
-                items_dropped += 1
-
-        for slot_name, slot_data in equipment.items():
-            item_id = slot_data["item_id"]
-            item = items_by_id.get(item_id)
-            if not item:
-                continue
-
-            ground_item_id = await ground_item_mgr.add_ground_item(
-                map_id=map_id,
-                x=x,
-                y=y,
-                item_id=item_id,
-                quantity=slot_data["quantity"],
-                durability=slot_data.get("current_durability", 1.0),
-                dropped_by_player_id=player_id,
-            )
-            if ground_item_id:
-                items_dropped += 1
-
-        await inventory_mgr.clear_inventory(player_id)
-        await equipment_mgr.clear_equipment(player_id)
-
-        logger.info(
-            "Dropped player items on death",
-            extra={
-                "player_id": player_id,
-                "items_dropped": items_dropped,
-                "map_id": map_id,
-                "x": x,
-                "y": y,
-            },
-        )
-
-        return items_dropped
+            return items_dropped
 
     @staticmethod
     async def get_items_at_position(

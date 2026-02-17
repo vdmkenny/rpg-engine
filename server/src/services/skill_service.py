@@ -9,6 +9,7 @@ from typing import Optional, List
 
 from server.src.core.logging_config import get_logger
 from server.src.core.skills import SkillType
+from server.src.core.concurrency import get_player_lock_manager, LockType
 from server.src.schemas.skill import XPGain, SkillData
 
 logger = get_logger(__name__)
@@ -93,57 +94,61 @@ class SkillService:
         if xp_amount <= 0:
             return None
 
-        skills_mgr = get_skills_manager()
-        skill_name = skill.name.lower()
+        lock_manager = get_player_lock_manager()
+        async with lock_manager.acquire_player_lock(
+            player_id, LockType.SKILL, "add_experience"
+        ):
+            skills_mgr = get_skills_manager()
+            skill_name = skill.name.lower()
 
-        # Get current skill data
-        current_skill = await skills_mgr.get_skill(player_id, skill_name)
-        if not current_skill:
-            logger.warning(
-                "Player skill not found",
-                extra={"player_id": player_id, "skill": skill_name}
+            # Get current skill data (within lock)
+            current_skill = await skills_mgr.get_skill(player_id, skill_name)
+            if not current_skill:
+                logger.warning(
+                    "Player skill not found",
+                    extra={"player_id": player_id, "skill": skill_name}
+                )
+                return None
+
+            # Business logic: Calculate new XP and level
+            xp_multiplier = get_skill_xp_multiplier(skill)
+            previous_level = current_skill["level"]
+            previous_xp = current_skill["experience"]
+
+            # Calculate new XP and level
+            new_xp = previous_xp + xp_amount
+            new_level = level_for_xp(new_xp, xp_multiplier)
+
+            # Cap at max level
+            if new_level > MAX_LEVEL:
+                new_level = MAX_LEVEL
+
+            # Update skill data via manager (within lock)
+            await skills_mgr.set_skill(player_id, skill_name, new_level, new_xp)
+
+            leveled_up = new_level > previous_level
+            if leveled_up:
+                logger.info(
+                    "Player leveled up",
+                    extra={
+                        "player_id": player_id,
+                        "skill": skill_name,
+                        "previous_level": previous_level,
+                        "new_level": new_level,
+                        "xp_gained": xp_amount,
+                    }
+                )
+
+            return XPGain(
+                skill=skill_name,
+                xp_gained=xp_amount,
+                current_xp=new_xp,
+                current_level=new_level,
+                previous_level=previous_level,
+                xp_to_next_level=xp_to_next_level(new_xp, xp_multiplier),
+                leveled_up=leveled_up,
+                levels_gained=new_level - previous_level,
             )
-            return None
-
-        # Business logic: Calculate new XP and level
-        xp_multiplier = get_skill_xp_multiplier(skill)
-        previous_level = current_skill["level"]
-        previous_xp = current_skill["experience"]
-
-        # Calculate new XP and level
-        new_xp = previous_xp + xp_amount
-        new_level = level_for_xp(new_xp, xp_multiplier)
-
-        # Cap at max level
-        if new_level > MAX_LEVEL:
-            new_level = MAX_LEVEL
-
-        # Update skill data via manager
-        await skills_mgr.set_skill(player_id, skill_name, new_level, new_xp)
-
-        leveled_up = new_level > previous_level
-        if leveled_up:
-            logger.info(
-                "Player leveled up",
-                extra={
-                    "player_id": player_id,
-                    "skill": skill_name,
-                    "previous_level": previous_level,
-                    "new_level": new_level,
-                    "xp_gained": xp_amount,
-                }
-            )
-
-        return XPGain(
-            skill=skill_name,
-            xp_gained=xp_amount,
-            current_xp=new_xp,
-            current_level=new_level,
-            previous_level=previous_level,
-            xp_to_next_level=xp_to_next_level(new_xp, xp_multiplier),
-            leveled_up=leveled_up,
-            levels_gained=new_level - previous_level,
-        )
 
     @staticmethod
     async def get_player_skills(player_id: int) -> List[SkillData]:

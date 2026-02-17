@@ -231,13 +231,31 @@ class VisualRegistry:
         """
         visual_hash = await self.register_visual_state(entity_id, visual_state)
         
-        needs_full = await self.observer_needs_full_visual(observer_id, visual_hash)
-        
-        if needs_full:
-            await self.mark_hash_seen(observer_id, visual_hash)
-            return (visual_hash, visual_state.to_dict())
-        else:
-            return (visual_hash, None)
+        # Check-then-act: Hold lock across both checking and marking to prevent race
+        async with self._lock:
+            seen_hashes = self._observer_seen.get(observer_id)
+            if seen_hashes is None:
+                needs_full = True
+            else:
+                needs_full = visual_hash not in seen_hashes
+            
+            if needs_full:
+                # Mark hash as seen while holding lock
+                if observer_id not in self._observer_seen:
+                    self._observer_seen[observer_id] = set()
+                
+                seen_set = self._observer_seen[observer_id]
+                seen_set.add(visual_hash)
+                
+                # Evict oldest entries if over capacity
+                if len(seen_set) > self.MAX_OBSERVER_CACHE_SIZE:
+                    hashes_list = list(seen_set)
+                    half = len(hashes_list) // 2
+                    self._observer_seen[observer_id] = set(hashes_list[half:])
+                
+                return (visual_hash, visual_state.to_dict())
+            else:
+                return (visual_hash, None)
     
     async def remove_observer(self, observer_id: str) -> None:
         """

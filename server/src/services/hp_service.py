@@ -16,6 +16,7 @@ from typing import Optional, Tuple
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
 from server.src.core.skills import HITPOINTS_START_LEVEL
+from server.src.core.concurrency import get_player_lock_manager, LockType
 from server.src.services.game_state import get_player_state_manager
 from server.src.services.ground_item_service import GroundItemService
 
@@ -117,40 +118,44 @@ class HpService:
                 message="Damage must be non-negative",
             )
 
-        # Get current HP from GSM
-        current_hp, max_hp = await HpService.get_hp(player_id)
+        lock_manager = get_player_lock_manager()
+        async with lock_manager.acquire_player_lock(
+            player_id, LockType.HP, "deal_damage"
+        ):
+            # Get current HP from GSM (within lock)
+            current_hp, max_hp = await HpService.get_hp(player_id)
 
-        # Calculate new HP
-        actual_damage = min(damage, current_hp)  # Can't deal more damage than HP
-        new_hp = max(0, current_hp - damage)
-        player_died = new_hp == 0
+            # Calculate new HP
+            actual_damage = min(damage, current_hp)  # Can't deal more damage than HP
+            new_hp = max(0, current_hp - damage)
+            player_died = new_hp == 0
 
-        # Update via GSM
-        await HpService.set_hp(player_id, new_hp)
+            # Update via GSM (within lock)
+            await HpService.set_hp(player_id, new_hp)
 
-        from .player_service import PlayerService
-        player_data = await PlayerService.get_player_by_id(player_id)
-        username = player_data.username if player_data else "unknown"
+            from .player_service import PlayerService
+            player_data = await PlayerService.get_player_by_id(player_id)
+            username = player_data.username if player_data else "unknown"
 
-        logger.info(
-            "Dealt damage to player",
-            extra={
-                "player_id": player_id,
-                "username": username,
-                "damage": damage,
-                "actual_damage": actual_damage,
-                "old_hp": current_hp,
-                "new_hp": new_hp,
-                "player_died": player_died,
-            },
-        )
+            logger.info(
+                "Dealt damage to player",
+                extra={
+                    "player_id": player_id,
+                    "username": username,
+                    "damage": damage,
+                    "actual_damage": actual_damage,
+                    "old_hp": current_hp,
+                    "new_hp": new_hp,
+                    "player_died": player_died,
+                },
+            )
 
-        return DamageResult(
-            success=True,
-            new_hp=new_hp,
-            max_hp=max_hp,
-            damage_dealt=actual_damage,
-            player_died=player_died,
+            return DamageResult(
+                success=True,
+                new_hp=new_hp,
+                max_hp=max_hp,
+                damage_dealt=actual_damage,
+                player_died=player_died,
             message="Player died" if player_died else f"Dealt {actual_damage} damage",
         )
 
@@ -178,38 +183,42 @@ class HpService:
                 message="Heal amount must be non-negative",
             )
 
-        # Get current HP from GSM
-        current_hp, max_hp = await HpService.get_hp(player_id)
+        lock_manager = get_player_lock_manager()
+        async with lock_manager.acquire_player_lock(
+            player_id, LockType.HP, "heal"
+        ):
+            # Get current HP from GSM (within lock)
+            current_hp, max_hp = await HpService.get_hp(player_id)
 
-        # Calculate healing (cap at max HP)
-        new_hp = min(current_hp + amount, max_hp)
-        amount_healed = new_hp - current_hp
+            # Calculate healing (cap at max HP)
+            new_hp = min(current_hp + amount, max_hp)
+            amount_healed = new_hp - current_hp
 
-        if amount_healed == 0:
-            return HealResult(
-                success=True,
-                new_hp=new_hp,
-                max_hp=max_hp,
-                amount_healed=0,
-                message="Already at full HP",
-            )
+            if amount_healed == 0:
+                return HealResult(
+                    success=True,
+                    new_hp=new_hp,
+                    max_hp=max_hp,
+                    amount_healed=0,
+                    message="Already at full HP",
+                )
 
-        # Update via GSM
-        await HpService.set_hp(player_id, new_hp)
+            # Update via GSM (within lock)
+            await HpService.set_hp(player_id, new_hp)
 
-        from .player_service import PlayerService
-        player_data = await PlayerService.get_player_by_id(player_id)
-        username = player_data.username if player_data else "unknown"
+            from .player_service import PlayerService
+            player_data = await PlayerService.get_player_by_id(player_id)
+            username = player_data.username if player_data else "unknown"
 
-        logger.info(
-            "Healed player",
-            extra={
-                "player_id": player_id,
-                "username": username,
-                "amount": amount,
-                "amount_healed": amount_healed,
-                "old_hp": current_hp,
-                "new_hp": new_hp,
+            logger.info(
+                "Healed player",
+                extra={
+                    "player_id": player_id,
+                    "username": username,
+                    "amount": amount,
+                    "amount_healed": amount_healed,
+                    "old_hp": current_hp,
+                    "new_hp": new_hp,
             },
         )
 
