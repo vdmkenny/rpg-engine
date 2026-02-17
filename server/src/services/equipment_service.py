@@ -646,24 +646,68 @@ class EquipmentService:
                     operation=OperationType.UNEQUIP
                 )
 
-                item_wrapper = await ItemService.get_item_by_id(equipped.item.id)
-                if not item_wrapper:
-                    return OperationResult(
-                        success=False,
-                        message="Item not found",
-                        operation=OperationType.UNEQUIP
-                    )
-                
-                quantity = equipped.quantity
+            item_wrapper = await ItemService.get_item_by_id(equipped.item.id)
+            if not item_wrapper:
+                return OperationResult(
+                    success=False,
+                    message="Item not found",
+                    operation=OperationType.UNEQUIP
+                )
+            
+            quantity = equipped.quantity
 
-                add_result = await InventoryService.add_item(
-                    player_id=player_id,
-                    item_id=equipped.item.id,
-                    quantity=quantity,
-                    durability=equipped.current_durability,
+            add_result = await InventoryService.add_item(
+                player_id=player_id,
+                item_id=equipped.item.id,
+                quantity=quantity,
+                durability=equipped.current_durability,
+            )
+
+            if add_result.success and add_result.data.get("overflow_quantity", 0) == 0:
+                health_bonus_lost = item_wrapper.get("health_bonus", 0)
+            
+                await equipment_mgr.delete_equipment_slot(player_id, equipment_slot.value)
+
+                if health_bonus_lost > 0:
+                    from .hp_service import HpService
+                
+                    current_hp, max_hp = await HpService.get_hp(player_id)
+                    new_hp = max(1, min(current_hp - health_bonus_lost, max_hp))
+                    await HpService.set_hp(player_id, new_hp)
+
+                updated_stats = await EquipmentService.get_total_stats(player_id)
+
+                logger.info(
+                    "Unequipped item to inventory",
+                    extra={
+                        "player_id": player_id,
+                        "slot": equipment_slot.value,
+                        "to_inventory_slot": add_result.data.get("slot"),
+                        "quantity": quantity,
+                    },
                 )
 
-                if add_result.success and add_result.data.get("overflow_quantity", 0) == 0:
+                return OperationResult(
+                    success=True,
+                    message=f"Unequipped {item_wrapper.get('display_name')}" + (f" x{quantity}" if quantity > 1 else ""),
+                    operation=OperationType.UNEQUIP,
+                    data={"slot": equipment_slot.value, "inventory_slot": add_result.data.get("slot"), "stat_changes": updated_stats}
+                )
+
+            if map_id is not None and player_x is not None and player_y is not None:
+                dropped_quantity = quantity if not add_result.success else add_result.data.get("overflow_quantity", 0)
+
+                ground_item_id = await GroundItemService.create_ground_item(
+                    item_id=equipped.item.id,
+                    map_id=map_id,
+                    x=player_x,
+                    y=player_y,
+                    quantity=dropped_quantity,
+                    dropped_by=player_id,
+                    current_durability=equipped.current_durability,
+                )
+
+                if ground_item_id:
                     health_bonus_lost = item_wrapper.get("health_bonus", 0)
                 
                     await equipment_mgr.delete_equipment_slot(player_id, equipment_slot.value)
@@ -677,90 +721,46 @@ class EquipmentService:
 
                     updated_stats = await EquipmentService.get_total_stats(player_id)
 
-                    logger.info(
-                        "Unequipped item to inventory",
-                        extra={
-                            "player_id": player_id,
-                            "slot": equipment_slot.value,
-                            "to_inventory_slot": add_result.data.get("slot"),
-                            "quantity": quantity,
-                        },
-                    )
-
-                    return OperationResult(
-                        success=True,
-                        message=f"Unequipped {item_wrapper.get('display_name')}" + (f" x{quantity}" if quantity > 1 else ""),
-                        operation=OperationType.UNEQUIP,
-                        data={"slot": equipment_slot.value, "inventory_slot": add_result.data.get("slot"), "stat_changes": updated_stats}
-                    )
-
-                if map_id is not None and player_x is not None and player_y is not None:
-                    dropped_quantity = quantity if not add_result.success else add_result.data.get("overflow_quantity", 0)
-
-                    ground_item_id = await GroundItemService.create_ground_item(
-                        item_id=equipped.item.id,
-                        map_id=map_id,
-                        x=player_x,
-                        y=player_y,
-                        quantity=dropped_quantity,
-                        dropped_by=player_id,
-                        current_durability=equipped.current_durability,
-                    )
-
-                    if ground_item_id:
-                        health_bonus_lost = item_wrapper.get("health_bonus", 0)
+                    if add_result.success and add_result.data.get("overflow_quantity", 0) > 0:
+                        logger.info(
+                            "Unequipped item partially to inventory, rest dropped",
+                            extra={
+                                "player_id": player_id,
+                                "slot": equipment_slot.value,
+                                "to_inventory_qty": quantity - dropped_quantity,
+                                "dropped_qty": dropped_quantity,
+                            },
+                        )
                     
-                        await equipment_mgr.delete_equipment_slot(player_id, equipment_slot.value)
+                        return OperationResult(
+                            success=True,
+                            message=f"Unequipped {item_wrapper.get('display_name')} ({quantity - dropped_quantity} to inventory, {dropped_quantity} dropped)",
+                            operation=OperationType.UNEQUIP,
+                            data={"slot": equipment_slot.value, "inventory_slot": add_result.data.get("slot"), "stat_changes": updated_stats}
+                        )
+                    else:
+                        logger.info(
+                            "Unequipped item dropped to ground (inventory full)",
+                            extra={
+                                "player_id": player_id,
+                                "slot": equipment_slot.value,
+                                "ground_item_id": ground_item_id,
+                                "quantity": dropped_quantity,
+                            },
+                        )
+                    
+                        return OperationResult(
+                            success=True,
+                            message=f"Inventory full - {item_wrapper.get('display_name')} dropped to ground",
+                            operation=OperationType.UNEQUIP,
+                            data={"slot": equipment_slot.value, "ground_item_id": ground_item_id, "stat_changes": updated_stats}
+                        )
 
-                        if health_bonus_lost > 0:
-                            from .hp_service import HpService
-                        
-                            current_hp, max_hp = await HpService.get_hp(player_id)
-                            new_hp = max(1, min(current_hp - health_bonus_lost, max_hp))
-                            await HpService.set_hp(player_id, new_hp)
-
-                        updated_stats = await EquipmentService.get_total_stats(player_id)
-
-                        if add_result.success and add_result.data.get("overflow_quantity", 0) > 0:
-                            logger.info(
-                                "Unequipped item partially to inventory, rest dropped",
-                                extra={
-                                    "player_id": player_id,
-                                    "slot": equipment_slot.value,
-                                    "to_inventory_qty": quantity - dropped_quantity,
-                                    "dropped_qty": dropped_quantity,
-                                },
-                            )
-                        
-                            return OperationResult(
-                                success=True,
-                                message=f"Unequipped {item_wrapper.get('display_name')} ({quantity - dropped_quantity} to inventory, {dropped_quantity} dropped)",
-                                operation=OperationType.UNEQUIP,
-                                data={"slot": equipment_slot.value, "inventory_slot": add_result.data.get("slot"), "stat_changes": updated_stats}
-                            )
-                        else:
-                            logger.info(
-                                "Unequipped item dropped to ground (inventory full)",
-                                extra={
-                                    "player_id": player_id,
-                                    "slot": equipment_slot.value,
-                                    "ground_item_id": ground_item_id,
-                                    "quantity": dropped_quantity,
-                                },
-                            )
-                        
-                            return OperationResult(
-                                success=True,
-                                message=f"Inventory full - {item_wrapper.get('display_name')} dropped to ground",
-                                operation=OperationType.UNEQUIP,
-                                data={"slot": equipment_slot.value, "ground_item_id": ground_item_id, "stat_changes": updated_stats}
-                            )
-
-                return OperationResult(
-                    success=False,
-                    message="Inventory is full",
-                    operation=OperationType.UNEQUIP
-                )
+            return OperationResult(
+                success=False,
+                message="Inventory is full",
+                operation=OperationType.UNEQUIP
+            )
 
     @staticmethod
     async def degrade_equipment(
