@@ -7,22 +7,19 @@ integrates with GameStateManager for state consistency.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import traceback
 
-from sqlalchemy import select
 
-from server.src.core.config import settings
-from server.src.core.items import EquipmentSlot, ItemCategory
+from server.src.core.items import EquipmentSlot
 from server.src.core.logging_config import get_logger
 from server.src.schemas.item import (
     OperationResult,
     OperationType,
     ItemStats,
 )
-from server.src.services.game_state import get_inventory_manager, get_equipment_manager, get_player_state_manager
+from server.src.services.game_state import get_inventory_manager, get_equipment_manager
 
 logger = get_logger(__name__)
 

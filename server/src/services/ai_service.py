@@ -16,13 +16,13 @@ Entity State Machine:
 
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple, Any
+from typing import List, Optional, Set, Tuple
 
 from server.src.core.config import settings
 from server.src.core.entities import EntityBehavior, EntityState, get_entity_by_name
 from server.src.core.logging_config import get_logger
 from server.src.core.monsters import MonsterDefinition
-from server.src.services.game_state import EntityManager, get_entity_manager, get_player_state_manager
+from server.src.services.game_state import EntityManager
 from server.src.services.map_service import get_map_manager
 from server.src.services.pathfinding_service import PathfindingService
 from server.src.services.entity_spawn_service import EntitySpawnService

@@ -8,7 +8,6 @@ entity respawn logic.
 import traceback
 from typing import Dict, List, Optional, Set, Tuple, Union
 
-from glide import RangeByScore, ScoreBoundary
 
 from server.src.core.entities import (
     EntityState,

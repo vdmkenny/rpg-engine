@@ -7,11 +7,10 @@ or GSM access in tests and provides standardized test scenarios.
 """
 
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 
 from ..core.logging_config import get_logger
-from ..core.security import get_password_hash
 from ..models.player import Player
 from ..schemas.service_results import TestDataServiceResult
 from .item_service import ItemService

@@ -5,8 +5,7 @@ Pure persistence layer: CRUD operations only, no business logic.
 Equipment validation and requirements checking handled by EquipmentService.
 """
 
-import traceback
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from glide import GlideClient
 from sqlalchemy import select, delete

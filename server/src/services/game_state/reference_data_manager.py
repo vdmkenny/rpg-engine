@@ -6,7 +6,7 @@ Loaded once at startup and cached permanently in Valkey (no TTL).
 """
 
 import traceback
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from glide import GlideClient
 from sqlalchemy import select, delete

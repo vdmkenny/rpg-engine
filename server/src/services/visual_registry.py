@@ -27,11 +27,11 @@ Usage:
         pass
 """
 
-from typing import Dict, Optional, Set
+from typing import Optional, Set
 from collections import OrderedDict
 import asyncio
 
-from common.src.sprites import VisualState, AppearanceData, EquippedVisuals
+from common.src.sprites import VisualState
 from server.src.core.logging_config import get_logger
 
 logger = get_logger(__name__)

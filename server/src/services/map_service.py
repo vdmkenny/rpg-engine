@@ -10,7 +10,7 @@ import logging
 import os
 import asyncio
 import traceback
-from typing import Dict, Optional, Tuple, Set, Union, List, Any
+from typing import Dict, Tuple, Set, List, Any
 from pathlib import Path
 
 try:

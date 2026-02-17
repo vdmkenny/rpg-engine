@@ -5,7 +5,6 @@ Pure persistence layer: CRUD operations only, no business logic.
 XP calculations and level requirements handled by SkillService.
 """
 
-import traceback
 from typing import Any, Dict, List, Optional
 
 from glide import GlideClient

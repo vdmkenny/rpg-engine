@@ -5,10 +5,9 @@ Server-side validation for LPC sprites and equipment sprite mappings.
 Ensures all referenced sprite IDs have valid LPC assets.
 """
 
-import json
 import csv
 from pathlib import Path
-from typing import Set, Optional, Dict, Any
+from typing import Set, Optional
 from dataclasses import dataclass
 
 from server.src.core.logging_config import get_logger

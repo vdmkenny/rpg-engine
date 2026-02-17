@@ -5,8 +5,7 @@ Pure persistence layer: CRUD operations only, no business logic.
 Stacking, slot allocation, and validation handled by InventoryService.
 """
 
-import traceback
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from glide import GlideClient
 from sqlalchemy import select, delete

@@ -5,7 +5,6 @@ Handles items dropped on the ground with despawn timers and loot protection.
 Pure persistence layer; business logic (loot rules, distance checks) in GroundItemService.
 """
 
-import traceback
 from typing import Any, Dict, List, Optional
 
 from glide import GlideClient

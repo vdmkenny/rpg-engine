@@ -7,7 +7,6 @@ Handles player positions, HP, settings, and combat state.
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from sqlalchemy import select
-from time import time
 
 from server.src.core.config import settings
 from server.src.core.logging_config import get_logger

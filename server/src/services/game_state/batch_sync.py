@@ -6,12 +6,10 @@ Coordinates between all managers for efficient batch operations.
 """
 
 import traceback
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Optional
 
-from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
 
 from .player_state_manager import PlayerStateManager

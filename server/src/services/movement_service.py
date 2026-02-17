@@ -6,7 +6,7 @@ Handles movement validation, cooldown management, position calculations, and mov
 
 import time
 import traceback
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, Tuple, Any
 
 from ..core.config import settings
 from ..core.logging_config import get_logger

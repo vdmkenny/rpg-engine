@@ -2,7 +2,7 @@
 Service for managing item definitions.
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 from ..core.items import ItemType, ItemRarity
 from ..core.logging_config import get_logger

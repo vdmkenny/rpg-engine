@@ -11,11 +11,10 @@ Ground items are stored in Valkey (via GSM) and synced to PostgreSQL periodicall
 """
 
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List
+from typing import Optional, List
 
 from ..core.config import settings
 from ..core.concurrency import get_player_lock_manager, LockType
-from ..core.items import ItemRarity
 from ..core.logging_config import get_logger
 from ..schemas.item import (
     OperationResult,

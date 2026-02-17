@@ -3,7 +3,6 @@ Service for managing player equipment.
 """
 
 from typing import Optional, TYPE_CHECKING, Dict, Any
-from dataclasses import dataclass
 
 from ..core.config import settings
 from ..core.items import ItemCategory

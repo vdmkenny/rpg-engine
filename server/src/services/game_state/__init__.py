@@ -15,7 +15,6 @@ from glide import GlideClient
 from sqlalchemy.orm import sessionmaker
 from typing import Optional
 
-from .base_manager import BaseManager
 from .player_state_manager import (
     PlayerStateManager,
     get_player_state_manager,

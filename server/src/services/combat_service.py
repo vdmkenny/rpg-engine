@@ -15,7 +15,7 @@ Following GSM architecture:
 
 import random
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Dict
 from enum import Enum
 
 from server.src.core.logging_config import get_logger

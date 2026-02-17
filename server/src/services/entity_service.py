@@ -2,7 +2,7 @@
 Service for managing entity definitions and their database synchronization.
 """
 
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, Union
 
 from ..core.entities import EntityType
 from ..core.humanoids import HumanoidID, HumanoidDefinition

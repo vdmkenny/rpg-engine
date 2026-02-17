@@ -6,9 +6,8 @@ Entity definitions are reference data; instances are runtime-only.
 """
 
 import time as time_mod
-import traceback
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, List, Optional, Set, Union
 
 from glide import GlideClient, RangeByScore, ScoreBoundary
 from sqlalchemy.orm import sessionmaker
