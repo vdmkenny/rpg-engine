@@ -221,7 +221,8 @@ class CombatHandlerMixin:
                     {
                         "target_type": payload.target_type.value,
                         "target_id": int(payload.target_id),
-                        "auto_retaliate": False
+                        "last_attack_tick": game_state.tick_counter,
+                        "attack_speed": attack_speed,
                     }
                 )
                 

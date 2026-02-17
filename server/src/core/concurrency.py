@@ -163,19 +163,6 @@ class PlayerLockManager:
         acquired = False
         
         try:
-            # Check for potential deadlock (same operation already running for player)
-            for active_context in self._active_contexts[player_id]:
-                if active_context.operation_name == operation_name:
-                    DEADLOCK_DETECTIONS.inc()
-                    logger.warning(
-                        "Potential deadlock detected - same operation already active",
-                        extra={
-                            "player_id": player_id,
-                            "operation": operation_name,
-                            "lock_type": lock_type.value
-                        }
-                    )
-            
             # Acquire lock with timeout
             try:
                 await asyncio.wait_for(lock.acquire(), timeout=context.timeout)
