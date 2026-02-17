@@ -16,7 +16,7 @@ Entity State Machine:
 
 import random
 from dataclasses import dataclass
-from typing import List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from server.src.core.config import settings
 from server.src.core.entities import EntityBehavior, EntityState, get_entity_by_name
@@ -26,6 +26,7 @@ from server.src.services.game_state import EntityManager
 from server.src.services.map_service import get_map_manager
 from server.src.services.pathfinding_service import PathfindingService
 from server.src.services.entity_spawn_service import EntitySpawnService
+from server.src.services.player_service import PlayerService
 from server.src.schemas.player import NearbyPlayer
 
 logger = get_logger(__name__)

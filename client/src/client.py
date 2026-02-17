@@ -312,26 +312,26 @@ class Client:
         """Handle left click on the game world."""
         # Check for entities at this tile
         for entity_id, entity in self.game_state.entities.items():
-             if entity.x == tile_x and entity.y == tile_y:
-                 # Attack the entity
-                 entity_type = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
-                 self._safe_create_task(self.message_sender.attack(entity_type, entity_id))
-                 return None
-         
-         # Check for other players at this tile
-         for player_id, player in self.game_state.other_players.items():
-             pos = player.get("position", {})
-             if pos.get("x") == tile_x and pos.get("y") == tile_y:
-                 # Attack the player
-                 self._safe_create_task(self.message_sender.attack("player", player_id))
-                 return None
-         
-         # Check for ground items at this tile
-         for item_id, item in self.game_state.ground_items.items():
-             if item.get("x") == tile_x and item.get("y") == tile_y:
-                 # Pick up the item
-                 self._safe_create_task(self.message_sender.item_pickup(item_id))
-                 return None
+            if entity.x == tile_x and entity.y == tile_y:
+                # Attack the entity
+                entity_type = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
+                self._safe_create_task(self.message_sender.attack(entity_type, entity_id))
+                return None
+        
+        # Check for other players at this tile
+        for player_id, player in self.game_state.other_players.items():
+            pos = player.get("position", {})
+            if pos.get("x") == tile_x and pos.get("y") == tile_y:
+                # Attack the player
+                self._safe_create_task(self.message_sender.attack("player", player_id))
+                return None
+        
+        # Check for ground items at this tile
+        for item_id, item in self.game_state.ground_items.items():
+            if item.get("x") == tile_x and item.get("y") == tile_y:
+                # Pick up the item
+                self._safe_create_task(self.message_sender.item_pickup(item_id))
+                return None
         
         return None
     
@@ -396,19 +396,19 @@ class Client:
                     (100, 200, 255),  # Cyan
                     item
                 ))
-        
+
         # Show context menu if we have items
-         if menu_items and self.renderer:
-             def on_menu_select(item):
-                 if item.action.startswith("attack"):
-                     target_type, target_id = item.data
-                     self._safe_create_task(self.message_sender.attack(target_type, target_id))
-                 elif item.action == "pickup":
-                     self._safe_create_task(self.message_sender.item_pickup(item.data))
-             
-             self.renderer.ui_renderer.context_menu.show(
-                 menu_x, menu_y, menu_items, on_menu_select
-             )
+        if menu_items and self.renderer:
+            def on_menu_select(item):
+                if item.action.startswith("attack"):
+                    target_type, target_id = item.data
+                    self._safe_create_task(self.message_sender.attack(target_type, target_id))
+                elif item.action == "pickup":
+                    self._safe_create_task(self.message_sender.item_pickup(item.data))
+            
+            self.renderer.ui_renderer.context_menu.show(
+                menu_x, menu_y, menu_items, on_menu_select
+            )
         
         return None
     
@@ -478,12 +478,12 @@ class Client:
                         else:
                             # Unknown command - show error in chat, don't send to server
                             chat_window.add_message(chat_window.active_channel, "System", f"Unknown command: {message}")
-                         chat_window.pending_message = None
-                         return
-                     
-                     # Not a command - send as regular chat
-                     self._safe_create_task(self.message_sender.chat_send(message))
-                     chat_window.pending_message = None  # Clear after sending
+                        chat_window.pending_message = None
+                        return
+                    
+                    # Not a command - send as regular chat
+                    self._safe_create_task(self.message_sender.chat_send(message))
+                    chat_window.pending_message = None  # Clear after sending
 
         elif action == "logout":
             # Logout requested from UI
@@ -552,13 +552,13 @@ class Client:
         logger.debug(f"_connect_ui_callbacks: Setting callbacks on ui_renderer")
         ui_renderer.on_inventory_action = on_inventory_action
         ui_renderer.on_equipment_action = on_equipment_action
-         ui_renderer.on_world_action = on_world_action
+        ui_renderer.on_world_action = on_world_action
 
-         # Setup logout callback
-         def on_logout():
-             self._safe_create_task(self._handle_logout())
+        # Setup logout callback
+        def on_logout():
+            self._safe_create_task(self._handle_logout())
 
-         ui_renderer.set_logout_callback(on_logout)
+        ui_renderer.set_logout_callback(on_logout)
 
         # Setup inventory sort callback
         def on_inventory_sort(criteria: str):
@@ -589,12 +589,12 @@ class Client:
         self.renderer.ui_renderer.customisation_panel = customisation_panel
         
         # Register slash commands
-         registry = get_command_registry()
-         
-         # /customize - Open character customisation
-         def handle_customize(command_text: str) -> None:
-             self._safe_create_task(self._open_customisation_panel())
-             return None
+        registry = get_command_registry()
+        
+        # /customize - Open character customisation
+        def handle_customize(command_text: str) -> None:
+            self._safe_create_task(self._open_customisation_panel())
+            return None
         
         registry.register(
             "customize",
@@ -612,12 +612,12 @@ class Client:
             "help",
             handle_help,
             "Show help modal with controls and commands"
-         )
-         
-         # /logout - Log out of the game
-         def handle_logout(command_text: str) -> None:
-             self._safe_create_task(self._handle_logout())
-             return None
+        )
+        
+        # /logout - Log out of the game
+        def handle_logout(command_text: str) -> None:
+            self._safe_create_task(self._handle_logout())
+            return None
         
         registry.register(
             "logout",
@@ -639,15 +639,15 @@ class Client:
                 try:
                     quantity = int(parts[3])
                 except ValueError:
-                     return "Invalid quantity - must be a number"
-             
-             if quantity < 1:
-                 return "Quantity must be at least 1"
-             
-             self._safe_create_task(
-                 self.message_sender.admin_give(target_player, item_name, quantity)
-             )
-             return f"Sending give command for {quantity}x {item_name} to {target_player}..."
+                    return "Invalid quantity - must be a number"
+            
+            if quantity < 1:
+                return "Quantity must be at least 1"
+            
+            self._safe_create_task(
+                self.message_sender.admin_give(target_player, item_name, quantity)
+            )
+            return f"Sending give command for {quantity}x {item_name} to {target_player}..."
         
         registry.register(
             "give",
@@ -673,14 +673,14 @@ class Client:
             if quantity < 1:
                 return "Quantity must be at least 1"
             
-             # Use the current player's username
-             if not hasattr(self.game_state, 'username') or not self.game_state.username:
-                 return "Error: Could not determine current player"
-             
-             self._safe_create_task(
-                 self.message_sender.admin_give(self.game_state.username, item_name, quantity)
-             )
-             return f"Sending give command for {quantity}x {item_name} to yourself..."
+            # Use the current player's username
+            if not hasattr(self.game_state, 'username') or not self.game_state.username:
+                return "Error: Could not determine current player"
+            
+            self._safe_create_task(
+                self.message_sender.admin_give(self.game_state.username, item_name, quantity)
+            )
+            return f"Sending give command for {quantity}x {item_name} to yourself..."
         
         registry.register(
             "giveme",
@@ -839,12 +839,12 @@ class Client:
                 await self.message_sender.query_map_chunks(x, y)
                 
                 self.state = GameState.PLAYING
-                 logger.info("Login successful, entering game")
-                 
-                 # Auto-open customisation panel for first-time players
-                 if not self.game_state.appearance:
-                     self._safe_create_task(self._open_customisation_panel())
-                     logger.info("Auto-opening customisation panel for first-time player")
+                logger.info("Login successful, entering game")
+                
+                # Auto-open customisation panel for first-time players
+                if not self.game_state.appearance:
+                    self._safe_create_task(self._open_customisation_panel())
+                    logger.info("Auto-opening customisation panel for first-time player")
             else:
                 self.login_screen.set_status("WebSocket connection failed", Colors.TEXT_RED)
                 
