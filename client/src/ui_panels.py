@@ -463,41 +463,29 @@ class StatsPanel(UIPanel):
         
         super().draw(screen, font)
         
+        small_font = pygame.font.Font(None, 18)
         y_offset = self.y + 30
         
-        for section_name, keybindings in self.CONTROLS:
-            # Section header
-            header_surface = small_font.render(section_name, True, Colors.TEXT_ORANGE)
-            screen.blit(header_surface, (self.x + 10, y_offset))
-            y_offset += 22
-            
-            # Keybindings
-            for key, description in keybindings:
-                # Key
-                key_surface = tiny_font.render(key, True, Colors.TEXT_YELLOW)
-                screen.blit(key_surface, (self.x + 20, y_offset))
+        # Display skills in grid
+        for i, skill in enumerate(self.SKILL_ORDER):
+            if skill in self.skills:
+                skill_data = self.skills[skill]
+                level = skill_data.get("level", 0)
+                xp = skill_data.get("xp", 0)
                 
-                # Description
-                desc_surface = tiny_font.render(f"- {description}", True, Colors.TEXT_WHITE)
-                screen.blit(desc_surface, (self.x + 120, y_offset))
+                # Calculate grid position
+                col = i % self.SKILLS_PER_ROW
+                row = i // self.SKILLS_PER_ROW
+                x = self.x + 10 + (col * 55)
+                y = y_offset + (row * 25)
                 
-                y_offset += 18
-            
-            y_offset += 8  # Space between sections
-        
-        # Close hint at bottom
-        close_text = tiny_font.render("Press ? or click X to close", True, Colors.TEXT_GRAY)
-        screen.blit(close_text, (self.x + (self.width - close_text.get_width()) // 2, self.y + self.height - 24))
-        
-        # Close button (X)
-        close_rect = pygame.Rect(self.x + self.width - 24, self.y + 6, 18, 18)
-        pygame.draw.rect(screen, Colors.STONE_DARK, close_rect)
-        pygame.draw.rect(screen, Colors.SLOT_BORDER, close_rect, 1)
-        x_surface = small_font.render("X", True, Colors.TEXT_RED)
-        screen.blit(x_surface, (close_rect.x + 4, close_rect.y + 1))
+                # Draw skill name and level
+                skill_text = f"{skill.title()}: {level}"
+                skill_surface = small_font.render(skill_text, True, Colors.TEXT_WHITE)
+                screen.blit(skill_surface, (x, y))
     
     def handle_event(self, event: pygame.event.Event) -> bool:
-        """Handle help panel events."""
+        """Handle stats panel events."""
         if not self.visible:
             return False
         

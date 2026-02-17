@@ -558,6 +558,7 @@ class AIService:
                 )
         else:
             # Need to chase - check chase interval
+            next_step = None
             if current_tick - timers["last_move_tick"] >= settings.ENTITY_AI_CHASE_INTERVAL:
                 # Remove self from blocked positions
                 own_blocked = blocked_positions - {entity_pos}
@@ -571,10 +572,10 @@ class AIService:
                     max_distance=settings.ENTITY_AI_MAX_PATHFINDING_DISTANCE,
                 )
                 
-        if next_step:
-            facing_direction = AIService._direction_from_delta(entity_x, entity_y, next_step[0], next_step[1])
-            await entity_mgr.update_entity_position(instance_id, next_step[0], next_step[1], facing_direction)
-            timers["last_move_tick"] = current_tick
+            if next_step:
+                facing_direction = AIService._direction_from_delta(entity_x, entity_y, next_step[0], next_step[1])
+                await entity_mgr.update_entity_position(instance_id, next_step[0], next_step[1], facing_direction)
+                timers["last_move_tick"] = current_tick
         
         return None
     

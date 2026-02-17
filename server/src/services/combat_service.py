@@ -520,11 +520,13 @@ class CombatService:
                 
                 # Set combat state to retaliate
                 await player_mgr.set_player_combat_state(
-                    player_id=defender_id,
-                    target_type=attacker_type,
-                    target_id=attacker_id,
-                    last_attack_tick=game_state.tick_counter,
-                    attack_speed=defender_attack_speed,
+                    defender_id,
+                    {
+                        "target_type": attacker_type.value,
+                        "target_id": attacker_id,
+                        "last_attack_tick": game_state.tick_counter,
+                        "attack_speed": defender_attack_speed,
+                    }
                 )
                 
                 logger.info(

@@ -24,6 +24,14 @@ from .game_state import get_player_state_manager, get_inventory_manager, get_equ
 logger = get_logger(__name__)
 
 
+class ServiceErrorCodes:
+    """Error codes for service layer operations."""
+    VALIDATION_ERROR = "validation_error"
+    PLAYER_ALREADY_EXISTS = "player_already_exists"
+    NOT_FOUND = "not_found"
+    OPERATION_FAILED = "operation_failed"
+
+
 @dataclass
 class PlayerConfig:
     """Configuration for creating a test player."""

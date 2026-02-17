@@ -27,48 +27,31 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 
     # Database settings
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", "postgresql+asyncpg://rpg:rpgpassword@db:5432/rpg"
-    )
-    VALKEY_URL: str = os.getenv("VALKEY_URL", "redis://valkey:6379/0")
+    DATABASE_URL: str = "postgresql+asyncpg://rpg:rpgpassword@db:5432/rpg"
+    VALKEY_URL: str = "redis://valkey:6379/0"
 
     # Authentication settings
-    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your_super_secret_key_change_me")
-    ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
+    JWT_SECRET_KEY: str = "your_super_secret_key_change_me"
+    ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
-        os.getenv(
-            "ACCESS_TOKEN_EXPIRE_MINUTES",
-            str(game_config.get("game", {}).get("auth", {}).get("access_token_expire_minutes", 30))
-        )
+        game_config.get("game", {}).get("auth", {}).get("access_token_expire_minutes", 30)
     )
 
     # Game settings from config.yml with fallbacks
     GAME_TICK_RATE: float = float(
-        os.getenv(
-            "GAME_TICK_RATE", str(game_config.get("game", {}).get("tick_rate", 20.0))
-        )
+        game_config.get("game", {}).get("tick_rate", 20.0)
     )
 
     # Movement settings from config.yml with fallbacks
     MOVE_COOLDOWN: float = float(
-        os.getenv(
-            "MOVE_COOLDOWN",
-            str(
-                game_config.get("game", {})
-                .get("movement", {})
-                .get("move_cooldown", 0.15)
-            ),
-        )
+        game_config.get("game", {})
+        .get("movement", {})
+        .get("move_cooldown", 0.15)
     )
     ANIMATION_DURATION: float = float(
-        os.getenv(
-            "ANIMATION_DURATION",
-            str(
-                game_config.get("game", {})
-                .get("movement", {})
-                .get("animation_duration", 0.3)
-            ),
-        )
+        game_config.get("game", {})
+        .get("movement", {})
+        .get("animation_duration", 0.3)
     )
 
     # Map settings from config.yml with fallbacks
@@ -78,21 +61,14 @@ class Settings(BaseSettings):
     COLLISION_LAYER_NAMES: List[str] = ["water", "building"]
 
     # Valkey settings from config.yml
-    USE_VALKEY: bool = os.getenv(
-        "USE_VALKEY",
-        str(game_config.get("server", {}).get("valkey", {}).get("enabled", "true"))
+    USE_VALKEY: bool = str(
+        game_config.get("server", {}).get("valkey", {}).get("enabled", "true")
     ).lower() in ("true", "1", "yes", "on")
-    VALKEY_HOST: str = os.getenv(
-        "VALKEY_HOST",
-        game_config.get("server", {}).get("valkey", {}).get("host", "valkey")
-    )
+    VALKEY_HOST: str = game_config.get("server", {}).get("valkey", {}).get("host", "valkey")
     VALKEY_PORT: int = int(
-        os.getenv(
-            "VALKEY_PORT",
-            str(game_config.get("server", {}).get("valkey", {}).get("port", 6379))
-        )
+        game_config.get("server", {}).get("valkey", {}).get("port", 6379)
     )
-    MAPS_DIRECTORY: str = os.getenv("MAPS_DIRECTORY", "/app/server/maps")
+    MAPS_DIRECTORY: str = "/app/server/maps"
 
     # Game state cache TTL settings (in seconds)
     GAME_STATE_CACHE: Dict[str, int] = {

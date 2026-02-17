@@ -493,8 +493,11 @@ async def _process_auto_attacks(
                     # Update last attack tick
                     await player_mgr.set_player_combat_state(
                         player_id,
-                        target_type.value,
-                        target_id
+                        {
+                            "target_type": target_type.value,
+                            "target_id": target_id,
+                            "last_attack_tick": tick_counter,
+                        }
                     )
                     
                     # Get username for display in combat event
