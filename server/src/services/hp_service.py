@@ -18,6 +18,7 @@ from server.src.core.logging_config import get_logger
 from server.src.core.skills import HITPOINTS_START_LEVEL
 from server.src.core.concurrency import get_player_lock_manager, LockType
 from server.src.services.game_state import get_player_state_manager
+from server.src.services.game_state.batch_sync import get_batch_sync_coordinator
 from server.src.services.ground_item_service import GroundItemService
 
 logger = get_logger(__name__)
@@ -288,6 +289,16 @@ class HpService:
             y=death_y,
         )
 
+        # Force sync player to DB after dropping items
+        try:
+            sync_coordinator = get_batch_sync_coordinator()
+            await sync_coordinator.sync_and_commit_player(player_id)
+        except Exception as e:
+            logger.error(
+                "Failed to sync player on death",
+                extra={"player_id": player_id, "error": str(e)},
+            )
+
         logger.info(
             "Player died",
             extra={
@@ -394,6 +405,16 @@ class HpService:
         death_map_id, death_x, death_y, items_dropped = await HpService.handle_death(
             player_id
         )
+
+        # Force sync player to DB after dropping items (similar to logout)
+        try:
+            sync_coordinator = get_batch_sync_coordinator()
+            await sync_coordinator.sync_and_commit_player(player_id)
+        except Exception as e:
+            logger.error(
+                "Failed to sync player on death",
+                extra={"player_id": player_id, "error": str(e)},
+            )
 
         # Step 2: Broadcast EVENT_PLAYER_DIED
         if broadcast_callback:

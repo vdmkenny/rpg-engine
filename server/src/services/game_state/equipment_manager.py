@@ -172,7 +172,8 @@ class EquipmentManager(BaseManager):
 
         key = EQUIPMENT_KEY.format(player_id=player_id)
         await self._delete_from_valkey(key)
-        await self._valkey.sadd(DIRTY_EQUIPMENT_KEY, [str(player_id)])
+        await self._clear_equipment_from_db(player_id)
+        await self._valkey.srem(DIRTY_EQUIPMENT_KEY, [str(player_id)])
 
     async def _clear_equipment_from_db(self, player_id: int) -> None:
         if not self._session_factory:

@@ -205,7 +205,7 @@ class BaseManager:
         # 1. Try Valkey first
         if self._valkey and settings.USE_VALKEY:
             cached = await self._get_from_valkey(key)
-            if cached:
+            if cached is not None:
                 await self._refresh_ttl(key, ttl)
 
                 if decoder:
