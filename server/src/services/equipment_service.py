@@ -656,7 +656,7 @@ class EquipmentService:
             
             quantity = equipped.quantity
 
-            add_result = await InventoryService.add_item(
+            add_result = await InventoryService._add_item_internal(
                 player_id=player_id,
                 item_id=equipped.item.id,
                 quantity=quantity,
