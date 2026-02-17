@@ -6,13 +6,11 @@ Handles chat message validation, channel routing, permission checking, and broad
 
 from typing import Dict, List, Optional, Any
 import time
-import traceback
 
 from common.src.protocol import ChatChannel
 
 from ..core.logging_config import get_logger
 from ..core.config import settings
-from ..core.constants import PlayerRole
 from .player_service import PlayerService
 
 logger = get_logger(__name__)

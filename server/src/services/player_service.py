@@ -5,7 +5,6 @@ Handles player creation, login/logout, and core player state management.
 Returns Pydantic models throughout for type safety.
 """
 
-import traceback
 from typing import Optional, List
 from fastapi import HTTPException, status
 

@@ -17,9 +17,7 @@ from server.src.core.config import settings
 from server.src.core.logging_config import get_logger
 from server.src.core.skills import HITPOINTS_START_LEVEL
 from server.src.services.game_state import get_player_state_manager
-from server.src.services.equipment_service import EquipmentService
 from server.src.services.ground_item_service import GroundItemService
-from server.src.services.map_service import get_map_manager
 
 logger = get_logger(__name__)
 
