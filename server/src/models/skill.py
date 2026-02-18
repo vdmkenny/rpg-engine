@@ -36,10 +36,10 @@ class PlayerSkill(Base):
     """
     Junction table linking a player to a skill and their progress.
 
-    The current_level is computed from experience using the XP formula
+    The level is computed from xp using the XP formula
     in server/src/core/skills.py with multipliers from config.yml.
     It's stored here for query efficiency but should be recalculated
-    when experience changes.
+    when xp changes.
     """
 
     __tablename__ = "player_skills"
@@ -48,8 +48,8 @@ class PlayerSkill(Base):
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
     skill_id: Mapped[int] = mapped_column(ForeignKey("skills.id"), index=True)
 
-    current_level: Mapped[int] = mapped_column(default=1)
-    experience: Mapped[int] = mapped_column(BigInteger, default=0)
+    level: Mapped[int] = mapped_column(default=1)
+    xp: Mapped[int] = mapped_column(BigInteger, default=0)
 
     player: Mapped["Player"] = relationship(back_populates="skills")
     skill: Mapped["Skill"] = relationship(back_populates="player_skills")
@@ -60,4 +60,4 @@ class PlayerSkill(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<PlayerSkill(player_id={self.player_id}, skill_id={self.skill_id}, level={self.current_level}, xp={self.experience})>"
+        return f"<PlayerSkill(player_id={self.player_id}, skill_id={self.skill_id}, level={self.level}, xp={self.xp})>"

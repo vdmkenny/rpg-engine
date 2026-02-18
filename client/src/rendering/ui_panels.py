@@ -350,8 +350,12 @@ class TabbedSidePanel(UIPanel):
     
     def _draw_equipment_content(self, screen: pygame.Surface, content_rect: pygame.Rect) -> None:
         """Draw equipment paperdoll-style layout."""
+        # Title
+        title = self.small_font.render("Equipment", True, Colors.TEXT_YELLOW)
+        screen.blit(title, (content_rect.x + 8, content_rect.y + 4))
+        
         center_x = content_rect.centerx
-        content_y = content_rect.y + 8
+        content_y = content_rect.y + 28
         slot_size = 34
         
         # All 11 equipment slots in paperdoll layout
@@ -432,20 +436,21 @@ class TabbedSidePanel(UIPanel):
                 screen.blit(label_text, (text_x, text_y))
     
     def _draw_stats_content(self, screen: pygame.Surface, content_rect: pygame.Rect) -> None:
-        """Draw skills list with rectangular blocks, icons, and progress bars."""
-        # Title with total level
+        """Draw skills list in 2 columns with rectangular blocks, icons, and progress bars."""
         title_text = f"Skills (Total: {self.total_level})"
         title = self.small_font.render(title_text, True, Colors.TEXT_YELLOW)
         screen.blit(title, (content_rect.x + 8, content_rect.y + 4))
         
         y = content_rect.y + 24
-        block_height = 24
-        block_margin = 1
+        block_height = 28
+        block_margin = 2
         icon_size = 14
         bar_height = 5
-        padding_left = 8
-        padding_right = 8
-        available_width = content_rect.width - padding_left - padding_right
+        padding_left = 4
+        padding_right = 4
+        column_gap = 4
+        available_width = content_rect.width - padding_left - padding_right - column_gap
+        column_width = available_width // 2
         
         # Sort skills by category then by level descending
         sorted_skills = sorted(
@@ -458,30 +463,42 @@ class TabbedSidePanel(UIPanel):
             )
         )
         
-        # Calculate how many skills can fit
-        max_display = (content_rect.height - 28) // (block_height + block_margin)
-        
-        for skill_name, skill_data in sorted_skills[:max_display]:
+        # Render skills in 2 columns
+        for idx, (skill_name, skill_data) in enumerate(sorted_skills):
             if y + block_height > content_rect.bottom - 2:
                 break
             
             level = skill_data.get("level", 1)
             xp = skill_data.get("xp", 0)
             xp_to_next = skill_data.get("xp_to_next", 0)
+            xp_for_current = skill_data.get("xp_for_current", 0)
+            xp_for_next = skill_data.get("xp_for_next", 0)
             category = SKILL_CATEGORIES.get(skill_name, "other")
             cat_color = CATEGORY_COLORS.get(category, CATEGORY_COLORS["other"])
             icon_color = CATEGORY_ICON_COLORS.get(category, CATEGORY_ICON_COLORS["other"])
             
-            block_x = content_rect.x + padding_left
+            # Determine column (0 = left, 1 = right)
+            col = idx % 2
+            row = idx // 2
+            
+            # Only advance y when starting a new row
+            if col == 0 and idx > 0:
+                y += block_height + block_margin
+            
+            block_x = content_rect.x + padding_left + col * (column_width + column_gap)
+            current_y = content_rect.y + 24 + row * (block_height + block_margin)
+            
+            if current_y + block_height > content_rect.bottom - 2:
+                break
             
             # Block background (slightly lighter than panel)
-            block_rect = pygame.Rect(block_x, y, available_width, block_height)
+            block_rect = pygame.Rect(block_x, current_y, column_width, block_height)
             pygame.draw.rect(screen, Colors.SKILL_BLOCK_BG, block_rect)
             pygame.draw.rect(screen, Colors.PANEL_INNER_BORDER, block_rect, 1)
             
             # Category icon placeholder (small colored square)
             icon_x = block_x + 3
-            icon_y = y + (block_height - icon_size) // 2
+            icon_y = current_y + (block_height - icon_size) // 2
             icon_rect = pygame.Rect(icon_x, icon_y, icon_size, icon_size)
             pygame.draw.rect(screen, icon_color, icon_rect)
             pygame.draw.rect(screen, Colors.SKILL_ICON_BORDER, icon_rect, 1)
@@ -492,23 +509,30 @@ class TabbedSidePanel(UIPanel):
             initial_rect = initial_surf.get_rect(center=icon_rect.center)
             screen.blit(initial_surf, initial_rect)
             
-            # Skill name
-            text_x = icon_x + icon_size + 4
-            name_surf = self.tiny_font.render(skill_name.title(), True, Colors.TEXT_WHITE)
-            screen.blit(name_surf, (text_x, y + 1))
+            # Skill name (abbreviated for narrower columns)
+            text_x = icon_x + icon_size + 3
+            max_name_width = column_width - icon_size - 40
+            name_text = skill_name.title()
+            name_surf = self.tiny_font.render(name_text, True, Colors.TEXT_WHITE)
+            if name_surf.get_width() > max_name_width:
+                name_text = name_text[:6] + "."
+                name_surf = self.tiny_font.render(name_text, True, Colors.TEXT_WHITE)
+            screen.blit(name_surf, (text_x, current_y + 1))
             
             # Level on the right
-            level_surf = self.tiny_font.render(str(level), True, Colors.TEXT_YELLOW)
-            level_x = block_x + available_width - level_surf.get_width() - 4
-            screen.blit(level_surf, (level_x, y + 1))
+            level_surf = self.tiny_font.render(f"Lv.{level}", True, Colors.TEXT_YELLOW)
+            level_x = block_x + column_width - level_surf.get_width() - 3
+            screen.blit(level_surf, (level_x, current_y + 1))
             
             # XP progress bar (bottom portion of block)
             bar_x = text_x
-            bar_y = y + block_height - bar_height - 3
-            bar_width = available_width - (text_x - block_x) - 4
+            bar_y = current_y + block_height - bar_height - 3
+            bar_width = column_width - (text_x - block_x) - 3
             
-            # Progress calculation
-            progress = min(1.0, xp / xp_to_next) if xp_to_next > 0 else 0
+            # Progress calculation: XP gained this level / XP needed for this level
+            xp_in_level = xp - xp_for_current
+            xp_for_level = xp_for_next - xp_for_current
+            progress = min(1.0, xp_in_level / xp_for_level) if xp_for_level > 0 else 1.0
             fill_width = int(bar_width * progress)
             
             # Bar background
@@ -518,18 +542,15 @@ class TabbedSidePanel(UIPanel):
             if fill_width > 0:
                 pygame.draw.rect(screen, cat_color, (bar_x, bar_y, fill_width, bar_height))
             
-            # XP text overlay on the bar (tiny)
+            # XP text overlay on the bar (tiny) - show XP gained this level
             if xp_to_next > 0:
-                xp_text = f"{xp}/{xp_to_next}"
+                xp_text = f"{xp_in_level}/{xp_for_level}"
             else:
-                xp_text = f"{xp} XP"
+                xp_text = "MAX"
             xp_surf = self.tiny_font.render(xp_text, True, Colors.TEXT_XP)
-            # Scale down the XP text if it doesn't fit
             if xp_surf.get_width() <= bar_width:
                 xp_rect = xp_surf.get_rect(center=(bar_x + bar_width // 2, bar_y + bar_height // 2))
                 screen.blit(xp_surf, xp_rect)
-            
-            y += block_height + block_margin
     
     def _draw_settings_content(self, screen: pygame.Surface, content_rect: pygame.Rect) -> None:
         """Draw settings."""
@@ -947,9 +968,9 @@ class ContextMenu:
     Used for inventory items, equipment slots, entities, and ground items.
     """
     
-    ITEM_HEIGHT = 20
-    PADDING = 4
-    WIDTH = 150
+    ITEM_HEIGHT = 24
+    PADDING = 6
+    WIDTH = 170
     
     def __init__(self):
         self.visible = False
@@ -960,7 +981,7 @@ class ContextMenu:
         self.on_select: Optional[Callable[[ContextMenuItem], None]] = None
         
         # Cached font for performance
-        self._font = pygame.font.SysFont("sans-serif", 12)
+        self._font = pygame.font.SysFont("sans-serif", 14)
     
     def show(self, x: int, y: int, items: List[ContextMenuItem], on_select: Optional[Callable[[ContextMenuItem], None]] = None) -> None:
         """Show the context menu at the specified position."""
@@ -1085,9 +1106,9 @@ class Tooltip:
     Shows multi-line information with color coding.
     """
     
-    PADDING = 6
-    LINE_SPACING = 2
-    MAX_WIDTH = 250
+    PADDING = 8
+    LINE_SPACING = 3
+    MAX_WIDTH = 280
     
     def __init__(self):
         self.visible = False
@@ -1098,7 +1119,7 @@ class Tooltip:
         self.height = 0
         
         # Cached font for performance
-        self._font = pygame.font.SysFont("sans-serif", 11)
+        self._font = pygame.font.SysFont("sans-serif", 13)
     
     def show(self, x: int, y: int, lines: List[Tuple[str, Tuple[int, int, int]]]) -> None:
         """

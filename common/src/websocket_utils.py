@@ -272,8 +272,8 @@ rate_limit_configs = {
     MessageType.CMD_MOVE: RateLimit(1, 0.15, 0.15),  # Match server config move_cooldown
     MessageType.CMD_INVENTORY_MOVE: RateLimit(1, 0.5, 0.5),
     MessageType.CMD_INVENTORY_SORT: RateLimit(1, 0.5, 0.5),
-    MessageType.CMD_ITEM_EQUIP: RateLimit(1, 0.5, 0.5),
-    MessageType.CMD_ITEM_UNEQUIP: RateLimit(1, 0.5, 0.5),
+    MessageType.CMD_ITEM_EQUIP: RateLimit(1, 0.1, 0.1),
+    MessageType.CMD_ITEM_UNEQUIP: RateLimit(1, 0.1, 0.1),
     MessageType.CMD_ITEM_DROP: RateLimit(1, 0.2, 0.2),
     MessageType.CMD_ITEM_PICKUP: RateLimit(1, 0.2, 0.2),
     MessageType.CMD_CHAT_SEND: RateLimit(1, 1.0, 1.0),  # Different for channels

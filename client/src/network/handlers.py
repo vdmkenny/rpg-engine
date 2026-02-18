@@ -172,6 +172,12 @@ class MessageHandlers:
             self.game_state.update_stats(systems["stats"])
             self.event_bus.emit(EventType.STATS_UPDATED, systems["stats"])
 
+        # Update skills
+        if "skills" in systems:
+            logger.debug("Received skills state update")
+            self.game_state.update_skills(systems["skills"])
+            self.event_bus.emit(EventType.SKILLS_UPDATED, systems["skills"])
+
         self.event_bus.emit(EventType.STATE_CHANGED, {"systems": list(systems.keys())})
     
     async def handle_game_update(self, payload: Dict[str, Any], correlation_id: Optional[str] = None) -> None:

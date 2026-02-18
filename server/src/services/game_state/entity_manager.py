@@ -7,12 +7,13 @@ Entity definitions are reference data; instances are runtime-only.
 
 import time as time_mod
 from enum import Enum
-from typing import Any, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 from glide import GlideClient, RangeByScore, ScoreBoundary
 from sqlalchemy.orm import sessionmaker
 
 from server.src.core.config import settings
+from server.src.core.entities import EntityState
 from server.src.core.logging_config import get_logger
 
 from .base_manager import BaseManager
@@ -51,7 +52,7 @@ class EntityManager(BaseManager):
         y: int,
         current_hp: int,
         max_hp: int,
-        state: str = "idle",
+        state: str = EntityState.IDLE.value,
         target_player_id: Optional[int] = None,
         respawn_delay_seconds: int = 30,
     ) -> int:
@@ -238,7 +239,7 @@ class EntityManager(BaseManager):
             return
 
         # Set state to dying and store death_tick for animation period
-        data["state"] = "dying"
+        data["state"] = EntityState.DYING.value
         data["death_tick"] = death_tick
         data["respawn_delay_seconds"] = respawn_delay_seconds
         data["current_hp"] = 0  # Ensure HP is 0
@@ -306,10 +307,14 @@ class EntityManager(BaseManager):
         if not data:
             return
 
-        death_tick = int(data.get("death_tick", 0))
-        respawn_delay = int(data.get("respawn_delay_seconds", 30))
+        death_tick = int(data.get("death_tick") or 0)
+        respawn_delay = int(data.get("respawn_delay_seconds") or 30)
 
         await self.despawn_entity(instance_id, death_tick, respawn_delay)
+
+        from server.src.services.visual_registry import get_visual_registry
+        visual_registry = get_visual_registry()
+        await visual_registry.remove_entity(f"entity_{instance_id}")
 
     async def clear_all_entity_instances(self) -> None:
         """Clear all entity instances (server shutdown)."""
@@ -355,7 +360,7 @@ class EntityManager(BaseManager):
                 entity = await self.get_entity_instance(instance_id)
 
                 if entity and entity.get("target_player_id") == player_id:
-                    await self.set_entity_state(instance_id, "idle", None)
+                    await self.set_entity_state(instance_id, EntityState.IDLE.value, None)
 
     async def get_entities_targeting_player(self, player_id: int) -> List[int]:
         """Get all entity instance IDs targeting a specific player."""

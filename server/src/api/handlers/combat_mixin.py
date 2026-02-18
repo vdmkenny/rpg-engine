@@ -201,6 +201,23 @@ class CombatHandlerMixin:
                 packed_event = msgpack.packb(combat_event.model_dump(), use_bin_type=True)
                 await manager.broadcast_to_map(attacker_pos["map_id"], packed_event)
                 
+                # Send level-up notifications if any
+                if result.level_ups:
+                    for xp_gain in result.level_ups:
+                        level_up_msg = WSMessage(
+                            id=None,
+                            type=MessageType.EVENT_CHAT_MESSAGE,
+                            payload={
+                                "sender": "System",
+                                "message": f"Congratulations, you've reached {xp_gain.skill.title()} level {xp_gain.level}!",
+                                "channel": "system",
+                                "sender_position": None
+                            },
+                            version=PROTOCOL_VERSION
+                        )
+                        packed_level_up = msgpack.packb(level_up_msg.model_dump(), use_bin_type=True)
+                        await manager.send_personal_message(self.player_id, packed_level_up)
+                
                 # Set combat state for auto-attack
                 from server.src.game.game_loop import get_game_loop_state
                 

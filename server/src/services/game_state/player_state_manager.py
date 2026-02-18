@@ -276,7 +276,7 @@ class PlayerStateManager(BaseManager):
 
             # Get hitpoints skill level for max_hp calculation
             hitpoints_result = await db.execute(
-                select(PlayerSkill.current_level)
+                select(PlayerSkill.level)
                 .join(Skill)
                 .where(
                     PlayerSkill.player_id == player.id,
@@ -322,7 +322,7 @@ class PlayerStateManager(BaseManager):
 
             # Get hitpoints skill level for max_hp calculation
             hitpoints_result = await db.execute(
-                select(PlayerSkill.current_level)
+                select(PlayerSkill.level)
                 .join(Skill)
                 .where(
                     PlayerSkill.player_id == player.id,

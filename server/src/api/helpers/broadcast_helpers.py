@@ -106,8 +106,11 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
             for skill in player_skills:
                 skill_name = skill.name.lower()
                 skills_dict[skill_name] = {
-                    "level": skill.current_level,
-                    "xp": skill.experience,
+                    "level": skill.level,
+                    "xp": skill.xp,
+                    "xp_to_next": skill.xp_to_next,
+                    "xp_for_current": skill.xp_for_current,
+                    "xp_for_next": skill.xp_for_next,
                 }
             
             logger.info(

@@ -115,24 +115,24 @@ class SkillService:
                         stmt = insert(PlayerSkill).values(
                             player_id=player_id,
                             skill_id=skill_id,
-                            current_level=HITPOINTS_START_LEVEL,
-                            experience=hitpoints_xp,
+                            level=HITPOINTS_START_LEVEL,
+                            xp=hitpoints_xp,
                         )
                         stmt = stmt.on_conflict_do_update(
                             index_elements=["player_id", "skill_id"],
                             set_={
-                                "current_level": HITPOINTS_START_LEVEL,
-                                "experience": hitpoints_xp,
+                                "level": HITPOINTS_START_LEVEL,
+                                "xp": hitpoints_xp,
                             },
-                            where=PlayerSkill.current_level < HITPOINTS_START_LEVEL,
+                            where=PlayerSkill.level < HITPOINTS_START_LEVEL,
                         )
                     else:
                         # Insert only if missing
                         stmt = insert(PlayerSkill).values(
                             player_id=player_id,
                             skill_id=skill_id,
-                            current_level=1,
-                            experience=0,
+                            level=1,
+                            xp=0,
                         )
                         stmt = stmt.on_conflict_do_nothing()
 
@@ -201,7 +201,7 @@ class SkillService:
             # Business logic: Calculate new XP and level
             xp_multiplier = get_skill_xp_multiplier(skill)
             previous_level = current_skill["level"]
-            previous_xp = current_skill["experience"]
+            previous_xp = current_skill["xp"]
 
             # Calculate new XP and level
             new_xp = previous_xp + xp_amount
@@ -230,10 +230,10 @@ class SkillService:
             return XPGain(
                 skill=skill_name,
                 xp_gained=xp_amount,
-                current_xp=new_xp,
-                current_level=new_level,
+                xp=new_xp,
+                level=new_level,
                 previous_level=previous_level,
-                xp_to_next_level=xp_to_next_level(new_xp, xp_multiplier),
+                xp_to_next=xp_to_next_level(new_xp, xp_multiplier),
                 leveled_up=leveled_up,
                 levels_gained=new_level - previous_level,
             )
@@ -269,21 +269,21 @@ class SkillService:
                 continue
 
             level = skill_data.get("level", 1)
-            experience = skill_data.get("experience", 0)
+            xp = skill_data.get("xp", 0)
             xp_multiplier = get_skill_xp_multiplier(skill_type)
 
             result.append(
                 SkillData(
-                    name=skill_type.value.name,
+                    name=skill_type.value.name.lower(),
                     category=skill_type.value.category.value,
                     description=skill_type.value.description,
-                    current_level=level,
-                    experience=experience,
-                    xp_for_current_level=xp_for_current_level(experience, xp_multiplier),
-                    xp_for_next_level=xp_for_level(level + 1, xp_multiplier),
-                    xp_to_next_level=xp_to_next_level(experience, xp_multiplier),
+                    level=level,
+                    xp=xp,
+                    xp_for_current=xp_for_current_level(xp, xp_multiplier),
+                    xp_for_next=xp_for_level(level + 1, xp_multiplier),
+                    xp_to_next=xp_to_next_level(xp, xp_multiplier),
                     xp_multiplier=xp_multiplier,
-                    progress_percent=progress_to_next_level(experience, xp_multiplier),
+                    progress_percent=progress_to_next_level(xp, xp_multiplier),
                     max_level=MAX_LEVEL,
                 )
             )

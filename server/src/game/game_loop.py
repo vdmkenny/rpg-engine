@@ -330,8 +330,8 @@ def get_visible_npc_entities(
     for entity in all_entity_instances:
         entity_state = entity.get("state", EntityState.IDLE.value)
         
-        # Show entities in "dying" state (10-tick death animation)
-        # Skip entities fully despawned (state == "dead")
+        # Show entities in DYING state (10-tick death animation)
+        # Skip entities fully despawned (state == DEAD)
         if entity_state == EntityState.DEAD.value:
             continue
             
@@ -541,6 +541,23 @@ async def _process_auto_attacks(
                         packed_event = msgpack.packb(combat_event.model_dump(), use_bin_type=True)
                         if packed_event:
                             await manager.broadcast_to_map(player_pos["map_id"], packed_event)
+                        
+                        # Send level-up notifications if any
+                        if result.level_ups:
+                            for xp_gain in result.level_ups:
+                                level_up_msg = WSMessage(
+                                    id=None,
+                                    type=MessageType.EVENT_CHAT_MESSAGE,
+                                    payload={
+                                        "sender": "System",
+                                        "message": f"Congratulations, you've reached {xp_gain.skill.title()} level {xp_gain.level}!",
+                                        "channel": "system",
+                                        "sender_position": None
+                                    },
+                                    version=PROTOCOL_VERSION
+                                )
+                                packed_level_up = msgpack.packb(level_up_msg.model_dump(), use_bin_type=True)
+                                await manager.send_personal_message(player_id, packed_level_up)
                     
                     # Clear combat if target died
                     if result.defender_died:
@@ -688,6 +705,12 @@ async def send_diff_update(
                 # Extract player_id from key
                 try:
                     removed_entities.append(int(entity_id.replace("player_", "")))
+                except ValueError:
+                    removed_entities.append(entity_id)
+            elif isinstance(entity_id, str) and entity_id.startswith("entity_"):
+                # Extract entity instance_id from key
+                try:
+                    removed_entities.append(int(entity_id.replace("entity_", "")))
                 except ValueError:
                     removed_entities.append(entity_id)
             else:
@@ -1163,13 +1186,13 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 
                 # Process dying entities (death animation completion)
                 for entity in all_map_entity_instances:
-                    if entity.get("state") == EntityState.DYING.value:
-                        death_tick = int(entity.get("death_tick", 0))
+                    entity_state = entity.get("state")
+                    if entity_state == EntityState.DYING.value:
+                        death_tick = int(entity.get("death_tick") or 0)
+                        instance_id = entity.get("instance_id")
                         if current_tick >= death_tick:
-                            # Death animation complete, finalize death
-                            await entity_mgr.finalize_entity_death(entity["instance_id"])
-                            # Clean up AI timer state for dead entity
-                            AIService.cleanup_entity_timers(entity["instance_id"])
+                            await entity_mgr.finalize_entity_death(instance_id)
+                            AIService.cleanup_entity_timers(instance_id)
 
                 # Process entity AI for this map
                 entity_combat_events = await AIService.process_entities(

@@ -13,6 +13,7 @@ from ..ui.colors import Colors
 from .ui_panels import TabbedSidePanel, ChatWindow, ContextMenu, ContextMenuItem, Tooltip
 from .customisation_panel import CustomisationPanel
 from .help_modal import HelpModal, HelpButton
+from ..tileset_manager import get_tileset_manager
 
 
 # Map rarity strings to RGB colors
@@ -138,6 +139,8 @@ class UIRenderer:
                 "level": v.level,
                 "xp": v.xp,
                 "xp_to_next": v.xp_to_next,
+                "xp_for_current": v.xp_for_current,
+                "xp_for_next": v.xp_for_next,
                 "category": getattr(v, 'category', 'other')
             } for k, v in game_state.skills.items()
         }
@@ -335,7 +338,7 @@ class UIRenderer:
         
         content_rect = self.side_panel._get_content_rect()
         center_x = content_rect.centerx
-        content_y = content_rect.y + 8
+        content_y = content_rect.y + 28
         slot_size = 34
         
         # Must match _draw_equipment_content() in ui_panels.py exactly
@@ -502,12 +505,182 @@ class UIRenderer:
 
 
 class Minimap:
-    """Circular minimap showing player and nearby entities."""
+    """Circular minimap showing player and nearby entities with tile background."""
     
     def __init__(self, x: int, y: int, radius: int = 60):
         self.x = x
         self.y = y
         self.radius = radius
+        
+        # Tile background caching
+        self.tileset_manager = get_tileset_manager()
+        self._bg_surface: Optional[pygame.Surface] = None
+        self._bg_player_tile: Optional[Tuple[int, int]] = None
+        self._bg_chunks_hash: Optional[int] = None
+        self._gid_color_cache: Dict[Tuple[str, int], Optional[Tuple[int, int, int]]] = {}
+    
+    def _get_tile_color(self, gid: int, map_id: str) -> Optional[Tuple[int, int, int]]:
+        """
+        Get the average color of a tile sprite, ignoring transparent pixels.
+        
+        Caches the result to avoid recomputing average color for the same GID.
+        """
+        if gid == 0:  # Empty tile
+            return None
+        
+        cache_key = (map_id, gid)
+        if cache_key in self._gid_color_cache:
+            return self._gid_color_cache[cache_key]
+        
+        # Get sprite from tileset manager
+        sprite = self.tileset_manager.get_tile_sprite(gid, map_id)
+        if not sprite:
+            self._gid_color_cache[cache_key] = None
+            return None
+        
+        # Compute average color, ignoring fully transparent pixels
+        w, h = sprite.get_size()
+        r_sum, g_sum, b_sum = 0, 0, 0
+        pixel_count = 0
+        
+        # Sample every other pixel to balance speed and accuracy (skip every other row/col)
+        step = max(1, min(w, h) // 8)  # Sample at least 8x8 grid
+        
+        try:
+            for y in range(0, h, step):
+                for x in range(0, w, step):
+                    pixel = sprite.get_at((x, y))
+                    
+                    # Skip fully transparent pixels (alpha = 0)
+                    # If the sprite has no alpha channel, pixel will be (r, g, b)
+                    # If it has alpha, pixel will be (r, g, b, a)
+                    alpha = pixel[3] if len(pixel) > 3 else 255
+                    
+                    if alpha > 0:  # Only count pixels that have any opacity
+                        r_sum += pixel[0]
+                        g_sum += pixel[1]
+                        b_sum += pixel[2]
+                        pixel_count += 1
+            
+            if pixel_count > 0:
+                result = (r_sum // pixel_count, g_sum // pixel_count, b_sum // pixel_count)
+                self._gid_color_cache[cache_key] = result
+                return result
+            else:
+                # All pixels were fully transparent
+                self._gid_color_cache[cache_key] = None
+                return None
+                
+        except Exception:
+            # Fallback: sample the center pixel
+            try:
+                center_pixel = sprite.get_at((w // 2, h // 2))
+                result = (center_pixel[0], center_pixel[1], center_pixel[2])
+                self._gid_color_cache[cache_key] = result
+                return result
+            except Exception:
+                self._gid_color_cache[cache_key] = None
+                return None
+    
+    def _render_background(self, game_state: Any) -> Optional[pygame.Surface]:
+        """
+        Render the minimap background showing tile colors.
+        
+        Returns a cached surface that is only recomputed when the player moves to a new tile
+        or when chunks are loaded/unloaded. Uses colorkey-based circular clipping.
+        """
+        # Get current player tile position
+        my_x = game_state.position.get("x", 0)
+        my_y = game_state.position.get("y", 0)
+        player_tile = (int(my_x), int(my_y))
+        
+        # Check if we have a valid cache
+        chunks_hash = hash(frozenset(game_state.chunks.keys()))
+        if (self._bg_surface is not None and 
+            self._bg_player_tile == player_tile and 
+            self._bg_chunks_hash == chunks_hash):
+            return self._bg_surface
+        
+        # Need to re-render background
+        map_id = game_state.map_id
+        scale = 3  # pixels per tile
+        
+        # Create surface and fill with colorkey (will be transparent when blitted)
+        size = self.radius * 2
+        bg_surface = pygame.Surface((size, size))
+        bg_surface.fill(Colors.MINIMAP_COLORKEY)
+        
+        # Draw black circle as the base (for unknown/unloaded areas)
+        center_px = size // 2
+        pygame.draw.circle(bg_surface, Colors.MINIMAP_BG, (center_px, center_px), self.radius - 4)
+        
+        # Iterate over tiles visible on minimap
+        # Minimap shows ~17 tiles in each direction from center (52px / 3px per tile)
+        tile_range = 20  # slightly more than visible to account for rounding
+        
+        for ty in range(my_y - tile_range, my_y + tile_range + 1):
+            for tx in range(my_x - tile_range, my_x + tile_range + 1):
+                # Calculate position on minimap surface
+                dx = (tx - my_x) * scale
+                dy = (ty - my_y) * scale
+                
+                pixel_x = center_px + dx
+                pixel_y = center_px + dy
+                
+                # Check if tile is within minimap circle
+                dist = ((pixel_x - center_px) ** 2 + (pixel_y - center_px) ** 2) ** 0.5
+                if dist >= self.radius - 4:
+                    continue
+                
+                # Get tile from chunks
+                chunk_x = tx // 16
+                chunk_y = ty // 16
+                local_x = tx % 16
+                local_y = ty % 16
+                
+                chunk = game_state.chunks.get((chunk_x, chunk_y))
+                if not chunk or local_y >= len(chunk) or local_x >= len(chunk[local_y]):
+                    continue
+                
+                tile_data = chunk[local_y][local_x]
+                
+                # Iterate all layers bottom-to-top, use last opaque layer's color
+                color = None
+                if isinstance(tile_data, dict):
+                    layers = tile_data.get("layers", [])
+                    # Iterate all layers to find the last opaque one
+                    for layer in layers:
+                        layer_gid = layer.get("gid", 0)
+                        if layer_gid == 0:
+                            continue
+                        layer_color = self._get_tile_color(layer_gid, map_id)
+                        if layer_color:
+                            color = layer_color  # Last opaque layer wins
+                elif isinstance(tile_data, int):
+                    if tile_data > 0:
+                        color = self._get_tile_color(tile_data, map_id)
+                elif isinstance(tile_data, list) and tile_data:
+                    # Iterate all GIDs in list
+                    for gid in tile_data:
+                        if isinstance(gid, int) and gid > 0:
+                            gid_color = self._get_tile_color(gid, map_id)
+                            if gid_color:
+                                color = gid_color  # Last opaque GID wins
+                
+                # Draw tile if we found a color
+                if color:
+                    if 0 <= pixel_x < size and 0 <= pixel_y < size:
+                        pygame.draw.rect(bg_surface, color, (pixel_x, pixel_y, scale, scale))
+        
+        # Set colorkey so magenta areas become transparent
+        bg_surface.set_colorkey(Colors.MINIMAP_COLORKEY)
+        
+        # Cache the result
+        self._bg_surface = bg_surface
+        self._bg_player_tile = player_tile
+        self._bg_chunks_hash = chunks_hash
+        
+        return bg_surface
     
     def draw(self, screen: pygame.Surface, game_state: Any) -> None:
         """Render minimap."""
@@ -519,20 +692,24 @@ class Minimap:
         # Inner highlight
         pygame.draw.circle(screen, Colors.STONE_HIGHLIGHT, center, self.radius - 2, 1)
         
-        # Black background
-        pygame.draw.circle(screen, Colors.MINIMAP_BG, center, self.radius - 4)
+        # Render tile background
+        bg_surface = self._render_background(game_state)
+        if bg_surface:
+            # Blit background centered at minimap position
+            screen.blit(bg_surface, (self.x - self.radius, self.y - self.radius))
         
         # Draw dots for entities
         # Scale: 3 pixels per tile
         scale = 3
         
-        # Other players (cyan)
+        # Extract player position once
+        my_x = game_state.position.get("x", 0)
+        my_y = game_state.position.get("y", 0)
+        
+        # Other players (white)
         for player_id, player in game_state.other_players.items():
             px = player.get("position", {}).get("x", 0)
             py = player.get("position", {}).get("y", 0)
-            
-            my_x = game_state.position.get("x", 0)
-            my_y = game_state.position.get("y", 0)
             
             dx = (px - my_x) * scale
             dy = (py - my_y) * scale
@@ -545,11 +722,7 @@ class Minimap:
             if dist < self.radius - 8:
                 pygame.draw.circle(screen, Colors.MINIMAP_OTHER_PLAYER, (int(dot_x), int(dot_y)), 2)
         
-        # Extract player position once (H9 fix)
-        my_x = game_state.position.get("x", 0)
-        my_y = game_state.position.get("y", 0)
-        
-        # NPCs (yellow) and Monsters (red) - single pass iteration (H8 fix)
+        # NPCs and Monsters - colored by behavior_type
         for entity_id, entity in getattr(game_state, 'entities', {}).items():
             entity_type = entity.entity_type.value
             if entity_type not in ('humanoid_npc', 'monster'):
@@ -566,10 +739,26 @@ class Minimap:
             
             dist = ((dot_x - center[0]) ** 2 + (dot_y - center[1]) ** 2) ** 0.5
             if dist < self.radius - 8:
-                if entity_type == 'humanoid_npc':
-                    pygame.draw.circle(screen, Colors.MINIMAP_NPC, (int(dot_x), int(dot_y)), 2)
-                else:  # monster
+                # Color based on behavior_type: aggressive = red, everything else = yellow
+                if entity.behavior_type == "AGGRESSIVE":
                     pygame.draw.circle(screen, Colors.MINIMAP_MONSTER, (int(dot_x), int(dot_y)), 2)
+                else:
+                    pygame.draw.circle(screen, Colors.MINIMAP_NPC, (int(dot_x), int(dot_y)), 2)
+        
+        # Ground items (cyan)
+        for item_id, item in getattr(game_state, 'ground_items', {}).items():
+            item_x = item.get("x", 0)
+            item_y = item.get("y", 0)
+            
+            dx = (item_x - my_x) * scale
+            dy = (item_y - my_y) * scale
+            
+            dot_x = center[0] + dx
+            dot_y = center[1] + dy
+            
+            dist = ((dot_x - center[0]) ** 2 + (dot_y - center[1]) ** 2) ** 0.5
+            if dist < self.radius - 8:
+                pygame.draw.circle(screen, Colors.MINIMAP_GROUND_ITEM, (int(dot_x), int(dot_y)), 2)
         
         # Player dot (white, larger, in center)
         pygame.draw.circle(screen, Colors.MINIMAP_PLAYER, center, 3)

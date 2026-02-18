@@ -1114,8 +1114,8 @@ def create_player_with_skills(
             skill_record = PlayerSkill(
                 player_id=player_id,
                 skill_id=skill_id_map[skill_name],
-                current_level=skill_props.get('level', 1),
-                experience=skill_props.get('xp', 0)
+                level=skill_props.get('level', 1),
+                xp=skill_props.get('xp', 0)
             )
             session.add(skill_record)
             

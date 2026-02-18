@@ -261,8 +261,8 @@ class EntitySpawnService:
         positions: Dict[int, Tuple[int, int]] = {}
         for entity in entities:
             # Skip dead entities
-            state = entity.get("state", "idle")
-            if state in ("dead", "dying"):
+            state = entity.get("state", EntityState.IDLE.value)
+            if state in (EntityState.DEAD.value, EntityState.DYING.value):
                 continue
             
             instance_id = entity.get("instance_id")

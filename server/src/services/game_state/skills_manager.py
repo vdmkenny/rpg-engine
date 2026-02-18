@@ -54,7 +54,7 @@ class SkillsManager(BaseManager):
             return await self._load_skills_from_db(player_id)
 
         skills = await self.auto_load_with_ttl(
-            key, load_from_db, SKILLS_TTL, decoder={"level": int, "experience": int}
+            key, load_from_db, SKILLS_TTL, decoder={"level": int, "xp": int}
         )
         return skills or {}
 
@@ -76,14 +76,14 @@ class SkillsManager(BaseManager):
                 skill_name = skill.name.lower()
                 skills_data[skill_name] = {
                     "skill_id": skill.id,
-                    "level": player_skill.current_level,
-                    "experience": player_skill.experience,
+                    "level": player_skill.level,
+                    "xp": player_skill.xp,
                 }
 
             return skills_data
 
     async def set_skill(
-        self, player_id: int, skill_name: str, level: int, experience: int
+        self, player_id: int, skill_name: str, level: int, xp: int
     ) -> None:
         """Set skill level and XP for a player."""
         # Convert SkillType enum to string name
@@ -91,7 +91,7 @@ class SkillsManager(BaseManager):
             skill_name = skill_name.name
         
         if not settings.USE_VALKEY or not self._valkey:
-            await self._update_skill_in_db(player_id, skill_name, level, experience)
+            await self._update_skill_in_db(player_id, skill_name, level, xp)
             return
 
         key = SKILLS_KEY.format(player_id=player_id)
@@ -103,14 +103,14 @@ class SkillsManager(BaseManager):
         skill_name_lower = skill_name.lower()
         skills[skill_name_lower] = {
             "level": level,
-            "experience": experience,
+            "xp": xp,
         }
 
         await self._cache_in_valkey(key, skills, SKILLS_TTL)
         await self._valkey.sadd(DIRTY_SKILLS_KEY, [str(player_id)])
 
     async def _update_skill_in_db(
-        self, player_id: int, skill_name: str, level: int, experience: int
+        self, player_id: int, skill_name: str, level: int, xp: int
     ) -> None:
         if not self._session_factory:
             return
@@ -137,12 +137,12 @@ class SkillsManager(BaseManager):
             stmt = insert(PlayerSkill).values(
                 player_id=player_id,
                 skill_id=skill_id,
-                current_level=level,
-                experience=experience,
+                level=level,
+                xp=xp,
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["player_id", "skill_id"],
-                set_={"current_level": level, "experience": experience},
+                set_={"level": level, "xp": xp},
             )
             await db.execute(stmt)
             await self._commit_if_not_test_session(db)
@@ -164,8 +164,8 @@ class SkillsManager(BaseManager):
                 stmt = insert(PlayerSkill).values(
                     player_id=player_id,
                     skill_id=skill_id,
-                    current_level=1,
-                    experience=0,
+                    level=1,
+                    xp=0,
                 )
                 stmt = stmt.on_conflict_do_nothing()
                 await db.execute(stmt)
@@ -181,7 +181,7 @@ class SkillsManager(BaseManager):
                 for _, name in skills:
                     skill_name_lower = name.lower()
                     if skill_name_lower not in existing_skills:
-                        existing_skills[skill_name_lower] = {"level": 1, "experience": 0}
+                        existing_skills[skill_name_lower] = {"level": 1, "xp": 0}
                 
                 await self._cache_in_valkey(key, existing_skills, SKILLS_TTL)
 
@@ -246,17 +246,17 @@ class SkillsManager(BaseManager):
                 continue
 
             level = self._decode_from_valkey(skill_data.get("level"), int)
-            experience = self._decode_from_valkey(skill_data.get("experience"), int)
+            xp = self._decode_from_valkey(skill_data.get("xp"), int)
 
             stmt = insert(PlayerSkill).values(
                 player_id=player_id,
                 skill_id=skill_id,
-                current_level=level or 1,
-                experience=experience or 0,
+                level=level or 1,
+                xp=xp or 0,
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["player_id", "skill_id"],
-                set_={"current_level": level or 1, "experience": experience or 0},
+                set_={"level": level or 1, "xp": xp or 0},
             )
             await db.execute(stmt)
 

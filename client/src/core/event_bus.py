@@ -55,6 +55,7 @@ class EventType(Enum):
     
     # Stats events
     STATS_UPDATED = auto()
+    SKILLS_UPDATED = auto()
     APPEARANCE_UPDATED = auto()
     
     # Chat events

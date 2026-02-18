@@ -326,7 +326,7 @@ class TestMaxHpCalculation:
                 )
                 player_skill = result.scalar_one_or_none()
                 if player_skill:
-                    player_skill.current_level = health_item.required_level
+                    player_skill.level = health_item.required_level
                     await session.commit()
                     # Update skill in GSM
                     if skill.name:
@@ -334,7 +334,7 @@ class TestMaxHpCalculation:
                             player.id, 
                             skill.name, 
                             health_item.required_level, 
-                            player_skill.experience
+                            player_skill.xp
                         )
         
         # Set equipment directly in GSM

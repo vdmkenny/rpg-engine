@@ -109,13 +109,13 @@ async def give_player_skill_level(
     player_skill = result.scalar_one_or_none()
 
     if player_skill:
-        player_skill.current_level = level
+        player_skill.level = level
     else:
         player_skill = PlayerSkill(
             player_id=player_id,
             skill_id=skill.id,
-            current_level=level,
-            experience=0,
+            level=level,
+            xp=0,
         )
         session.add(player_skill)
 

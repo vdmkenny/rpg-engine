@@ -154,10 +154,10 @@ class AIService:
         if instance_id is None:
             return None
             
-        state_str = entity.get("state", "idle")
+        state_str = entity.get("state", EntityState.IDLE.value)
         
-        # Skip dead/dying entities (handle both string and enum values)
-        if state_str in ("dead", "dying", EntityState.DEAD, EntityState.DYING):
+        # Skip dead/dying entities
+        if state_str in (EntityState.DEAD.value, EntityState.DYING.value, EntityState.DEAD, EntityState.DYING):
             return None
         
         # Convert string state to enum, or use enum directly

@@ -43,13 +43,13 @@ class TestSkillServiceGrant:
         hitpoints = all_skills.get("hitpoints")
         assert hitpoints is not None
         assert hitpoints["level"] == HITPOINTS_START_LEVEL
-        assert hitpoints["experience"] > 0  # Has XP for level 10
+        assert hitpoints["xp"] > 0  # Has XP for level 10
         
         # Check other skills start at level 1
         for skill_name, skill_data in all_skills.items():
             if skill_name != "hitpoints":
                 assert skill_data["level"] == 1, f"{skill_name} should start at level 1"
-                assert skill_data["experience"] == 0, f"{skill_name} should start with 0 XP"
+                assert skill_data["xp"] == 0, f"{skill_name} should start with 0 XP"
 
     @pytest.mark.asyncio
     async def test_grant_skills_is_idempotent(
@@ -96,10 +96,10 @@ class TestSkillServiceAddXP:
         
         assert result is not None
         assert result.previous_level == 1
-        assert result.current_level > 1
+        assert result.level > 1
         assert result.leveled_up is True
         assert result.xp_gained == 2000
-        assert result.current_xp > 0
+        assert result.xp > 0
 
     @pytest.mark.asyncio
     async def test_add_zero_xp_does_nothing(
@@ -134,9 +134,9 @@ class TestSkillServiceAddXP:
         
         assert result is not None
         assert result.previous_level == 1
-        assert result.current_level == 1  # No level up
+        assert result.level == 1  # No level up
         assert result.leveled_up is False
-        assert result.current_xp == 50
+        assert result.xp == 50
 
     @pytest.mark.asyncio
     async def test_xp_calculations_are_accurate(
@@ -153,8 +153,8 @@ class TestSkillServiceAddXP:
             player.id, SkillType.ATTACK, xp_for_5
         )
         
-        assert result.current_level == 5
-        assert result.current_xp == xp_for_5
+        assert result.level == 5
+        assert result.xp == xp_for_5
 
 
 class TestSkillServiceQueries:
@@ -175,8 +175,8 @@ class TestSkillServiceQueries:
         # Check structure - skills are Pydantic SkillData models
         for skill in skills:
             assert skill.name is not None
-            assert skill.current_level >= 1
-            assert skill.experience >= 0
+            assert skill.level >= 1
+            assert skill.xp >= 0
 
     @pytest.mark.asyncio
     async def test_get_skill_level_returns_correct_value(

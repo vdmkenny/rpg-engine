@@ -108,13 +108,14 @@ class QueryHandlerMixin:
             
             # Get skills in list format (consistent with other responses)
             skills_list = await SkillService.get_player_skills(self.player_id)
-            total_level = sum(s.current_level for s in skills_list)
+            skills_data = [s.model_dump() for s in skills_list]
+            total_level = sum(s.level for s in skills_list)
             
             await self._send_data_response(
                 message.id,
                 {
                     "stats": stats_data.model_dump(),
-                    "skills": skills_list,
+                    "skills": skills_data,
                     "total_level": total_level
                 }
             )

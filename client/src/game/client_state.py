@@ -44,6 +44,8 @@ class Skill:
     level: int = 1
     xp: int = 0
     xp_to_next: int = 0
+    xp_for_current: int = 0
+    xp_for_next: int = 0
 
 
 @dataclass
@@ -69,6 +71,7 @@ class Entity:
     target_x: int = 0
     target_y: int = 0
     anim_state: AnimationState = field(default_factory=AnimationState)
+    behavior_type: str = "neutral"
 
 
 @dataclass
@@ -224,6 +227,10 @@ class ClientGameState:
         # Update entity state (idle, combat, dying, etc.)
         if "state" in data:
             entity.state = data["state"]
+        
+        # Update behavior type for minimap classification
+        if "behavior_type" in data:
+            entity.behavior_type = data["behavior_type"]
     
     def update_other_player(self, player_id: int, data: Dict[str, Any]) -> None:
         """Update other player position with smooth interpolation."""
@@ -330,8 +337,25 @@ class ClientGameState:
                     name=name,
                     level=skill_data.get("level", 1),
                     xp=skill_data.get("xp", 0),
-                    xp_to_next=skill_data.get("xp_to_next", 0)
+                    xp_to_next=skill_data.get("xp_to_next", 0),
+                    xp_for_current=skill_data.get("xp_for_current", 0),
+                    xp_for_next=skill_data.get("xp_for_next", 0),
                 )
+    
+    def update_skills(self, data: Dict[str, Any]) -> None:
+        """Update skills from server dict format (keyed by skill name)."""
+        for skill_name, skill_data in data.items():
+            self.skills[skill_name] = Skill(
+                name=skill_name,
+                level=skill_data.get("level", 1),
+                xp=skill_data.get("xp", 0),
+                xp_to_next=skill_data.get("xp_to_next", 0),
+                xp_for_current=skill_data.get("xp_for_current", 0),
+                xp_for_next=skill_data.get("xp_for_next", 0),
+            )
+        
+        # Recalculate total level
+        self.total_level = sum(s.level for s in self.skills.values())
     
     def update_map_chunks(self, data: Dict[str, Any]) -> None:
         """Update map chunks from server data."""
