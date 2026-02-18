@@ -6,8 +6,9 @@ Handles chat message validation, channel routing, permission checking, and broad
 
 from typing import Dict, List, Optional, Any
 import time
+import traceback
 
-from common.src.protocol import ChatChannel
+from common.src.protocol import ChatChannel, PROTOCOL_VERSION
 
 from ..core.logging_config import get_logger
 from ..core.config import settings
@@ -383,10 +384,10 @@ class ChatService:
                 # Send system error message to the sender
                 if validation_result.get("system_message"):
                     system_msg = WSMessage(
-                        id=None,  # No correlation ID for events
+                        id=None,
                         type=MessageType.EVENT_CHAT_MESSAGE,
                         payload=validation_result["system_message"],
-                        version="2.0"
+                        version=PROTOCOL_VERSION
                     )
                     packed_message = msgpack.packb(system_msg.model_dump(), use_bin_type=True)
                     await connection_manager.send_personal_message(player_id, packed_message)
@@ -408,18 +409,16 @@ class ChatService:
                 }
             )
             
-            # Create the chat message response
-            # Use 'sender' field to match ChatMessageEventPayload protocol definition
             chat_response = WSMessage(
-                id=None,  # No correlation ID for events
+                id=None,
                 type=MessageType.EVENT_CHAT_MESSAGE,
                 payload={
                     "sender": username,
                     "message": processed_message,
                     "channel": channel,
-                    "timestamp": int(time.time() * 1000)  # Convert to milliseconds for protocol
+                    "timestamp": int(time.time() * 1000)
                 },
-                version="2.0"
+                version=PROTOCOL_VERSION
             )
             
             recipients = []
@@ -479,10 +478,10 @@ class ChatService:
                             f"Player '{target_username}' not found or offline."
                         )
                         system_response = WSMessage(
-                            id=None,  # No correlation ID for events
+                            id=None,
                             type=MessageType.EVENT_CHAT_MESSAGE,
                             payload=error_msg,
-                            version="2.0"
+                            version=PROTOCOL_VERSION
                         )
                         packed_message = msgpack.packb(system_response.model_dump(), use_bin_type=True)
                         # Use player_id (int) for ConnectionManager
@@ -493,15 +492,14 @@ class ChatService:
                             "reason": "dm_recipient_not_found"
                         }
                 else:
-                    # DM system notification  
                     dm_response = WSMessage(
-                        id=None,  # No correlation ID for events
+                        id=None,
                         type=MessageType.EVENT_CHAT_MESSAGE,
                         payload=ChatService.create_system_error_message(
                             "Direct messages require a target username.",
                             "system"
                         ),
-                        version="2.0"
+                        version=PROTOCOL_VERSION
                     )
                     packed_message = msgpack.packb(dm_response.model_dump(), use_bin_type=True)
                     # Use player_id (int) for ConnectionManager

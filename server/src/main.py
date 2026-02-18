@@ -22,7 +22,7 @@ from server.src.services.game_state import (
     get_batch_sync_coordinator,
 )
 from server.src.core.concurrency import initialize_concurrency_infrastructure
-from common.src.protocol import MessageType, WSMessage
+from common.src.protocol import MessageType, WSMessage, PROTOCOL_VERSION
 
 # Initialize logging and metrics as early as possible
 setup_logging()
@@ -150,13 +150,13 @@ async def lifespan(app: FastAPI):
     
     # Broadcast SERVER_SHUTDOWN to all connected clients
     shutdown_message = WSMessage(
-        id=None,  # No correlation ID needed for broadcast events
+        id=None,
         type=MessageType.EVENT_SERVER_SHUTDOWN,
         payload={
             "message": "Server shutting down",
             "countdown_seconds": 30,
         },
-        version="2.0"
+        version=PROTOCOL_VERSION
     )
     packed_shutdown = msgpack.packb(shutdown_message.model_dump(), use_bin_type=True)
     

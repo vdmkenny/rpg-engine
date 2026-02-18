@@ -63,13 +63,13 @@ async def receive_auth_message(websocket) -> WSMessage:
         logger.warning("Authentication message timeout")
         raise WebSocketDisconnect(
             code=status.WS_1008_POLICY_VIOLATION,
-            reason="Authentication timeout - no message received"
+            reason="Authentication failed"
         )
     except (msgpack.exceptions.UnpackException, ValueError) as e:
-        logger.error("Invalid authentication message", extra={"error": str(e)})
+        logger.error("Invalid authentication message format", extra={"error": str(e)})
         raise WebSocketDisconnect(
             code=status.WS_1008_POLICY_VIOLATION,
-            reason=f"Invalid authentication message: {str(e)}"
+            reason="Authentication failed"
         )
 
 
@@ -93,17 +93,19 @@ async def authenticate_player(auth_message: WSMessage) -> Tuple[str, int]:
         player_data = await auth_service.validate_jwt_token(auth_payload.token)
         
         if not player_data:
+            logger.warning("Token validation failed - no player data")
             raise WebSocketDisconnect(
                 code=status.WS_1008_POLICY_VIOLATION,
-                reason="Invalid token"
+                reason="Authentication failed"
             )
         
         username = player_data.get("username")
         
         if not username:
+            logger.warning("Token validation failed - username missing")
             raise WebSocketDisconnect(
                 code=status.WS_1008_POLICY_VIOLATION,
-                reason="Invalid token: username missing"
+                reason="Authentication failed"
             )
         
         # Get player from database to validate existence and get player_id
@@ -111,15 +113,17 @@ async def authenticate_player(auth_message: WSMessage) -> Tuple[str, int]:
         player = await player_service.get_player_by_username(username)
         
         if not player:
+            logger.warning("Player lookup failed during auth", extra={"username": username})
             raise WebSocketDisconnect(
                 code=status.WS_1008_POLICY_VIOLATION,
-                reason="Player not found"
+                reason="Authentication failed"
             )
         
         if player.is_banned:
+            logger.info("Banned player attempted login", extra={"username": username})
             raise WebSocketDisconnect(
                 code=status.WS_1008_POLICY_VIOLATION,
-                reason="Account is banned"
+                reason="Account suspended"
             )
         
         timeout_until = player.timeout_until
@@ -127,9 +131,13 @@ async def authenticate_player(auth_message: WSMessage) -> Tuple[str, int]:
             if timeout_until.tzinfo is None:
                 timeout_until = timeout_until.replace(tzinfo=timezone.utc)
             if timeout_until > datetime.now(timezone.utc):
+                logger.info(
+                    "Timed-out player attempted login",
+                    extra={"username": username, "timeout_until": timeout_until.isoformat()}
+                )
                 raise WebSocketDisconnect(
                     code=status.WS_1008_POLICY_VIOLATION,
-                    reason=f"Account is timed out until {timeout_until.isoformat()}"
+                    reason="Account temporarily restricted"
                 )
         
         logger.info("Player authenticated via WebSocket", extra={"username": username, "player_id": player.id})
@@ -139,11 +147,11 @@ async def authenticate_player(auth_message: WSMessage) -> Tuple[str, int]:
         logger.error("Authentication validation error", extra={"error": str(e), "errors": e.errors()})
         raise WebSocketDisconnect(
             code=status.WS_1008_POLICY_VIOLATION,
-            reason="Invalid authentication payload"
+            reason="Authentication failed"
         )
     except JWTError as e:
         logger.error("JWT authentication error", extra={"error": str(e)})
         raise WebSocketDisconnect(
             code=status.WS_1008_POLICY_VIOLATION,
-            reason="Invalid authentication token"
+            reason="Authentication failed"
         )

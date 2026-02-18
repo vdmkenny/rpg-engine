@@ -7,8 +7,11 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
 from server.src.core.config import settings
+from server.src.core.logging_config import get_logger
 from server.src.models.player import Player
 from server.src.schemas.token import TokenData
+
+logger = get_logger(__name__)
 
 # Password Hashing - use bcrypt directly
 BCRYPT_ROUNDS = 12
@@ -26,7 +29,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
             plain_password.encode("utf-8"),
             hashed_password.encode("utf-8"),
         )
-    except Exception:
+    except (ValueError, TypeError) as e:
+        logger.debug("Password verification failed - invalid format", extra={"error": str(e)})
+        return False
+    except Exception as e:
+        logger.warning("Unexpected error in password verification", extra={"error": str(e)})
         return False
 
 

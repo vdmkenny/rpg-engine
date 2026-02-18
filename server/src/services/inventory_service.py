@@ -30,6 +30,7 @@ from ..schemas.item import (
 )
 from .item_service import ItemService
 from ..core.logging_config import get_logger
+from .game_state import get_inventory_manager, get_reference_data_manager
 
 if TYPE_CHECKING:
     from .game_state import InventoryManager
@@ -52,9 +53,6 @@ class InventoryService:
         Returns:
             List of inventory item objects with item_id and quantity properties
         """
-        from .game_state import get_inventory_manager
-        from dataclasses import dataclass
-        
         inventory_mgr = get_inventory_manager()
         
         # Get inventory data from GSM (the single source of truth)
@@ -116,8 +114,6 @@ class InventoryService:
         Returns:
             InventorySlot if slot is occupied, None if empty
         """
-        from .game_state import get_inventory_manager
-        
         inventory_mgr = get_inventory_manager()
         slot_data = await inventory_mgr.get_inventory_slot(player_id, slot)
         if not slot_data:
@@ -149,11 +145,8 @@ class InventoryService:
         Returns:
             Slot number if available, None if inventory is full
         """
-        from .game_state import get_inventory_manager
-        
         inventory_mgr = get_inventory_manager()
         
-        # Find next available inventory slot
         max_slots = settings.INVENTORY_MAX_SLOTS
         inventory_data = await inventory_mgr.get_inventory(player_id)
         for i in range(max_slots):
@@ -172,11 +165,8 @@ class InventoryService:
         Returns:
             Number of occupied slots
         """
-        from .game_state import get_inventory_manager
-        
         inventory_mgr = get_inventory_manager()
         
-        # Count occupied inventory slots for player
         inventory_data = await inventory_mgr.get_inventory(player_id)
         return len(inventory_data)
 
@@ -192,12 +182,8 @@ class InventoryService:
         Returns:
             Slot number if a stackable slot found, None otherwise
         """
-        from .game_state import get_inventory_manager
-        from .item_service import ItemService
-        
         inventory_mgr = get_inventory_manager()
         
-        # Get all inventory slots from GSM
         inventory_data = await inventory_mgr.get_inventory(player_id)
         
         # Get item stacking information
@@ -241,9 +227,6 @@ class InventoryService:
         Returns:
             OperationResult with success status and details
         """
-        from .game_state import get_inventory_manager
-        from .item_service import ItemService
-        
         inventory_mgr = get_inventory_manager()
         if quantity <= 0:
             return OperationResult(
@@ -402,8 +385,6 @@ class InventoryService:
         Returns:
             OperationResult with success status
         """
-        from .game_state import get_inventory_manager
-        
         inventory_mgr = get_inventory_manager()
         
         if quantity <= 0:
@@ -498,9 +479,6 @@ class InventoryService:
         async with get_player_lock_manager().acquire_player_lock(
             player_id, LockType.INVENTORY, "move_item"
         ):
-            from .game_state import get_inventory_manager
-            from .item_service import ItemService
-            
             inventory_mgr = get_inventory_manager()
             max_slots = settings.INVENTORY_MAX_SLOTS
 
@@ -632,11 +610,8 @@ class InventoryService:
         Returns:
             True if player has enough items
         """
-        from .game_state import get_inventory_manager
-        
         inventory_mgr = get_inventory_manager()
         
-        # Get all inventory slots from GSM
         inventory_data = await inventory_mgr.get_inventory(player_id)
         
         # Sum quantities across all stacks of the same item
@@ -658,11 +633,8 @@ class InventoryService:
         Returns:
             Number of slots cleared
         """
-        from .game_state import get_inventory_manager
-        
         inventory_mgr = get_inventory_manager()
         
-        # Get current inventory count before clearing
         inventory_data = await inventory_mgr.get_inventory(player_id)
         slots_cleared = len(inventory_data)
         
@@ -684,11 +656,8 @@ class InventoryService:
         Returns:
             OperationResult with merge statistics
         """
-        from .game_state import get_inventory_manager
-        
         inventory_mgr = get_inventory_manager()
         
-        # Get all inventory items from GSM
         inventory_data = await inventory_mgr.get_inventory(player_id)
         
         # Group by item_id for stackable items
@@ -850,12 +819,9 @@ class InventoryService:
         Returns:
             OperationResult with sort statistics
         """
-        from .game_state import get_inventory_manager, get_reference_data_manager
-        
         inventory_mgr = get_inventory_manager()
         ref_mgr = get_reference_data_manager()
         
-        # First, merge stacks
         merge_result = await InventoryService.merge_stacks(player_id)
         stacks_merged = merge_result.data.get("stacks_merged", 0) if merge_result.data else 0
 

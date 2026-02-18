@@ -16,6 +16,9 @@ from server.src.core.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+ENTITY_KEY_PREFIX_PLAYER = "player_"
+ENTITY_KEY_PREFIX_ENTITY = "entity_"
+
 
 class VisibilityService:
     """
@@ -101,27 +104,34 @@ class VisibilityService:
             removed_keys = previous_entity_keys - current_entity_keys
             potential_updates = current_entity_keys & previous_entity_keys
             
-            # DEBUG: Log when player's own entity is added (first time)
             for entity_key in added_keys:
-                if entity_key.startswith("player_"):
-                    logger.info(
-                        f"[DEBUG] Player entity ADDED to visibility: {entity_key}, "
-                        f"pos=({visible_entities[entity_key].get('x')}, {visible_entities[entity_key].get('y')})"
+                if entity_key.startswith(ENTITY_KEY_PREFIX_PLAYER):
+                    entity_data = visible_entities[entity_key]
+                    logger.debug(
+                        "Player entity added to visibility",
+                        extra={
+                            "entity_key": entity_key,
+                            "x": entity_data.get("x"),
+                            "y": entity_data.get("y"),
+                        }
                     )
             
-            # Check for actual updates (entity data changed)
             updated_keys = set()
             for entity_key in potential_updates:
                 current_data = visible_entities[entity_key]
                 previous_data = previous_entities.get(entity_key, {})
                 if current_data != previous_data:
                     updated_keys.add(entity_key)
-                    # DEBUG: Log what changed for player entities
-                    if entity_key.startswith("player_"):
-                        logger.info(
-                            f"[DEBUG] Player entity changed: {entity_key}, "
-                            f"old=({previous_data.get('x')}, {previous_data.get('y')}), "
-                            f"new=({current_data.get('x')}, {current_data.get('y')})"
+                    if entity_key.startswith(ENTITY_KEY_PREFIX_PLAYER):
+                        logger.debug(
+                            "Player entity position changed",
+                            extra={
+                                "entity_key": entity_key,
+                                "old_x": previous_data.get("x"),
+                                "old_y": previous_data.get("y"),
+                                "new_x": current_data.get("x"),
+                                "new_y": current_data.get("y"),
+                            }
                         )
             
             # Update cache with new state

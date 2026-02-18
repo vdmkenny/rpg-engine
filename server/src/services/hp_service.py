@@ -126,9 +126,9 @@ class HpService:
             # Get current HP from GSM (within lock)
             current_hp, max_hp = await HpService.get_hp(player_id)
 
-            # Calculate new HP
-            actual_damage = min(damage, current_hp)  # Can't deal more damage than HP
-            new_hp = max(0, current_hp - damage)
+            # Calculate new HP (actual_damage is capped at current_hp)
+            actual_damage = min(damage, current_hp)
+            new_hp = current_hp - actual_damage
             player_died = new_hp == 0
 
             # Update via GSM (within lock)

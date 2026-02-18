@@ -36,18 +36,6 @@ class EntityService:
         await ref_mgr.sync_entities_to_database()
 
     @staticmethod
-    def _humanoid_def_to_dict(name: str, definition: HumanoidDefinition) -> Dict[str, Any]:
-        """Convert a HumanoidDefinition to a dictionary suitable for DB insertion."""
-        from ..core.entity_utils import humanoid_def_to_dict
-        return humanoid_def_to_dict(name, definition)
-
-    @staticmethod
-    def _monster_def_to_dict(name: str, definition: MonsterDefinition) -> Dict[str, Any]:
-        """Convert a MonsterDefinition to a dictionary suitable for DB insertion."""
-        from ..core.entity_utils import monster_def_to_dict
-        return monster_def_to_dict(name, definition)
-
-    @staticmethod
     def entity_def_to_dict(
         name: str,
         definition: Union[HumanoidDefinition, MonsterDefinition]

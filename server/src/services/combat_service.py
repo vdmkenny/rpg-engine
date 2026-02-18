@@ -14,8 +14,8 @@ Following GSM architecture:
 """
 
 import random
-from dataclasses import dataclass
-from typing import Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any
 from enum import Enum
 
 from server.src.core.logging_config import get_logger
@@ -62,19 +62,15 @@ class CombatStats:
 class CombatResult:
     """Result of a combat action"""
     success: bool
-    hit: bool  # Did the attack hit?
-    damage: int  # Damage dealt (0 if miss)
-    attacker_hp: int  # Attacker's HP after combat
-    defender_hp: int  # Defender's HP after combat
-    defender_died: bool  # Did defender die?
-    xp_gained: Dict[SkillType, int]  # XP rewards by skill
-    message: str  # Combat message for display
-    level_ups: list = None  # List of XPGain objects for level-ups
-    error: Optional[str] = None  # Error message if success=False
-    
-    def __post_init__(self):
-        if self.level_ups is None:
-            self.level_ups = []
+    hit: bool
+    damage: int
+    attacker_hp: int
+    defender_hp: int
+    defender_died: bool
+    xp_gained: Dict[SkillType, int]
+    message: str
+    level_ups: List[Any] = field(default_factory=list)
+    error: Optional[str] = None
 
 
 class CombatService:
@@ -85,8 +81,9 @@ class CombatService:
     """
     
     # Combat constants
-    MAX_HIT_ROLL = 64  # Maximum value for hit roll calculations
-    MAX_DEFENCE_ROLL = 64  # Maximum value for defence roll calculations
+    MAX_HIT_ROLL = 64
+    MAX_DEFENCE_ROLL = 64
+    DEATH_ANIMATION_TICKS = 10
     
     @staticmethod
     async def get_player_combat_stats(player_id: int) -> Optional[CombatStats]:
@@ -451,7 +448,7 @@ class CombatService:
             if defender_died:
                 from server.src.game.game_loop import get_game_loop_state
                 game_state = get_game_loop_state()
-                death_tick = game_state.tick_counter + 10  # 10 ticks for death animation
+                death_tick = game_state.tick_counter + CombatService.DEATH_ANIMATION_TICKS
                 await entity_mgr.mark_entity_dying(defender_id, death_tick=death_tick, respawn_delay_seconds=30)
         
         # Calculate XP (only for player attackers)

@@ -32,6 +32,19 @@ from server.src.schemas.player import NearbyPlayer
 logger = get_logger(__name__)
 
 
+_entity_timers: Dict[int, Dict[str, Any]] = {}
+
+
+def reset_all_ai_timers() -> None:
+    """
+    Reset all entity timer state.
+    
+    Called on server startup to clear stale state, or during tests.
+    """
+    global _entity_timers
+    _entity_timers = {}
+
+
 @dataclass
 class EntityCombatEvent:
     """
@@ -55,14 +68,30 @@ class AIService:
     """
     Entity AI processing service.
     
+    Uses module-level state (_entity_timers) for entity timers.
     All methods are static to match the service pattern used elsewhere.
     Processes entity state machines each tick based on configured intervals.
+    
+    Note: Use reset_all_ai_timers() to clear state (e.g., in tests or server restart).
     """
     
-    # Per-entity timers stored in memory (not persisted to Valkey)
-    # These are transient and reset on server restart
-    # {instance_id: {"idle_timer": int, "wander_target": (x, y) or None, ...}}
-    _entity_timers: Dict[int, Dict[str, Any]] = {}
+    @staticmethod
+    def _get_timers(instance_id: int, create: bool = True) -> Optional[Dict[str, Any]]:
+        """Get timer state for an entity, optionally creating if not exists."""
+        if instance_id not in _entity_timers:
+            if not create:
+                return None
+            _entity_timers[instance_id] = {
+                "idle_timer": random.randint(
+                    settings.ENTITY_AI_IDLE_MIN,
+                    settings.ENTITY_AI_IDLE_MAX
+                ),
+                "wander_target": None,
+                "last_move_tick": 0,
+                "last_aggro_check_tick": 0,
+                "last_attack_tick": 0,
+            }
+        return _entity_timers[instance_id]
     
     @staticmethod
     async def process_entities(
@@ -191,19 +220,7 @@ class AIService:
             return None
         
         # Ensure entity has timer state
-        if instance_id not in AIService._entity_timers:
-            AIService._entity_timers[instance_id] = {
-                "idle_timer": random.randint(
-                    settings.ENTITY_AI_IDLE_MIN,
-                    settings.ENTITY_AI_IDLE_MAX
-                ),
-                "wander_target": None,
-                "last_move_tick": 0,
-                "last_aggro_check_tick": 0,
-                "last_attack_tick": 0,
-            }
-        
-        timers = AIService._entity_timers[instance_id]
+        timers = AIService._get_timers(instance_id)
         
         # Check for aggro (for aggressive entities) periodically
         if behavior == EntityBehavior.AGGRESSIVE and state != EntityState.COMBAT:
@@ -745,7 +762,7 @@ class AIService:
         
         Called when entity dies or despawns.
         """
-        AIService._entity_timers.pop(instance_id, None)
+        _entity_timers.pop(instance_id, None)
     
     @staticmethod
     def reset_all_timers() -> None:
@@ -754,7 +771,7 @@ class AIService:
         
         Called on server startup to clear stale state.
         """
-        AIService._entity_timers.clear()
+        reset_all_ai_timers()
     
     @staticmethod
     async def clear_entities_targeting_player(
@@ -790,8 +807,8 @@ class AIService:
                     )
                     
                     # Clear wander target in timer state
-                    if instance_id in AIService._entity_timers:
-                        AIService._entity_timers[instance_id]["wander_target"] = None
+                    if instance_id in _entity_timers:
+                        _entity_timers[instance_id]["wander_target"] = None
                     
                     cleared_count += 1
                     logger.debug(
