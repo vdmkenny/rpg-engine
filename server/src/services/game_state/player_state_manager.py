@@ -640,7 +640,7 @@ class PlayerStateManager(BaseManager):
             return
 
         key = PLAYER_COMBAT_STATE_KEY.format(player_id=player_id)
-        await self._valkey.delete(key)
+        await self._valkey.delete([key])
 
     async def get_all_players_in_combat(self) -> List[Dict[str, Any]]:
         """
@@ -678,6 +678,41 @@ class PlayerStateManager(BaseManager):
                 break
         
         return result
+
+    async def clear_players_targeting_entity(self, entity_instance_id: int) -> int:
+        """
+        Clear combat state for all players targeting a specific entity.
+        
+        Called when an entity dies to free up players for auto-retaliation.
+        
+        Args:
+            entity_instance_id: The entity instance ID being removed
+            
+        Returns:
+            Number of players cleared
+        """
+        if not self._valkey or not settings.USE_VALKEY:
+            return 0
+
+        players_in_combat = await self.get_all_players_in_combat()
+        cleared_count = 0
+        
+        for entry in players_in_combat:
+            player_id = entry["player_id"]
+            combat_state = entry["combat_state"]
+            
+            # Check if this player is targeting the dead entity
+            target_type = combat_state.get("target_type")
+            target_id = combat_state.get("target_id")
+            
+            # Compare as integers (Valkey may store as string)
+            target_id_int = int(target_id) if target_id is not None else None
+            
+            if target_type == "entity" and target_id_int == entity_instance_id:
+                await self.clear_player_combat_state(player_id)
+                cleared_count += 1
+        
+        return cleared_count
 
     # =========================================================================
     # Appearance

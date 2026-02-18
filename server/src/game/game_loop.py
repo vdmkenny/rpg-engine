@@ -467,6 +467,12 @@ async def _process_auto_attacks(
                     await player_mgr.clear_player_combat_state(player_id)
                     continue
                 
+                # Clear combat if target is dying/dead (entity exists but is in death animation)
+                target_entity_state = target_data.get("state")
+                if target_entity_state in (EntityState.DYING.value, EntityState.DEAD.value):
+                    await player_mgr.clear_player_combat_state(player_id)
+                    continue
+                
                 target_x = target_data["x"]
                 target_y = target_data["y"]
                 target_map_id = target_data["map_id"]
@@ -506,15 +512,16 @@ async def _process_auto_attacks(
                 )
                 
                 if result.success:
-                    # Update last attack tick
-                    await player_mgr.set_player_combat_state(
-                        player_id,
-                        {
-                            "target_type": target_type.value,
-                            "target_id": target_id,
-                            "last_attack_tick": tick_counter,
-                        }
-                    )
+                    # Only update combat state if target is still alive
+                    if not result.defender_died:
+                        await player_mgr.set_player_combat_state(
+                            player_id,
+                            {
+                                "target_type": target_type.value,
+                                "target_id": target_id,
+                                "last_attack_tick": tick_counter,
+                            }
+                        )
                     
                     # Get username for display in combat event
                     player_data = await PlayerService.get_player_by_id(player_id)

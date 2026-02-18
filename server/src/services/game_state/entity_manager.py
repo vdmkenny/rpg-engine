@@ -247,12 +247,19 @@ class EntityManager(BaseManager):
         # Update in Valkey (entity stays visible during animation)
         await self._cache_in_valkey(key, data, ENTITY_TTL)
         
+        # Clear combat state for any players targeting this entity
+        # This frees them to auto-retaliate against new attackers
+        from .player_state_manager import get_player_state_manager
+        player_mgr = get_player_state_manager()
+        cleared = await player_mgr.clear_players_targeting_entity(instance_id)
+        
         logger.debug(
             "Entity marked as dying",
             extra={
                 "instance_id": instance_id,
                 "death_tick": death_tick,
                 "respawn_delay_seconds": respawn_delay_seconds,
+                "players_cleared": cleared,
             }
         )
 

@@ -523,12 +523,10 @@ class CombatService:
                 if defender_weapon and defender_weapon.get("item_id"):
                     weapon_meta = reference_mgr.get_cached_item_meta(defender_weapon["item_id"])
                     base_attack_speed = game_config.get("game", {}).get("combat", {}).get("base_attack_speed", 3.0)
-                    defender_attack_speed = weapon_meta.get("attack_speed", base_attack_speed)
+                    defender_attack_speed = weapon_meta.get("attack_speed", base_attack_speed) if weapon_meta else base_attack_speed
                 else:
-                    # Unarmed
                     defender_attack_speed = game_config.get("game", {}).get("combat", {}).get("base_attack_speed", 3.0)
                 
-                # Set combat state to retaliate
                 await player_mgr.set_player_combat_state(
                     defender_id,
                     {
@@ -543,7 +541,7 @@ class CombatService:
                     "Auto-retaliation triggered",
                     extra={
                         "defender_id": defender_id,
-                        "attacker_type": attacker_type,
+                        "attacker_type": attacker_type.value,
                         "attacker_id": attacker_id,
                     }
                 )
