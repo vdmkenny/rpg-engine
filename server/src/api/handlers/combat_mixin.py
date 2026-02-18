@@ -4,6 +4,7 @@ Combat command handler mixin.
 Handles attack and auto-retaliate commands.
 """
 
+import traceback
 from typing import Any
 
 from fastapi import WebSocket
@@ -58,7 +59,7 @@ class CombatHandlerMixin:
             ):
                 await self._send_error_response(
                     message.id,
-                    ErrorCodes.MOVE_RATE_LIMITED,
+                    ErrorCodes.COMBAT_RATE_LIMITED,
                     ErrorCategory.RATE_LIMIT,
                     "Attack on cooldown"
                 )
@@ -274,15 +275,13 @@ class CombatHandlerMixin:
             )
             
         except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
             logger.error(
                 "Attack command failed",
                 extra={
                     "username": self.username,
                     "error": str(e),
                     "error_type": type(e).__name__,
-                    "traceback": tb
+                    "traceback": traceback.format_exc()
                 }
             )
             await self._send_error_response(
@@ -326,7 +325,6 @@ class CombatHandlerMixin:
             )
             
         except Exception as e:
-            import traceback
             logger.error(
                 "Error handling toggle auto-retaliate command",
                 extra={

@@ -105,6 +105,9 @@ class ErrorCodes(str, Enum):
     APPEARANCE_INVALID_VALUE = "appearance_invalid_value"
     APPEARANCE_UPDATE_FAILED = "appearance_update_failed"
 
+    # Combat errors
+    COMBAT_RATE_LIMITED = "combat_rate_limited"
+
     # Admin errors
     ADMIN_NOT_AUTHORIZED = "admin_not_authorized"
     ADMIN_ITEM_NOT_FOUND = "admin_item_not_found"

@@ -4,6 +4,7 @@ Equipment command handler mixin.
 Handles equipping and unequipping items.
 """
 
+import msgpack
 import traceback
 from typing import Any
 
@@ -14,16 +15,21 @@ from server.src.core.items import EquipmentSlot
 from server.src.services.equipment_service import EquipmentService
 from server.src.services.visual_state_service import VisualStateService
 from server.src.services.visual_registry import visual_registry
+from server.src.services.player_service import PlayerService
 
 from common.src.protocol import (
     WSMessage,
+    MessageType,
     ErrorCodes,
     ErrorCategory,
     ItemEquipPayload,
     ItemUnequipPayload,
 )
+from common.src.websocket_utils import create_event
 
 logger = get_logger(__name__)
+
+BROADCAST_RADIUS_TILES = 32
 
 
 class EquipmentHandlerMixin:
@@ -159,14 +165,11 @@ class EquipmentHandlerMixin:
         without waiting for the next game loop tick.
         """
         try:
-            from server.src.services.player_service import PlayerService
-            player_service = PlayerService()
-            nearby_players = await player_service.get_nearby_players(self.player_id, radius=32)
+            nearby_players = await PlayerService.get_nearby_players(self.player_id, radius=BROADCAST_RADIUS_TILES)
 
             if not nearby_players:
                 return
 
-            # Build full visual state including appearance + equipment
             visual_data = await VisualStateService.get_player_visual_state(self.player_id)
 
             if not visual_data:
@@ -176,7 +179,6 @@ class EquipmentHandlerMixin:
                 )
                 return
 
-            # Build the event payload with full visual_state
             event_payload = {
                 "player_id": self.player_id,
                 "username": self.username,
@@ -184,19 +186,12 @@ class EquipmentHandlerMixin:
                 "visual_state": visual_data["visual_state"]
             }
 
-            # Create the event message
-            from common.src.websocket_utils import create_event
-            from common.src.protocol import MessageType
             event_msg = create_event(MessageType.EVENT_APPEARANCE_UPDATE, event_payload)
 
-            # Pack the message
-            import msgpack
             message_data = msgpack.packb(event_msg.model_dump())
 
-            # Get list of nearby player IDs
             nearby_player_ids = [player.player_id for player in nearby_players]
 
-            # Broadcast to nearby players
             from server.src.api.websockets import manager as connection_manager
             await connection_manager.broadcast_to_players(nearby_player_ids, message_data)
 

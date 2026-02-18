@@ -4,6 +4,7 @@ Appearance command handler mixin.
 Handles player appearance updates (paperdoll customization).
 """
 
+import msgpack
 import traceback
 from typing import Any
 
@@ -23,8 +24,28 @@ from common.src.protocol import (
     AppearanceUpdatePayload,
 )
 from common.src.sprites import AppearanceData
+from common.src.websocket_utils import create_event
 
 logger = get_logger(__name__)
+
+BROADCAST_RADIUS_TILES = 32
+
+APPEARANCE_FIELDS = [
+    "body_type",
+    "skin_tone",
+    "head_type",
+    "hair_style",
+    "hair_color",
+    "eye_color",
+    "facial_hair_style",
+    "facial_hair_color",
+    "shirt_style",
+    "shirt_color",
+    "pants_style",
+    "pants_color",
+    "shoes_style",
+    "shoes_color",
+]
 
 
 class AppearanceHandlerMixin:
@@ -64,35 +85,11 @@ class AppearanceHandlerMixin:
                 current_appearance = AppearanceData.from_dict(current_appearance_dict)
 
             # Build new appearance with only the fields that were provided
-            appearance_changes = {}
-            if payload.body_type is not None:
-                appearance_changes["body_type"] = payload.body_type
-            if payload.skin_tone is not None:
-                appearance_changes["skin_tone"] = payload.skin_tone
-            if payload.head_type is not None:
-                appearance_changes["head_type"] = payload.head_type
-            if payload.hair_style is not None:
-                appearance_changes["hair_style"] = payload.hair_style
-            if payload.hair_color is not None:
-                appearance_changes["hair_color"] = payload.hair_color
-            if payload.eye_color is not None:
-                appearance_changes["eye_color"] = payload.eye_color
-            if payload.facial_hair_style is not None:
-                appearance_changes["facial_hair_style"] = payload.facial_hair_style
-            if payload.facial_hair_color is not None:
-                appearance_changes["facial_hair_color"] = payload.facial_hair_color
-            if payload.shirt_style is not None:
-                appearance_changes["shirt_style"] = payload.shirt_style
-            if payload.shirt_color is not None:
-                appearance_changes["shirt_color"] = payload.shirt_color
-            if payload.pants_style is not None:
-                appearance_changes["pants_style"] = payload.pants_style
-            if payload.pants_color is not None:
-                appearance_changes["pants_color"] = payload.pants_color
-            if payload.shoes_style is not None:
-                appearance_changes["shoes_style"] = payload.shoes_style
-            if payload.shoes_color is not None:
-                appearance_changes["shoes_color"] = payload.shoes_color
+            appearance_changes = {
+                field: getattr(payload, field)
+                for field in APPEARANCE_FIELDS
+                if getattr(payload, field) is not None
+            }
 
             # Validate the appearance changes before applying
             validation_result = self._validate_appearance_changes(appearance_changes, current_appearance)
@@ -254,15 +251,11 @@ class AppearanceHandlerMixin:
         This ensures other players see the updated appearance immediately.
         """
         try:
-            # Use PlayerService to find nearby players and ConnectionManager to broadcast
-            player_service = PlayerService()
-            nearby_players = await player_service.get_nearby_players(self.player_id, radius=32)
+            nearby_players = await PlayerService.get_nearby_players(self.player_id, radius=BROADCAST_RADIUS_TILES)
 
             if not nearby_players:
                 return
 
-            # Build full visual state including appearance + equipment
-            from server.src.services.visual_state_service import VisualStateService
             visual_data = await VisualStateService.get_player_visual_state(self.player_id)
 
             if not visual_data:
@@ -272,7 +265,6 @@ class AppearanceHandlerMixin:
                 )
                 return
 
-            # Build the event payload with full visual_state
             event_payload = {
                 "player_id": self.player_id,
                 "username": self.username,
@@ -280,18 +272,12 @@ class AppearanceHandlerMixin:
                 "visual_state": visual_data["visual_state"]
             }
 
-            # Create the event message
-            from common.src.websocket_utils import create_event
             event_msg = create_event(MessageType.EVENT_APPEARANCE_UPDATE, event_payload)
 
-            # Pack the message
-            import msgpack
             message_data = msgpack.packb(event_msg.model_dump())
 
-            # Get list of nearby player IDs
             nearby_player_ids = [player.player_id for player in nearby_players]
 
-            # Broadcast to nearby players
             from server.src.api.websockets import manager as connection_manager
             await connection_manager.broadcast_to_players(nearby_player_ids, message_data)
 
