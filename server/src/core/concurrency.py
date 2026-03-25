@@ -213,7 +213,8 @@ class PlayerLockManager:
         finally:
             if acquired:
                 context.released_at = time.time()
-                assert context.acquired_at is not None, "acquired_at must be set if lock was acquired"
+                if context.acquired_at is None:
+                    raise RuntimeError("acquired_at must be set if lock was acquired")
                 hold_time = context.released_at - context.acquired_at
                 
                 PLAYER_LOCK_HOLD_TIME.observe(hold_time)

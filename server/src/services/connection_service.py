@@ -161,8 +161,7 @@ class ConnectionService:
 
     @staticmethod
     async def handle_player_disconnect(
-        player_id: int, player_map: Optional[str] = None, 
-        manager = None, operation_rate_limiter = None
+        player_id: int,
     ) -> Dict[str, Any]:
         """
         Handle player disconnection cleanup.
@@ -171,9 +170,6 @@ class ConnectionService:
 
         Args:
             player_id: Disconnecting player ID
-            player_map: Player's current map (optional)
-            manager: Connection manager instance (optional)
-            operation_rate_limiter: Rate limiter instance (optional)
 
         Returns:
             Dict with disconnection result
