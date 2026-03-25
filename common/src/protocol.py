@@ -107,6 +107,14 @@ class ErrorCodes(str, Enum):
 
     # Combat errors
     COMBAT_RATE_LIMITED = "combat_rate_limited"
+    COMBAT_PLAYER_DEAD = "combat_player_dead"
+    COMBAT_TARGET_NOT_FOUND = "combat_target_not_found"
+    COMBAT_TARGET_NOT_ATTACKABLE = "combat_target_not_attackable"
+    COMBAT_TARGET_WRONG_MAP = "combat_target_wrong_map"
+    COMBAT_OUT_OF_RANGE = "combat_out_of_range"
+    COMBAT_NOT_IMPLEMENTED = "combat_not_implemented"
+    COMBAT_FAILED = "combat_failed"
+    COMBAT_INVALID_COMMAND = "combat_invalid_command"
 
     # Admin errors
     ADMIN_NOT_AUTHORIZED = "admin_not_authorized"

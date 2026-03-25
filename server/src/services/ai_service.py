@@ -22,7 +22,7 @@ from server.src.core.config import settings
 from server.src.core.entities import EntityBehavior, EntityState, get_entity_by_name
 from server.src.core.logging_config import get_logger
 from server.src.core.monsters import MonsterDefinition
-from server.src.services.game_state import EntityManager
+from server.src.services.game_state import EntityManager, get_reference_data_manager
 from server.src.services.map_service import get_map_manager
 from server.src.services.pathfinding_service import PathfindingService
 from server.src.services.entity_spawn_service import EntitySpawnService
@@ -201,7 +201,6 @@ class AIService:
         if entity_id is None:
             return None
             
-        from .game_state import get_reference_data_manager
         ref_mgr = get_reference_data_manager()
         entity_def = await ref_mgr.get_entity_definition_by_id(entity_id)
         if not entity_def:

@@ -8,7 +8,9 @@ from typing import Dict, List, Optional, Any
 import time
 import traceback
 
-from common.src.protocol import ChatChannel, PROTOCOL_VERSION
+import msgpack
+
+from common.src.protocol import ChatChannel, WSMessage, MessageType, PROTOCOL_VERSION
 
 from ..core.logging_config import get_logger
 from ..core.config import settings
@@ -368,9 +370,6 @@ class ChatService:
         Returns:
             Dict with result status and message details
         """
-        import msgpack
-        from common.src.protocol import WSMessage, MessageType
-        
         try:
             channel = payload.get("channel", ChatChannel.LOCAL.value).lower()
             message = payload.get("message", "").strip()

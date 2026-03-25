@@ -11,6 +11,7 @@ from typing import Optional
 
 # Import enums from schemas to ensure single source of truth with modern str, Enum pattern
 from server.src.schemas.item import EquipmentSlot, ItemRarity, ItemCategory
+from server.src.core.entities import NameLookupEnum
 
 
 class AmmoType(Enum):
@@ -157,7 +158,7 @@ class ItemDefinition:
         return self.max_stack_size > 1
 
 
-class ItemType(Enum):
+class ItemType(NameLookupEnum):
     """
     All items in the game, defined as enum with metadata.
 
@@ -1394,22 +1395,6 @@ class ItemType(Enum):
     # =========================================================================
     # HELPER METHODS
     # =========================================================================
-    @classmethod
-    def from_name(cls, name: str) -> Optional["ItemType"]:
-        """
-        Get ItemType by internal name (case-insensitive).
-
-        Args:
-            name: The item name to look up (e.g., "bronze_sword")
-
-        Returns:
-            The matching ItemType or None if not found
-        """
-        name_upper = name.upper()
-        for item in cls:
-            if item.name == name_upper:
-                return item
-        return None
 
     @classmethod
     def all_item_names(cls) -> list[str]:

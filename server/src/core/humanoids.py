@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, List
 
 from common.src.sprites import AppearanceData, AppearancePresets
-from .entities import EntityBehavior
+from .entities import EntityBehavior, NameLookupEnum
 from .items import EquipmentSlot, ItemType
 from .skills import SkillType
 
@@ -64,10 +64,16 @@ class HumanoidDefinition:
     aggro_radius: int = 0  # Tiles within which entity will chase players
     disengage_radius: int = 0  # Max tiles from spawn before returning
 
+    def __post_init__(self):
+        if SkillType.HITPOINTS not in self.skills:
+            raise ValueError(
+                f"HumanoidDefinition '{self.display_name}' missing required HITPOINTS skill"
+            )
+
     @property
     def max_hp(self) -> int:
         """Calculate max HP from hitpoints skill level."""
-        return self.skills.get(SkillType.HITPOINTS, 10)
+        return self.skills[SkillType.HITPOINTS]
     
     def get_equipment_ids(self) -> Dict[str, Optional[int]]:
         """
@@ -84,7 +90,7 @@ class HumanoidDefinition:
         return result
 
 
-class HumanoidID(Enum):
+class HumanoidID(NameLookupEnum):
     """
     All humanoid NPCs in the game.
 
@@ -174,19 +180,3 @@ class HumanoidID(Enum):
         ],
     )
     
-    @classmethod
-    def from_name(cls, name: str) -> Optional["HumanoidID"]:
-        """
-        Get HumanoidID by internal name (case-insensitive).
-        
-        Args:
-            name: The humanoid name to look up (e.g., "village_guard")
-            
-        Returns:
-            The matching HumanoidID or None if not found
-        """
-        name_upper = name.upper()
-        for humanoid in cls:
-            if humanoid.name == name_upper:
-                return humanoid
-        return None

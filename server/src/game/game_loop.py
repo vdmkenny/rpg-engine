@@ -81,13 +81,14 @@ class GameLoopState:
     
     @property
     def tick_counter(self) -> int:
-        """Get current tick counter (read-only, no lock needed for atomic int read)."""
+        """Get current tick counter (read-only, safe for single-writer async context)."""
         return self._global_tick_counter
-    
-    def increment_tick(self) -> int:
+
+    async def increment_tick(self) -> int:
         """Increment and return new tick counter. Called only from game loop."""
-        self._global_tick_counter += 1
-        return self._global_tick_counter
+        async with self._lock:
+            self._global_tick_counter += 1
+            return self._global_tick_counter
     
     async def get_player_chunk_position(self, player_id: int) -> Optional[Tuple[int, int]]:
         """Get a player's last known chunk position."""
@@ -136,6 +137,7 @@ class GameLoopState:
         async with self._lock:
             self._player_chunk_positions.pop(player_id, None)
             self._player_login_ticks.pop(player_id, None)
+            self._players_dying.discard(player_id)
     
     def track_task(self, task: asyncio.Task) -> None:
         """
@@ -184,11 +186,6 @@ def get_game_loop_state() -> GameLoopState:
     if _game_loop_state is None:
         _game_loop_state = GameLoopState()
     return _game_loop_state
-
-
-def get_chunk_coordinates(x: int, y: int, chunk_size: int = CHUNK_SIZE) -> Tuple[int, int]:
-    """Convert tile coordinates to chunk coordinates."""
-    return (x // chunk_size, y // chunk_size)
 
 
 def is_in_visible_range(
@@ -1021,7 +1018,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
             game_loop_iterations_total.inc()
             
             # Increment global tick counter
-            current_tick = state.increment_tick()
+            current_tick = await state.increment_tick()
 
             # Periodic batch sync of dirty data to database
             if current_tick % db_sync_interval == 0:
@@ -1062,17 +1059,19 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                         },
                     )
 
+            # Snapshot active maps once per tick
+            active_maps = list(manager.connections_by_map.keys())
+
             # Clean up expired ground items periodically
             if current_tick % cleanup_interval == 0:
                 try:
                     from ..services.ground_item_service import GroundItemService
-                    
-                    active_maps = list(manager.connections_by_map.keys())
+
                     total_cleaned = 0
                     for map_id in active_maps:
                         cleaned = await GroundItemService.cleanup_expired_items(map_id)
                         total_cleaned += cleaned
-                    
+
                     if total_cleaned > 0:
                         logger.info(
                             "Cleaned up expired ground items",
@@ -1093,7 +1092,6 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     )
 
             # Process each active map
-            active_maps = list(manager.connections_by_map.keys())
             for map_id in active_maps:
                 map_connections = manager.connections_by_map.get(map_id, {})
                 if not map_connections:
@@ -1110,6 +1108,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                 
                 # Process player data and collect HP regeneration updates
                 all_player_data: List[Dict[str, Any]] = []
+                player_data_by_id: Dict[int, Dict[str, Any]] = {}  # O(1) lookup by player_id
                 player_positions: Dict[int, Tuple[int, int]] = {}  # player_id -> (x, y)
                 hp_updates: List[Tuple[int, int]] = []  # (player_id, new_hp)
                 
@@ -1164,7 +1163,7 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             # Skip this player for this tick - they'll be retried next tick
                             continue
                         
-                        all_player_data.append({
+                        player_entry = {
                             "player_id": player_id,
                             "username": username,  # For display
                             "x": x,
@@ -1174,7 +1173,9 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                             "facing_direction": facing_direction,
                             "visual_hash": visual_hash,
                             "visual_state": visual_state.to_dict(),
-                        })
+                        }
+                        all_player_data.append(player_entry)
+                        player_data_by_id[player_id] = player_entry
                         player_positions[player_id] = (x, y)
 
                 # Execute batch HP regeneration updates via HpService
@@ -1321,24 +1322,23 @@ async def game_loop(manager: ConnectionManager, valkey: GlideClient) -> None:
                     
                     # Add the player's own data (so client can track its own position)
                     own_player_data = None
-                    for entity in all_player_data:
-                        if entity.get("player_id") == player_id:
-                            own_player_data = {
-                                "id": f"player_{player_id}",  # Entity ID for client tracking
-                                "type": "player",
-                                "player_id": player_id,
-                                "username": entity.get("username", ""),  # For display
-                                "x": entity.get("x", player_x),
-                                "y": entity.get("y", player_y),
-                                "current_hp": entity.get("current_hp", 0),
-                                "max_hp": entity.get("max_hp", 0),
-                                "facing_direction": entity.get("facing_direction", "DOWN"),
-                            }
-                            if "visual_hash" in entity:
-                                own_player_data["visual_hash"] = entity["visual_hash"]
-                            if "visual_state" in entity:
-                                own_player_data["visual_state"] = entity["visual_state"]
-                            break
+                    entity = player_data_by_id.get(player_id)
+                    if entity:
+                        own_player_data = {
+                            "id": f"player_{player_id}",  # Entity ID for client tracking
+                            "type": "player",
+                            "player_id": player_id,
+                            "username": entity.get("username", ""),  # For display
+                            "x": entity.get("x", player_x),
+                            "y": entity.get("y", player_y),
+                            "current_hp": entity.get("current_hp", 0),
+                            "max_hp": entity.get("max_hp", 0),
+                            "facing_direction": entity.get("facing_direction", "DOWN"),
+                        }
+                        if "visual_hash" in entity:
+                            own_player_data["visual_hash"] = entity["visual_hash"]
+                        if "visual_state" in entity:
+                            own_player_data["visual_state"] = entity["visual_state"]
                     
                     if own_player_data:
                         combined_visible_entities[f"player_{player_id}"] = own_player_data

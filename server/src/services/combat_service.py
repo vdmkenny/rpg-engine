@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from enum import Enum
 
+from server.src.core.config import game_config
 from server.src.core.logging_config import get_logger
 from server.src.core.skills import SkillType
 from server.src.services.game_state import get_player_state_manager, get_skills_manager, get_equipment_manager, get_entity_manager, get_reference_data_manager
@@ -25,6 +26,7 @@ from server.src.services.skill_service import SkillService
 from server.src.core.entities import get_entity_by_name
 from server.src.core.humanoids import HumanoidDefinition
 from server.src.core.monsters import MonsterDefinition
+from server.src.game.game_loop import get_game_loop_state
 from common.src.protocol import CombatTargetType
 
 logger = get_logger(__name__)
@@ -446,7 +448,6 @@ class CombatService:
             
             # If entity died, mark as dying for death animation
             if defender_died:
-                from server.src.game.game_loop import get_game_loop_state
                 game_state = get_game_loop_state()
                 death_tick = game_state.tick_counter + CombatService.DEATH_ANIMATION_TICKS
                 await entity_mgr.mark_entity_dying(defender_id, death_tick=death_tick, respawn_delay_seconds=30)
@@ -507,9 +508,6 @@ class CombatService:
             
             # If auto-retaliate is on and not already in combat, set combat state to attack back
             if auto_retaliate and not defender_combat_state:
-                from server.src.game.game_loop import get_game_loop_state
-                from server.src.core.config import game_config
-                
                 game_state = get_game_loop_state()
                 
                 # Get defender's weapon attack speed

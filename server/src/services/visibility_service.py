@@ -9,6 +9,7 @@ KEY DESIGN PRINCIPLE:
 - Entity keys use the format "player_{player_id}" or "entity_{instance_id}"
 """
 
+from collections import OrderedDict
 from typing import Dict, Optional, Any
 import asyncio
 from server.src.core.config import settings
@@ -47,7 +48,7 @@ class VisibilityService:
         
         # Per-player visibility cache: player_id -> {entity_key: entity_data}
         # LRU eviction ensures memory stays bounded even with admin over-capacity
-        self._player_visible_cache: Dict[int, Dict[str, Dict[str, Any]]] = {}
+        self._player_visible_cache: OrderedDict[int, Dict[str, Dict[str, Any]]] = OrderedDict()
         
         logger.info(
             "VisibilityService initialized",
@@ -57,14 +58,16 @@ class VisibilityService:
     async def get_player_visible_entities(self, player_id: int) -> Dict[str, Dict[str, Any]]:
         """
         Get currently visible entities for a player.
-        
+
         Args:
             player_id: Player's unique database ID
-            
+
         Returns:
             Dict mapping entity_key to entity data, or empty dict if player not tracked
         """
         async with self._lock:
+            if player_id in self._player_visible_cache:
+                self._player_visible_cache.move_to_end(player_id)
             return self._player_visible_cache.get(player_id, {}).copy()
     
     async def update_player_visible_entities(
@@ -134,8 +137,9 @@ class VisibilityService:
                             }
                         )
             
-            # Update cache with new state
+            # Update cache with new state and mark as recently used
             self._player_visible_cache[player_id] = visible_entities.copy()
+            self._player_visible_cache.move_to_end(player_id)
             
             # Build diff response
             diff = {
