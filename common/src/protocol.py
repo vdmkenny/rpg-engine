@@ -63,6 +63,7 @@ class ErrorCodes(str, Enum):
     SYS_INTERNAL_ERROR = "sys_internal_error"
     SYS_SERVICE_UNAVAILABLE = "sys_service_unavailable"
     SYS_INVALID_MESSAGE = "sys_invalid_message"
+    SYS_RATE_LIMITED = "sys_rate_limited"
 
     # Authentication errors
     AUTH_TOKEN_INVALID = "auth_token_invalid"
@@ -527,6 +528,7 @@ class ChatMessageEventPayload(BaseModel):
     sender: str = Field(..., description="Sender's username")
     message: str = Field(..., max_length=500, description="Message content")
     timestamp: int = Field(..., description="Message timestamp in milliseconds")
+    sender_position: Optional[Dict[str, Any]] = Field(None, description="Sender's position for local chat")
 
 
 class PlayerJoinedEventPayload(BaseModel):
@@ -540,6 +542,7 @@ class PlayerLeftEventPayload(BaseModel):
     """Payload for EVENT_PLAYER_LEFT"""
     player_id: int = Field(..., description="Player's unique ID")
     username: str = Field(..., description="Player's username")
+    reason: Optional[str] = Field(None, description="Disconnect reason")
 
 
 class PlayerDiedEventPayload(BaseModel):
@@ -608,11 +611,18 @@ class PlayerStateUpdate(BaseModel):
 
 
 class StateUpdateEventPayload(BaseModel):
-    """Payload for EVENT_STATE_UPDATE - Mid-frequency state updates (5 TPS)"""
-    timestamp: int = Field(..., description="Server timestamp in milliseconds")
-    sequence: int = Field(..., description="Update sequence number")
-    entities: List[EntityState] = Field(default_factory=list, description="Entity state updates")
-    player: Optional[PlayerStateUpdate] = Field(None, description="Player-specific updates")
+    """Payload for EVENT_STATE_UPDATE - personal or broadcast state updates.
+
+    Two forms:
+    - Personal: {update_type, target, systems} — inventory/equipment/skills pushed to one player
+    - Broadcast: {entities, removed_entities, map_id} — entity list pushed on join
+    """
+    update_type: Optional[str] = Field(None, description="Update type (full or delta)")
+    target: Optional[str] = Field(None, description="Update target (personal or broadcast)")
+    systems: Optional[Dict[str, Any]] = Field(None, description="System data (inventory, equipment, skills)")
+    entities: Optional[List[Dict[str, Any]]] = Field(None, description="Entity state updates for broadcast")
+    removed_entities: Optional[List[Dict[str, Any]]] = Field(None, description="Removed entities")
+    map_id: Optional[str] = Field(None, description="Map ID for broadcast updates")
 
 
 # =============================================================================

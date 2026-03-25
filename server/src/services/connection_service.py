@@ -7,6 +7,7 @@ Handles player connection initialization, disconnection cleanup, and broadcastin
 from typing import Dict, List, Optional, Any
 import traceback
 
+from ..core.config import settings
 from ..core.logging_config import get_logger
 from .game_state import get_player_state_manager
 from .player_service import PlayerService
@@ -75,7 +76,7 @@ class ConnectionService:
 
             # Get nearby players for initial state
             nearby_players = await PlayerService.get_nearby_players(
-                player_id, radius=80
+                player_id, radius=settings.NOTIFY_RADIUS_TILES
             )
 
             initialization_data = {
@@ -129,7 +130,7 @@ class ConnectionService:
         try:
             # Get nearby players to notify
             nearby_players = await PlayerService.get_nearby_players(
-                player_id, radius=80
+                player_id, radius=settings.NOTIFY_RADIUS_TILES
             )
 
             notified_players = []
@@ -181,7 +182,7 @@ class ConnectionService:
 
             # Get nearby players before cleanup for notifications
             nearby_players = await PlayerService.get_nearby_players(
-                player_id, radius=80
+                player_id, radius=settings.NOTIFY_RADIUS_TILES
             )
 
             # Save player state and logout
@@ -339,21 +340,24 @@ class ConnectionService:
 
     @staticmethod
     async def get_existing_players_on_map(
-        map_id: str, exclude_username: str
+        map_id: str, exclude_username: str, connection_manager=None
     ) -> List[Dict[str, Any]]:
         """
         Get data for existing players on a specific map, excluding one player.
-        
+
         Args:
             map_id: Map to get players for
             exclude_username: Username to exclude from results
-            
+            connection_manager: ConnectionManager instance (injected to avoid api layer import)
+
         Returns:
             List of player entity data for broadcasting
         """
         try:
-            from server.src.api.websockets import manager as connection_manager
             from server.src.services.visual_state_service import VisualStateService
+
+            if connection_manager is None:
+                return []
             
             # Use the singleton ConnectionManager from websockets module
             existing_players = []
