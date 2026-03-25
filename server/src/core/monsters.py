@@ -9,7 +9,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional, Dict
 
-from .entities import EntityBehavior
+from .entities import EntityBehavior, NameLookupEnum
 from .skills import SkillType
 
 
@@ -78,13 +78,19 @@ class MonsterDefinition:
     # Movement
     speed_bonus: int = 0
     
+    def __post_init__(self):
+        if SkillType.HITPOINTS not in self.skills:
+            raise ValueError(
+                f"MonsterDefinition '{self.display_name}' missing required HITPOINTS skill"
+            )
+
     @property
     def max_hp(self) -> int:
         """Calculate max HP from hitpoints skill level."""
-        return self.skills.get(SkillType.HITPOINTS, 10)
+        return self.skills[SkillType.HITPOINTS]
 
 
-class MonsterID(Enum):
+class MonsterID(NameLookupEnum):
     """
     All monsters in the game.
 
@@ -139,19 +145,3 @@ class MonsterID(Enum):
         physical_defence_bonus=5,
     )
     
-    @classmethod
-    def from_name(cls, name: str) -> Optional["MonsterID"]:
-        """
-        Get MonsterID by internal name (case-insensitive).
-        
-        Args:
-            name: The monster name to look up (e.g., "goblin")
-            
-        Returns:
-            The matching MonsterID or None if not found
-        """
-        name_upper = name.upper()
-        for monster in cls:
-            if monster.name == name_upper:
-                return monster
-        return None

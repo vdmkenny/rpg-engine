@@ -4,7 +4,6 @@ Appearance command handler mixin.
 Handles player appearance updates (paperdoll customization).
 """
 
-import msgpack
 import traceback
 from typing import Any
 
@@ -18,17 +17,13 @@ from server.src.services.player_service import PlayerService
 
 from common.src.protocol import (
     WSMessage,
-    MessageType,
     ErrorCodes,
     ErrorCategory,
     AppearanceUpdatePayload,
 )
 from common.src.sprites import AppearanceData
-from common.src.websocket_utils import create_event
 
 logger = get_logger(__name__)
-
-BROADCAST_RADIUS_TILES = 32
 
 APPEARANCE_FIELDS = [
     "body_type",
@@ -115,11 +110,10 @@ class AppearanceHandlerMixin:
             await visual_registry.invalidate_player(self.player_id)
 
             # Build full visual state for response and broadcast
-            from server.src.services.visual_state_service import VisualStateService
             visual_data = await VisualStateService.get_player_visual_state(self.player_id)
 
             # Broadcast appearance change to nearby players
-            await self._broadcast_appearance_update()
+            await self._broadcast_visual_update("appearance")
 
             # Send success response with full visual state
             await self._send_success_response(
@@ -244,48 +238,3 @@ class AppearanceHandlerMixin:
         
         return {"valid": True}
 
-    async def _broadcast_appearance_update(self) -> None:
-        """
-        Broadcast appearance change to nearby players.
-
-        This ensures other players see the updated appearance immediately.
-        """
-        try:
-            nearby_players = await PlayerService.get_nearby_players(self.player_id, radius=BROADCAST_RADIUS_TILES)
-
-            if not nearby_players:
-                return
-
-            visual_data = await VisualStateService.get_player_visual_state(self.player_id)
-
-            if not visual_data:
-                logger.warning(
-                    "No visual data available for appearance broadcast",
-                    extra={"player_id": self.player_id}
-                )
-                return
-
-            event_payload = {
-                "player_id": self.player_id,
-                "username": self.username,
-                "visual_hash": visual_data["visual_hash"],
-                "visual_state": visual_data["visual_state"]
-            }
-
-            event_msg = create_event(MessageType.EVENT_APPEARANCE_UPDATE, event_payload)
-
-            message_data = msgpack.packb(event_msg.model_dump())
-
-            nearby_player_ids = [player.player_id for player in nearby_players]
-
-            from server.src.api.websockets import manager as connection_manager
-            await connection_manager.broadcast_to_players(nearby_player_ids, message_data)
-
-        except Exception as e:
-            logger.error(
-                "Failed to broadcast appearance update",
-                extra={
-                    "player_id": self.player_id,
-                    "error": str(e)
-                }
-            )

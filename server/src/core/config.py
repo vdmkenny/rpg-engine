@@ -261,14 +261,20 @@ class Settings(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def validate_jwt_secret(self) -> "Settings":
-        """Ensure JWT secret is changed from default in non-development environments."""
-        default_secret = "your_super_secret_key_change_me"
-        if self.ENVIRONMENT != "development" and self.JWT_SECRET_KEY == default_secret:
-            raise ValueError(
-                "JWT_SECRET_KEY must be changed from default in non-development environments. "
-                "Set the JWT_SECRET_KEY environment variable to a secure random value."
-            )
+    def validate_secrets(self) -> "Settings":
+        """Ensure secrets are changed from defaults in non-development environments."""
+        if self.ENVIRONMENT != "development":
+            default_secret = "your_super_secret_key_change_me"
+            if self.JWT_SECRET_KEY == default_secret:
+                raise ValueError(
+                    "JWT_SECRET_KEY must be changed from default in non-development environments. "
+                    "Set the JWT_SECRET_KEY environment variable to a secure random value."
+                )
+            if "rpgpassword" in self.DATABASE_URL:
+                raise ValueError(
+                    "DATABASE_URL contains default credentials. "
+                    "Set the DATABASE_URL environment variable with proper credentials."
+                )
         return self
 
 

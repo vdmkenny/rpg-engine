@@ -15,6 +15,8 @@ from server.src.core.logging_config import get_logger
 from server.src.core.metrics import metrics
 from server.src.services.inventory_service import InventoryService
 from server.src.services.equipment_service import EquipmentService
+from server.src.services.visual_state_service import VisualStateService
+from server.src.services.player_service import PlayerService
 
 from common.src.protocol import (
     WSMessage,
@@ -23,6 +25,7 @@ from common.src.protocol import (
     ErrorCategory,
     PROTOCOL_VERSION,
 )
+from common.src.websocket_utils import create_event
 
 logger = get_logger(__name__)
 
@@ -215,5 +218,58 @@ class BaseHandlerMixin:
                     "error": str(e),
                     "error_type": type(e).__name__,
                     "traceback": traceback.format_exc()
+                }
+            )
+
+    BROADCAST_RADIUS_TILES = 32
+
+    async def _broadcast_visual_update(self, context: str = "update") -> None:
+        """
+        Broadcast visual state change to nearby players.
+
+        Shared helper for appearance and equipment changes that need to notify
+        nearby players of a visual update.
+
+        Args:
+            context: Description for log messages (e.g. "appearance", "equipment")
+        """
+        try:
+            nearby_players = await PlayerService.get_nearby_players(
+                self.player_id, radius=self.BROADCAST_RADIUS_TILES
+            )
+
+            if not nearby_players:
+                return
+
+            visual_data = await VisualStateService.get_player_visual_state(self.player_id)
+
+            if not visual_data:
+                logger.warning(
+                    f"No visual data available for {context} broadcast",
+                    extra={"player_id": self.player_id}
+                )
+                return
+
+            event_payload = {
+                "player_id": self.player_id,
+                "username": self.username,
+                "visual_hash": visual_data["visual_hash"],
+                "visual_state": visual_data["visual_state"],
+            }
+
+            event_msg = create_event(MessageType.EVENT_APPEARANCE_UPDATE, event_payload)
+            message_data = msgpack.packb(event_msg.model_dump(), use_bin_type=True)
+
+            nearby_player_ids = [player.player_id for player in nearby_players]
+
+            from server.src.api.websockets import manager as connection_manager
+            await connection_manager.broadcast_to_players(nearby_player_ids, message_data)
+
+        except Exception as e:
+            logger.error(
+                f"Failed to broadcast {context} update",
+                extra={
+                    "player_id": self.player_id,
+                    "error": str(e),
                 }
             )

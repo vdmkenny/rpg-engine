@@ -4,7 +4,6 @@ Equipment command handler mixin.
 Handles equipping and unequipping items.
 """
 
-import msgpack
 import traceback
 from typing import Any
 
@@ -15,21 +14,16 @@ from server.src.core.items import EquipmentSlot
 from server.src.services.equipment_service import EquipmentService
 from server.src.services.visual_state_service import VisualStateService
 from server.src.services.visual_registry import visual_registry
-from server.src.services.player_service import PlayerService
 
 from common.src.protocol import (
     WSMessage,
-    MessageType,
     ErrorCodes,
     ErrorCategory,
     ItemEquipPayload,
     ItemUnequipPayload,
 )
-from common.src.websocket_utils import create_event
 
 logger = get_logger(__name__)
-
-BROADCAST_RADIUS_TILES = 32
 
 
 class EquipmentHandlerMixin:
@@ -64,7 +58,7 @@ class EquipmentHandlerMixin:
                 )
 
                 # Broadcast to nearby players so they see the change immediately
-                await self._broadcast_equipment_change()
+                await self._broadcast_visual_update("equipment")
 
                 # Also send equipment state update
                 await self._send_equipment_state_update()
@@ -128,7 +122,7 @@ class EquipmentHandlerMixin:
                 )
 
                 # Broadcast to nearby players so they see the change immediately
-                await self._broadcast_equipment_change()
+                await self._broadcast_visual_update("equipment")
 
                 # Also send equipment state update
                 await self._send_equipment_state_update()
@@ -156,51 +150,5 @@ class EquipmentHandlerMixin:
                 ErrorCodes.SYS_INTERNAL_ERROR,
                 ErrorCategory.SYSTEM,
                 "Item unequip failed"
-            )
-    async def _broadcast_equipment_change(self) -> None:
-        """
-        Broadcast equipment change to nearby players.
-
-        This ensures other players see the equipment change immediately
-        without waiting for the next game loop tick.
-        """
-        try:
-            nearby_players = await PlayerService.get_nearby_players(self.player_id, radius=BROADCAST_RADIUS_TILES)
-
-            if not nearby_players:
-                return
-
-            visual_data = await VisualStateService.get_player_visual_state(self.player_id)
-
-            if not visual_data:
-                logger.warning(
-                    "No visual data available for equipment broadcast",
-                    extra={"player_id": self.player_id}
-                )
-                return
-
-            event_payload = {
-                "player_id": self.player_id,
-                "username": self.username,
-                "visual_hash": visual_data["visual_hash"],
-                "visual_state": visual_data["visual_state"]
-            }
-
-            event_msg = create_event(MessageType.EVENT_APPEARANCE_UPDATE, event_payload)
-
-            message_data = msgpack.packb(event_msg.model_dump())
-
-            nearby_player_ids = [player.player_id for player in nearby_players]
-
-            from server.src.api.websockets import manager as connection_manager
-            await connection_manager.broadcast_to_players(nearby_player_ids, message_data)
-
-        except Exception as e:
-            logger.error(
-                "Failed to broadcast equipment change",
-                extra={
-                    "player_id": self.player_id,
-                    "error": str(e)
-                }
             )
 

@@ -5,6 +5,7 @@ Handles spawning entities from Tiled map object layers and managing
 entity respawn logic.
 """
 
+import time
 import traceback
 from typing import Dict, List, Optional, Set, Tuple, Union
 
@@ -22,6 +23,7 @@ from server.src.services.game_state import (
     EntityManager,
     PlayerStateManager,
     ENTITY_RESPAWN_QUEUE_KEY,
+    get_reference_data_manager,
 )
 from server.src.services.map_service import get_map_manager
 from server.src.services.pathfinding_service import PathfindingService
@@ -127,7 +129,6 @@ class EntitySpawnService:
         disengage_override = spawn_point.get("disengage_override")
         
         # Get the numeric entity_id from the reference data manager
-        from .game_state import get_reference_data_manager
         ref_mgr = get_reference_data_manager()
         entity_id = await ref_mgr.get_entity_id_by_name(entity_id_str)
         if entity_id is None:
@@ -189,7 +190,6 @@ class EntitySpawnService:
             Number of entities respawned
         """
         # Get entities ready to respawn using public API
-        import time
         current_time = time.time()
         ready_to_respawn = await entity_mgr.get_time_based_respawn_queue(current_time)
         

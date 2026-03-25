@@ -197,8 +197,9 @@ class EntityManager(BaseManager):
         instance_id: int,
         state: Union[str, Enum],
         target_player_id: Optional[int] = None,
+        **extra_fields,
     ) -> None:
-        """Set entity state and target."""
+        """Set entity state, target, and any additional fields (e.g. los_lost_at_tick)."""
         if not self._valkey or not settings.USE_VALKEY:
             return
 
@@ -212,6 +213,9 @@ class EntityManager(BaseManager):
             data["state"] = state
             if target_player_id is not None:
                 data["target_player_id"] = target_player_id
+            # Store any additional fields (e.g. los_lost_at_tick, los_lost_position_x/y)
+            for field_key, field_value in extra_fields.items():
+                data[field_key] = field_value
             await self._cache_in_valkey(key, data, ENTITY_TTL)
 
     async def mark_entity_dying(

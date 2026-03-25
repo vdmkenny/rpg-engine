@@ -81,44 +81,44 @@ class CombatHandlerMixin:
                     "Could not determine player position"
                 )
                 return
-            
+
             attacker_hp = await player_mgr.get_player_hp(self.player_id)
             if not attacker_hp or attacker_hp["current_hp"] <= 0:
                 await self._send_error_response(
                     message.id,
-                    ErrorCodes.SYS_INTERNAL_ERROR,
+                    ErrorCodes.COMBAT_PLAYER_DEAD,
                     ErrorCategory.VALIDATION,
                     "You cannot attack while dead"
                 )
                 return
-            
+
             # Validate target
             if payload.target_type == CombatTargetType.ENTITY:
                 entity_id = int(payload.target_id)
                 entity_data = await entity_mgr.get_entity_instance(entity_id)
-                
+
                 if not entity_data:
                     await self._send_error_response(
                         message.id,
-                        ErrorCodes.SYS_INTERNAL_ERROR,
+                        ErrorCodes.COMBAT_TARGET_NOT_FOUND,
                         ErrorCategory.VALIDATION,
                         "Target entity not found"
                     )
                     return
-                
+
                 if not entity_data.get("is_attackable", True):
                     await self._send_error_response(
                         message.id,
-                        ErrorCodes.SYS_INTERNAL_ERROR,
+                        ErrorCodes.COMBAT_TARGET_NOT_ATTACKABLE,
                         ErrorCategory.VALIDATION,
                         "Target cannot be attacked"
                     )
                     return
-                
+
                 if entity_data["map_id"] != attacker_pos["map_id"]:
                     await self._send_error_response(
                         message.id,
-                        ErrorCodes.SYS_INTERNAL_ERROR,
+                        ErrorCodes.COMBAT_TARGET_WRONG_MAP,
                         ErrorCategory.VALIDATION,
                         "Target is not on the same map"
                     )
@@ -133,7 +133,7 @@ class CombatHandlerMixin:
             else:  # player target
                 await self._send_error_response(
                     message.id,
-                    ErrorCodes.SYS_INTERNAL_ERROR,
+                    ErrorCodes.COMBAT_NOT_IMPLEMENTED,
                     ErrorCategory.VALIDATION,
                     "Player vs player combat is not yet implemented"
                 )
@@ -146,7 +146,7 @@ class CombatHandlerMixin:
             if dx > 1 or dy > 1:
                 await self._send_error_response(
                     message.id,
-                    ErrorCodes.SYS_INTERNAL_ERROR,
+                    ErrorCodes.COMBAT_OUT_OF_RANGE,
                     ErrorCategory.VALIDATION,
                     "Target is too far away (must be within 1 tile)",
                     details={
@@ -257,11 +257,11 @@ class CombatHandlerMixin:
             else:
                 await self._send_error_response(
                     message.id,
-                    ErrorCodes.SYS_INTERNAL_ERROR,
+                    ErrorCodes.COMBAT_FAILED,
                     ErrorCategory.VALIDATION,
                     result.error or "Attack failed"
                 )
-                
+
         except ValidationError as e:
             logger.debug(
                 "Attack command validation failed",
@@ -269,7 +269,7 @@ class CombatHandlerMixin:
             )
             await self._send_error_response(
                 message.id,
-                ErrorCodes.SYS_INTERNAL_ERROR,
+                ErrorCodes.COMBAT_INVALID_COMMAND,
                 ErrorCategory.VALIDATION,
                 "Invalid attack command"
             )
@@ -319,7 +319,7 @@ class CombatHandlerMixin:
             )
             await self._send_error_response(
                 message.id,
-                ErrorCodes.SYS_INTERNAL_ERROR,
+                ErrorCodes.COMBAT_INVALID_COMMAND,
                 ErrorCategory.VALIDATION,
                 "Invalid toggle command"
             )

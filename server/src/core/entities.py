@@ -13,6 +13,22 @@ if TYPE_CHECKING:
     from .monsters import MonsterID, MonsterDefinition
 
 
+_name_lookup_cache: dict = {}
+
+
+class NameLookupEnum(Enum):
+    """Mixin providing case-insensitive lookup by enum member name."""
+
+    @classmethod
+    def from_name(cls, name: str) -> Optional["NameLookupEnum"]:
+        """Get enum member by name (case-insensitive)."""
+        if cls not in _name_lookup_cache:
+            _name_lookup_cache[cls] = {
+                member.name.upper(): member for member in cls
+            }
+        return _name_lookup_cache[cls].get(name.upper())
+
+
 class EntityBehavior(Enum):
     """
     Defines the AI behavior pattern for an entity.

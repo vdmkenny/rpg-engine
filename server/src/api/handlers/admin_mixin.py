@@ -202,12 +202,18 @@ class AdminHandlerMixin:
             packed = msgpack.packb(state_update.model_dump(), use_bin_type=True)
             await manager.send_personal_message(target_player_id, packed)
 
-        except Exception as e:
-            # Target may be offline — this is expected and not an error
+        except ConnectionError:
+            # Target player is offline — expected, their inventory will sync on reconnect
             logger.debug(
-                "Could not send inventory update to target player",
+                "Target player offline for inventory update",
+                extra={"target_player_id": target_player_id},
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to send inventory update to target player",
                 extra={
                     "target_player_id": target_player_id,
                     "error": str(e),
+                    "error_type": type(e).__name__,
                 },
             )
