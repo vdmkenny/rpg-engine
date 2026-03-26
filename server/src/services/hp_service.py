@@ -237,7 +237,7 @@ class HpService:
         new_hp: int,
     ) -> Tuple[int, int]:
         """
-        Set player HP to a specific value.
+        Set player HP to a specific value, clamped to [0, max_hp].
 
         Args:
             player_id: Player's database ID
@@ -246,10 +246,13 @@ class HpService:
         Returns:
             Tuple of (new_hp, max_hp)
         """
-        _, max_hp = await HpService.get_hp(player_id)
-        new_hp = max(0, min(new_hp, max_hp))
-        await HpService.set_hp(player_id, new_hp)
-        return new_hp, max_hp
+        async with get_player_lock_manager().acquire_player_lock(
+            player_id, LockType.HP, "set_hp_value"
+        ):
+            _, max_hp = await HpService.get_hp(player_id)
+            new_hp = max(0, min(new_hp, max_hp))
+            await HpService.set_hp(player_id, new_hp)
+            return new_hp, max_hp
 
     @staticmethod
     async def handle_death(
@@ -488,8 +491,10 @@ class HpService:
             try:
                 await player_mgr.set_player_hp(player_id, new_hp)
                 updated += 1
-            except Exception:
-                # Silently skip failed updates to avoid disrupting game loop
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Failed to update HP during batch regeneration",
+                    extra={"player_id": player_id, "new_hp": new_hp, "error": str(e)}
+                )
         
         return updated

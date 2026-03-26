@@ -38,11 +38,12 @@ _entity_timers: Dict[int, Dict[str, Any]] = {}
 def reset_all_ai_timers() -> None:
     """
     Reset all entity timer state.
-    
+
     Called on server startup to clear stale state, or during tests.
+    Uses .clear() to preserve the dict identity so that code which
+    imported the reference (e.g. tests) sees the same object.
     """
-    global _entity_timers
-    _entity_timers = {}
+    _entity_timers.clear()
 
 
 @dataclass

@@ -151,75 +151,56 @@ class BaseHandlerMixin:
             )
             raise
     
-    async def _send_inventory_state_update(self) -> None:
-        """Send personal inventory state update event."""
+    async def _send_state_update(self, systems: dict) -> None:
+        """Send a personal state update event with the given system data.
+
+        Args:
+            systems: Dict of system name → serialized data, e.g.
+                     {"inventory": inv.model_dump(), "equipment": eq.model_dump()}
+        """
         try:
-            from server.src.schemas.item import InventoryData
-            inventory_data = await InventoryService.get_inventory(self.player_id)
-            
             state_update = WSMessage(
                 id=None,
                 type=MessageType.EVENT_STATE_UPDATE,
                 payload={
                     "update_type": "full",
                     "target": "personal",
-                    "systems": {
-                        "inventory": inventory_data.model_dump()
-                    }
+                    "systems": systems
                 },
                 version=PROTOCOL_VERSION
             )
             await self._send_message(state_update)
-            
+
         except Exception as e:
             logger.error(
-                "Error sending inventory state update",
+                "Error sending state update",
                 extra={
                     "username": self.username,
+                    "systems": list(systems.keys()),
                     "error": str(e),
                     "error_type": type(e).__name__,
                     "traceback": traceback.format_exc()
                 }
             )
-    
+
+    async def _send_inventory_state_update(self) -> None:
+        """Send personal inventory state update event."""
+        inventory_data = await InventoryService.get_inventory(self.player_id)
+        await self._send_state_update({"inventory": inventory_data.model_dump()})
+
     async def _send_equipment_state_update(self) -> None:
-        """
-        Send consolidated equipment state update (inventory + equipment).
-        
+        """Send consolidated equipment state update (inventory + equipment).
+
         Equipment bonuses are included in EquipmentData.total_stats.
         Does NOT send player-level stats (combat_level, skills, etc.) which are
         managed separately via _send_player_stats_update().
         """
-        try:
-            from server.src.schemas.item import InventoryData, EquipmentData
-            inventory_data = await InventoryService.get_inventory(self.player_id)
-            equipment_data = await EquipmentService.get_equipment(self.player_id)
-            
-            state_update = WSMessage(
-                id=None,
-                type=MessageType.EVENT_STATE_UPDATE,
-                payload={
-                    "update_type": "full",
-                    "target": "personal",
-                    "systems": {
-                        "inventory": inventory_data.model_dump(),
-                        "equipment": equipment_data.model_dump()
-                    }
-                },
-                version=PROTOCOL_VERSION
-            )
-            await self._send_message(state_update)
-            
-        except Exception as e:
-            logger.error(
-                "Error sending equipment state update",
-                extra={
-                    "username": self.username,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "traceback": traceback.format_exc()
-                }
-            )
+        inventory_data = await InventoryService.get_inventory(self.player_id)
+        equipment_data = await EquipmentService.get_equipment(self.player_id)
+        await self._send_state_update({
+            "inventory": inventory_data.model_dump(),
+            "equipment": equipment_data.model_dump()
+        })
 
     BROADCAST_RADIUS_TILES = 32
 

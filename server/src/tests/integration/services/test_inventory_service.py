@@ -376,7 +376,7 @@ class TestSortInventory:
             names.append(item.display_name)
 
         assert names[0] == "Bronze Arrows"
-        assert names[1] == "Bronze Sword"
+        assert names[1] == "Bronze Shortsword"
 
     @pytest.mark.asyncio
     async def test_sort_compacts_items(
@@ -527,7 +527,7 @@ class TestInventoryResponse:
 
         slot_info = response.slots[0]
         assert slot_info.item is not None
-        assert slot_info.item.display_name == "Bronze Sword"
+        assert slot_info.item.display_name == "Bronze Shortsword"
         assert slot_info.quantity == 1
 
 

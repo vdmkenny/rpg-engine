@@ -54,11 +54,9 @@ from server.src.schemas.item import EquipmentData
 
 logger = get_logger(__name__)
 
-# Default chunk size in tiles
-CHUNK_SIZE = 16
-
-# Visibility radius in chunks (1 = 3x3 grid of chunks around player)
-VISIBILITY_RADIUS = 1
+# World constants from config
+CHUNK_SIZE = settings.CHUNK_SIZE
+VISIBILITY_RADIUS = settings.VISIBILITY_RADIUS_CHUNKS
 
 
 class GameLoopState:

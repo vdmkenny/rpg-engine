@@ -6,6 +6,9 @@ from fastapi.security import OAuth2PasswordRequestForm
 
 from server.src.core.logging_config import get_logger
 from server.src.core.config import settings
+from server.src.core.exceptions import (
+    DuplicatePlayerError, ServiceError, PlayerBannedError, PlayerTimedOutError
+)
 from server.src.core.metrics import (
     metrics,
     players_registered_total,
@@ -62,9 +65,22 @@ async def register_player(*, player_in: PlayerCreate):
 
         return db_player
 
-    except HTTPException:
-        # Re-raise HTTP exceptions from service layer
-        raise
+    except DuplicatePlayerError:
+        metrics.track_auth_attempt("register", "failure")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A player with this username already exists.",
+        )
+    except ServiceError as e:
+        logger.error(
+            "Service error during player registration",
+            extra={"username": player_in.username, "error": str(e)}
+        )
+        metrics.track_auth_attempt("register", "failure")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create player.",
+        )
     except Exception as e:
         logger.error(
             "Unexpected error during player registration",
@@ -93,25 +109,23 @@ async def login_for_access_token(
         player = await AuthenticationService.authenticate_with_password(
             form_data.username, form_data.password
         )
-    except PermissionError:
-        # Player is banned
+    except PlayerBannedError:
         logger.warning(
             "Login attempt failed - banned user",
             extra={"username": form_data.username, "reason": "banned"},
         )
-        metrics.track_auth_attempt("login", "failure") 
+        metrics.track_auth_attempt("login", "failure")
         metrics.track_auth_failure("banned")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is banned",
         )
-    except ValueError as e:
-        # Player is timed out
+    except PlayerTimedOutError as e:
         logger.warning(
             "Login attempt failed - timed out user",
             extra={"username": form_data.username, "reason": "timeout"},
         )
-        metrics.track_auth_attempt("login", "failure") 
+        metrics.track_auth_attempt("login", "failure")
         metrics.track_auth_failure("timeout")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

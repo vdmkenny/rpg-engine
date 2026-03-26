@@ -164,7 +164,7 @@ class WebSocketHandler(
         if retry_after is not None:
             await self._send_error_response(
                 message.id,
-                ErrorCodes.MOVE_RATE_LIMITED,
+                ErrorCodes.SYS_RATE_LIMITED,
                 ErrorCategory.RATE_LIMIT,
                 "Rate limit exceeded - please slow down",
                 retry_after=retry_after

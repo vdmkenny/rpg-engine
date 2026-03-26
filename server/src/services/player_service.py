@@ -6,9 +6,9 @@ Returns Pydantic models throughout for type safety.
 """
 
 from typing import Optional, List
-from fastapi import HTTPException, status
 
 from ..core.config import settings
+from ..core.exceptions import DuplicatePlayerError, ServiceError
 from ..core.security import get_password_hash
 from ..core.skills import HITPOINTS_START_LEVEL
 from ..schemas.player import (
@@ -48,7 +48,8 @@ class PlayerService:
             PlayerData Pydantic model with player information
 
         Raises:
-            HTTPException: If username already exists
+            DuplicatePlayerError: If username already exists
+            ServiceError: If player creation fails
         """
         from sqlalchemy.exc import IntegrityError
         
@@ -59,10 +60,7 @@ class PlayerService:
             
             # Check if username already exists
             if await player_mgr.username_exists(player_data.username):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="A player with this username already exists.",
-                )
+                raise DuplicatePlayerError(player_data.username)
             
             # Create player record via manager
             final_x = x if x is not None else settings.DEFAULT_SPAWN_X
@@ -109,11 +107,8 @@ class PlayerService:
                 "Player creation failed - duplicate username",
                 extra={"username": player_data.username}
             )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A player with this username already exists.",
-            )
-        except HTTPException:
+            raise DuplicatePlayerError(player_data.username)
+        except DuplicatePlayerError:
             raise
         except Exception as e:
             logger.error(
@@ -125,10 +120,7 @@ class PlayerService:
                 },
                 exc_info=True
             )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create player.",
-            )
+            raise ServiceError(f"Failed to create player: {e}")
 
     @staticmethod
     async def get_player_by_username(username: str) -> Optional[PlayerData]:

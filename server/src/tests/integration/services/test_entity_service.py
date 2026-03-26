@@ -26,6 +26,7 @@ class TestMonsterDefToDict:
             display_name="Test Monster",
             description="A test monster for unit testing",
             behavior=EntityBehavior.AGGRESSIVE,
+            skills={SkillType.HITPOINTS: 10},
         )
         
         result = EntityService.entity_def_to_dict("TEST_MONSTER", monster_def)
@@ -44,6 +45,7 @@ class TestMonsterDefToDict:
                 display_name="Test",
                 description="Test",
                 behavior=behavior,
+                skills={SkillType.HITPOINTS: 10},
             )
             
             result = EntityService.entity_def_to_dict("TEST", monster_def)
@@ -76,6 +78,7 @@ class TestMonsterDefToDict:
             display_name="Strong Monster",
             description="Has stat bonuses",
             behavior=EntityBehavior.AGGRESSIVE,
+            skills={SkillType.HITPOINTS: 10},
             attack_bonus=10,
             strength_bonus=15,
             ranged_attack_bonus=5,
@@ -105,6 +108,7 @@ class TestMonsterDefToDict:
             display_name="Big Monster",
             description="A large monster",
             behavior=EntityBehavior.NEUTRAL,
+            skills={SkillType.HITPOINTS: 10},
             sprite_sheet_id="big_monster",
             width=2,
             height=3,
@@ -124,6 +128,7 @@ class TestMonsterDefToDict:
             display_name="Boss Monster",
             description="A powerful boss",
             behavior=EntityBehavior.AGGRESSIVE,
+            skills={SkillType.HITPOINTS: 100},
             level=50,
             xp_reward=1000,
             aggro_radius=10,
@@ -152,18 +157,15 @@ class TestMonsterDefToDict:
         
         assert result["max_hp"] == 75
 
-    def test_default_max_hp_when_no_hitpoints_skill(self):
-        """Test default max_hp when hitpoints skill is not defined."""
-        monster_def = MonsterDefinition(
-            display_name="Default HP Monster",
-            description="No HP skill",
-            behavior=EntityBehavior.PASSIVE,
-            skills={},
-        )
-        
-        result = EntityService.entity_def_to_dict("DEFAULT_HP_MONSTER", monster_def)
-        
-        assert result["max_hp"] == 10
+    def test_raises_when_no_hitpoints_skill(self):
+        """Test that MonsterDefinition requires HITPOINTS skill."""
+        with pytest.raises(ValueError, match="missing required HITPOINTS skill"):
+            MonsterDefinition(
+                display_name="Default HP Monster",
+                description="No HP skill",
+                behavior=EntityBehavior.PASSIVE,
+                skills={},
+            )
 
 
 class TestHumanoidDefToDict:
@@ -176,6 +178,7 @@ class TestHumanoidDefToDict:
             description="A test NPC for unit testing",
             behavior=EntityBehavior.MERCHANT,
             is_attackable=False,
+            skills={SkillType.HITPOINTS: 10},
         )
         
         result = EntityService.entity_def_to_dict("TEST_NPC", humanoid_def)
@@ -199,6 +202,7 @@ class TestHumanoidDefToDict:
             display_name="Styled NPC",
             description="Has custom appearance",
             behavior=EntityBehavior.QUEST_GIVER,
+            skills={SkillType.HITPOINTS: 10},
             appearance=appearance,
         )
         
@@ -216,6 +220,7 @@ class TestHumanoidDefToDict:
             display_name="Armed Guard",
             description="Has equipment",
             behavior=EntityBehavior.GUARD,
+            skills={SkillType.HITPOINTS: 30},
             equipped_items={
                 EquipmentSlot.WEAPON: ItemType.IRON_SHORTSWORD,
                 EquipmentSlot.BODY: ItemType.BRONZE_PLATEBODY,
@@ -233,6 +238,7 @@ class TestHumanoidDefToDict:
             display_name="Talkative NPC",
             description="Has dialogue",
             behavior=EntityBehavior.QUEST_GIVER,
+            skills={SkillType.HITPOINTS: 10},
             dialogue=["Hello, traveler!", "I have a quest for you."],
         )
         
@@ -246,6 +252,7 @@ class TestHumanoidDefToDict:
             display_name="Shopkeeper",
             description="Runs a shop",
             behavior=EntityBehavior.MERCHANT,
+            skills={SkillType.HITPOINTS: 10},
             shop_id="weapon_shop",
         )
         

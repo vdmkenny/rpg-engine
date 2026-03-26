@@ -123,7 +123,7 @@ RESTRICTIONS: Dict[str, Dict[str, Any]] = {
         "shirt_style_filter": {
             "robe": [
                 "black", "blue", "brown", "dark_brown", "dark_gray",
-                "forest_green", "light_gray", "purple", "red", "white", "_brown"
+                "forest_green", "light_gray", "purple", "red", "white"
             ]
         }
     },
