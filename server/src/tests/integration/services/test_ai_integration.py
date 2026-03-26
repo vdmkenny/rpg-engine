@@ -21,7 +21,16 @@ from unittest.mock import patch, MagicMock, AsyncMock
 from server.src.services.ai_service import AIService, _entity_timers
 from server.src.services.entity_spawn_service import EntitySpawnService
 from server.src.core.entities import EntityState, EntityBehavior, EntityType
+from server.src.schemas.player import NearbyPlayer, Direction, AnimationState
 from server.src.services.game_state import get_entity_manager, get_reference_data_manager
+
+
+def _make_player(player_id: int, username: str, x: int, y: int) -> NearbyPlayer:
+    """Helper to create NearbyPlayer for tests."""
+    return NearbyPlayer(
+        player_id=player_id, username=username, x=x, y=y,
+        direction=Direction.SOUTH, animation_state=AnimationState.IDLE,
+    )
 
 
 # =============================================================================
@@ -309,7 +318,7 @@ class TestAggroIntegration:
         
         # Entity at (50, 50), player nearby at (55, 50) - distance 5, within aggro 10
         nearby_player = [
-            {"player_id": 100, "username": "test_player", "x": 55, "y": 50}
+            _make_player(100, "test_player", 55, 50)
         ]
         
         _entity_timers[instance_id] = {
@@ -354,7 +363,7 @@ class TestAggroIntegration:
         
         # Entity at (50, 50), player far at (70, 50) - distance 20, outside aggro 10
         distant_player = [
-            {"player_id": 100, "username": "test_player", "x": 70, "y": 50}
+            _make_player(100, "test_player", 70, 50)
         ]
         
         _entity_timers[instance_id] = {
@@ -410,7 +419,7 @@ class TestCombatIntegration:
         )
         
         player = [
-            {"player_id": 100, "username": "test_player", "x": 55, "y": 50}
+            _make_player(100, "test_player", 55, 50)
         ]
         
         _entity_timers[instance_id] = {
@@ -507,7 +516,7 @@ class TestCombatIntegration:
         
         # Player is 30 tiles from spawn (50, 50) - beyond disengage_radius of 20
         far_player = [
-            {"player_id": 100, "username": "test_player", "x": 80, "y": 50}
+            _make_player(100, "test_player", 80, 50)
         ]
         
         _entity_timers[instance_id] = {
@@ -665,7 +674,7 @@ class TestFullStateMachineCycle:
         }
         
         nearby_player = [
-            {"player_id": 100, "username": "test_player", "x": 55, "y": 50}
+            _make_player(100, "test_player", 55, 50)
         ]
         
         with patch("server.src.services.ai_service.settings") as mock_settings:

@@ -70,19 +70,18 @@ class TestCombatServiceIntegration:
 
         equip_mgr = get_equipment_manager()
         ref_mgr = get_reference_data_manager()
-        wooden_sword = ref_mgr.get_cached_item_by_name("WOODEN_SWORD")
-        bronze_chestplate = ref_mgr.get_cached_item_by_name("BRONZE_CHESTPLATE")
-        wooden_sword_id = wooden_sword["id"] if wooden_sword else 1
-        bronze_chestplate_id = bronze_chestplate["id"] if bronze_chestplate else 2
-        await equip_mgr.set_equipment_slot(player.id, "weapon", wooden_sword_id, 1, 1.0)
-        await equip_mgr.set_equipment_slot(player.id, "chest", bronze_chestplate_id, 1, 1.0)
+        copper_dagger = ref_mgr.get_cached_item_by_name("COPPER_DAGGER")
+        copper_platebody = ref_mgr.get_cached_item_by_name("COPPER_PLATEBODY")
+        assert copper_dagger is not None, "COPPER_DAGGER not found in item cache"
+        assert copper_platebody is not None, "COPPER_PLATEBODY not found in item cache"
+        await equip_mgr.set_equipment_slot(player.id, "weapon", copper_dagger["id"], 1, 1.0)
+        await equip_mgr.set_equipment_slot(player.id, "chest", copper_platebody["id"], 1, 1.0)
 
         stats = await CombatService.get_player_combat_stats(player.id)
 
         assert stats is not None
         assert stats.attack_bonus > 0
         assert stats.strength_bonus > 0
-        assert stats.defence_bonus == 0  # Bronze chestplate has no defence bonus in current data
 
     async def test_get_player_combat_stats_not_found(self, game_state_managers):
         """Test fetching stats for non-existent player returns None"""
@@ -277,9 +276,9 @@ class TestCombatServiceIntegration:
         initial_attack_skill = await skills_mgr.get_skill(player.id, "attack")
         initial_strength_skill = await skills_mgr.get_skill(player.id, "strength")
         initial_hp_skill = await skills_mgr.get_skill(player.id, "hitpoints")
-        initial_attack_xp = initial_attack_skill.get("experience", 0) if initial_attack_skill else 0
-        initial_strength_xp = initial_strength_skill.get("experience", 0) if initial_strength_skill else 0
-        initial_hp_xp = initial_hp_skill.get("experience", 0) if initial_hp_skill else 0
+        initial_attack_xp = initial_attack_skill.get("xp", 0) if initial_attack_skill else 0
+        initial_strength_xp = initial_strength_skill.get("xp", 0) if initial_strength_skill else 0
+        initial_hp_xp = initial_hp_skill.get("xp", 0) if initial_hp_skill else 0
 
         entity_mgr = get_entity_manager()
         ref_mgr = get_reference_data_manager()
@@ -309,9 +308,9 @@ class TestCombatServiceIntegration:
                 final_attack_skill = await skills_mgr.get_skill(player.id, "attack")
                 final_strength_skill = await skills_mgr.get_skill(player.id, "strength")
                 final_hp_skill = await skills_mgr.get_skill(player.id, "hitpoints")
-                final_attack_xp = final_attack_skill.get("experience", 0) if final_attack_skill else 0
-                final_strength_xp = final_strength_skill.get("experience", 0) if final_strength_skill else 0
-                final_hp_xp = final_hp_skill.get("experience", 0) if final_hp_skill else 0
+                final_attack_xp = final_attack_skill.get("xp", 0) if final_attack_skill else 0
+                final_strength_xp = final_strength_skill.get("xp", 0) if final_strength_skill else 0
+                final_hp_xp = final_hp_skill.get("xp", 0) if final_hp_skill else 0
 
                 assert final_attack_xp > initial_attack_xp
                 assert final_strength_xp > initial_strength_xp

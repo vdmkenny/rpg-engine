@@ -398,7 +398,7 @@ class TestBuildEquippedItemsMap:
         )
         
         class MockGSM:
-            def get_item_meta(self, item_id):
+            def get_cached_item_meta(self, item_id):
                 return {"name": "test_item"}
         
         result = _build_equipped_items_map(equipment, MockGSM())
@@ -437,12 +437,15 @@ class TestBuildEquippedItemsMap:
         )
         
         class MockGSM:
-            def get_item_meta(self, item_id):
-                items = {1: {"name": "bronze_shortsword"}, 2: {"name": "wooden_shield"}}
+            def get_cached_item_meta(self, item_id):
+                items = {
+                    1: {"equipped_sprite_id": "equip_bronze_shortsword"},
+                    2: {"equipped_sprite_id": "equip_wooden_shield"},
+                }
                 return items.get(item_id)
-            
+
         result = _build_equipped_items_map(equipment, MockGSM())
-        assert result == {"weapon": "bronze_shortsword", "shield": "wooden_shield"}
+        assert result == {"weapon": "equip_bronze_shortsword", "shield": "equip_wooden_shield"}
     
     def test_equipment_with_uncached_item(self):
         """Test equipment with item not in cache is skipped."""
@@ -477,9 +480,9 @@ class TestBuildEquippedItemsMap:
         )
         
         class MockGSM:
-            def get_item_meta(self, item_id):
-                items = {1: {"name": "bronze_shortsword"}}
+            def get_cached_item_meta(self, item_id):
+                items = {1: {"equipped_sprite_id": "equip_bronze_shortsword"}}
                 return items.get(item_id)
-        
+
         result = _build_equipped_items_map(equipment, MockGSM())
-        assert result == {"weapon": "bronze_shortsword"}
+        assert result == {"weapon": "equip_bronze_shortsword"}
