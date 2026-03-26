@@ -19,6 +19,7 @@ from typing import Dict, Any
 
 from server.src.services.authentication_service import AuthenticationService
 from server.src.core.security import create_access_token, get_password_hash
+from server.src.core.exceptions import PlayerBannedError, PlayerTimedOutError
 from server.src.models.player import Player
 
 
@@ -70,11 +71,11 @@ class TestAuthenticateWithPassword:
     async def test_authenticate_with_password_banned_player(
         self, game_state_managers, create_test_player, set_player_banned
     ):
-        """Test authentication raises PermissionError for banned players."""
+        """Test authentication raises PlayerBannedError for banned players."""
         await create_test_player("banned_user", "password123")
         await set_player_banned("banned_user")
-        
-        with pytest.raises(PermissionError, match="Player is banned"):
+
+        with pytest.raises(PlayerBannedError):
             await AuthenticationService.authenticate_with_password(
                 "banned_user", "password123"
             )
@@ -83,12 +84,12 @@ class TestAuthenticateWithPassword:
     async def test_authenticate_with_password_timed_out_player(
         self, game_state_managers, create_test_player, set_player_timeout
     ):
-        """Test authentication raises ValueError for timed out players."""
+        """Test authentication raises PlayerTimedOutError for timed out players."""
         await create_test_player("timeout_user", "password123")
         # Set timeout for 1 hour in the future
         await set_player_timeout("timeout_user", timedelta(hours=1))
-        
-        with pytest.raises(ValueError, match="Player is timed out until"):
+
+        with pytest.raises(PlayerTimedOutError):
             await AuthenticationService.authenticate_with_password(
                 "timeout_user", "password123"
             )

@@ -6,7 +6,9 @@ from fastapi.security import OAuth2PasswordRequestForm
 
 from server.src.core.logging_config import get_logger
 from server.src.core.config import settings
-from server.src.core.exceptions import DuplicatePlayerError, ServiceError
+from server.src.core.exceptions import (
+    DuplicatePlayerError, ServiceError, PlayerBannedError, PlayerTimedOutError
+)
 from server.src.core.metrics import (
     metrics,
     players_registered_total,
@@ -107,25 +109,23 @@ async def login_for_access_token(
         player = await AuthenticationService.authenticate_with_password(
             form_data.username, form_data.password
         )
-    except PermissionError:
-        # Player is banned
+    except PlayerBannedError:
         logger.warning(
             "Login attempt failed - banned user",
             extra={"username": form_data.username, "reason": "banned"},
         )
-        metrics.track_auth_attempt("login", "failure") 
+        metrics.track_auth_attempt("login", "failure")
         metrics.track_auth_failure("banned")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is banned",
         )
-    except ValueError as e:
-        # Player is timed out
+    except PlayerTimedOutError as e:
         logger.warning(
             "Login attempt failed - timed out user",
             extra={"username": form_data.username, "reason": "timeout"},
         )
-        metrics.track_auth_attempt("login", "failure") 
+        metrics.track_auth_attempt("login", "failure")
         metrics.track_auth_failure("timeout")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -304,22 +304,3 @@ class SkillService:
         skills = await skills_mgr.get_all_skills(player_id)
         return sum(skill_data.get("level", 1) for skill_data in skills.values())
 
-    @staticmethod
-    async def get_hitpoints_level(player_id: int) -> int:
-        """
-        Get the player's Hitpoints skill level.
-
-        Args:
-            player_id: The player's database ID
-
-        Returns:
-            Hitpoints level, or 10 if not found
-        """
-        from server.src.services.game_state import get_skills_manager
-
-        skills_mgr = get_skills_manager()
-        skill_data = await skills_mgr.get_skill(player_id, "hitpoints")
-
-        if skill_data:
-            return skill_data.get("level", 10)
-        return 10

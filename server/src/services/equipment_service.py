@@ -231,12 +231,13 @@ class EquipmentService:
             return -1  # No adjustment needed
 
         from .hp_service import HpService
-        
-        # Get current HP for player
-        current_hp, max_hp = await HpService.get_hp(player_id)
-        new_hp = current_hp + health_bonus
-        
-        # Update player's current HP
+
+        # Get current HP and compute new max (includes this item's bonus)
+        new_max_hp = await EquipmentService.get_max_hp(player_id)
+        current_hp, _ = await HpService.get_hp(player_id)
+        new_hp = min(current_hp + health_bonus, new_max_hp)
+
+        # Update player's current HP (capped at new max)
         await HpService.set_hp(player_id, new_hp)
 
         logger.info(
