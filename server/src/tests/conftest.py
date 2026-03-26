@@ -479,11 +479,13 @@ def setup_worker_database():
     Each worker gets its own database to eliminate race conditions and enable true 
     parallel test execution. Databases are auto-cleaned up after session completion.
     """
-    worker_id = get_worker_id()
+    # Use the module-level WORKER_ID so the DB name matches TEST_DATABASE_URL.
+    # Calling get_worker_id() again would generate a different timestamp.
+    worker_id = WORKER_ID
     worker_db_name = f"rpg_test_worker_{worker_id}"
-    
+
     logger.info(f"Setting up worker database: {worker_db_name} (worker: {worker_id})")
-    
+
     # Set the DATABASE_URL environment variable for this worker
     worker_db_url = get_worker_database_url(worker_id)
     sync_worker_db_url = get_sync_worker_database_url(worker_id) 

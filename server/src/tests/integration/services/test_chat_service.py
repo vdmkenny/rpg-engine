@@ -139,7 +139,7 @@ class TestPermissionSystem:
         
         assert result["valid"] is False
         assert "permission" in result["error_message"].lower()
-        assert result["system_message"]["username"] == "System"
+        assert result["system_message"]["sender"] == "System"
         assert "permission" in result["system_message"]["message"].lower()
 
     @pytest.mark.asyncio
@@ -184,7 +184,7 @@ class TestPermissionSystem:
             
             assert result["valid"] is False
             assert result["reason"] == "Permission denied"
-            assert result["system_message"]["username"] == "System"
+            assert result["system_message"]["sender"] == "System"
 
 
 class TestSystemMessages:
@@ -194,17 +194,17 @@ class TestSystemMessages:
         """System error message should have correct default format."""
         message = ChatService.create_system_error_message("Test error")
         
-        assert message["username"] == "System"
+        assert message["sender"] == "System"
         assert message["message"] == "Test error"
         assert message["channel"] == "system"
         assert "timestamp" in message
-        assert isinstance(message["timestamp"], float)
+        assert isinstance(message["timestamp"], int)
 
     def test_create_system_error_message_custom_channel(self):
         """System error message should accept custom channel."""
         message = ChatService.create_system_error_message("Test error", "error")
-        
-        assert message["username"] == "System"
+
+        assert message["sender"] == "System"
         assert message["message"] == "Test error"
         assert message["channel"] == "error"
         assert "timestamp" in message

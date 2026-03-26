@@ -10,7 +10,7 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Dict, Any, List, Set, Tuple
 
-from server.src.services.ai_service import AIService
+from server.src.services.ai_service import AIService, _entity_timers
 from server.src.core.entities import EntityBehavior, EntityState
 from server.src.core.monsters import MonsterDefinition
 from server.src.services.game_state import get_entity_manager, get_player_state_manager
@@ -95,13 +95,13 @@ class TestTimerManagement:
 
     def test_cleanup_entity_timers(self):
         """Test that cleanup_entity_timers removes timer state."""
-        AIService._entity_timers[123] = {"idle_timer": 50}
-        AIService._entity_timers[456] = {"idle_timer": 30}
+        _entity_timers[123] = {"idle_timer": 50}
+        _entity_timers[456] = {"idle_timer": 30}
         
         AIService.cleanup_entity_timers(123)
         
-        assert 123 not in AIService._entity_timers
-        assert 456 in AIService._entity_timers
+        assert 123 not in _entity_timers
+        assert 456 in _entity_timers
 
     def test_cleanup_nonexistent_entity(self):
         """Test that cleanup of nonexistent entity doesn't raise."""
@@ -109,13 +109,13 @@ class TestTimerManagement:
 
     def test_reset_all_timers(self):
         """Test that reset_all_timers clears all state."""
-        AIService._entity_timers[1] = {"idle_timer": 10}
-        AIService._entity_timers[2] = {"idle_timer": 20}
-        AIService._entity_timers[3] = {"idle_timer": 30}
+        _entity_timers[1] = {"idle_timer": 10}
+        _entity_timers[2] = {"idle_timer": 20}
+        _entity_timers[3] = {"idle_timer": 30}
         
         AIService.reset_all_timers()
         
-        assert len(AIService._entity_timers) == 0
+        assert len(_entity_timers) == 0
 
 
 class TestAggroDetection:
@@ -802,9 +802,9 @@ class TestClearEntitiesTargetingPlayer:
         entity_manager = get_entity_manager()
         
         # Set up timer state for entities
-        AIService._entity_timers[1] = {"wander_target": (10, 20)}
-        AIService._entity_timers[2] = {"wander_target": (30, 40)}
-        AIService._entity_timers[3] = {"wander_target": (50, 60)}
+        _entity_timers[1] = {"wander_target": (10, 20)}
+        _entity_timers[2] = {"wander_target": (30, 40)}
+        _entity_timers[3] = {"wander_target": (50, 60)}
         
         # Mock entities on map - entities 1 and 2 target player 100, entity 3 targets player 999
         mock_entities = [
@@ -827,10 +827,10 @@ class TestClearEntitiesTargetingPlayer:
                 assert mock_set.call_count == 2
                 
         # Verify timer state - entities targeting player 100 should have wander_target cleared
-        assert AIService._entity_timers[1]["wander_target"] is None
-        assert AIService._entity_timers[2]["wander_target"] is None
+        assert _entity_timers[1]["wander_target"] is None
+        assert _entity_timers[2]["wander_target"] is None
         # Entity 3 was not targeting player 100, so its wander_target should remain
-        assert AIService._entity_timers[3]["wander_target"] == (50, 60)
+        assert _entity_timers[3]["wander_target"] == (50, 60)
 
     @pytest.mark.asyncio
     async def test_clear_entities_no_entities_targeting(self):
