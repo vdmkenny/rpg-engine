@@ -491,8 +491,10 @@ class HpService:
             try:
                 await player_mgr.set_player_hp(player_id, new_hp)
                 updated += 1
-            except Exception:
-                # Silently skip failed updates to avoid disrupting game loop
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Failed to update HP during batch regeneration",
+                    extra={"player_id": player_id, "new_hp": new_hp, "error": str(e)}
+                )
         
         return updated

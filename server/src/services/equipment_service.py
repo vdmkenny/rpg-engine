@@ -2,7 +2,7 @@
 Service for managing player equipment.
 """
 
-from typing import Optional, TYPE_CHECKING, Dict, Any
+from typing import Optional, Dict, Any
 
 from ..core.config import settings
 from ..core.items import ItemCategory
@@ -22,12 +22,11 @@ from .item_service import ItemService
 from .inventory_service import InventoryService
 from .ground_item_service import GroundItemService
 from .skill_service import SkillService
+from .hp_service import HpService
 from .game_state import (
     get_equipment_manager,
     get_reference_data_manager,
 )
-if TYPE_CHECKING:
-    from .hp_service import HpService
 
 logger = get_logger(__name__)
 
@@ -230,15 +229,13 @@ class EquipmentService:
         if health_bonus <= 0:
             return -1  # No adjustment needed
 
-        from .hp_service import HpService
-
         # Get current HP and compute new max (includes this item's bonus)
         new_max_hp = await EquipmentService.get_max_hp(player_id)
         current_hp, _ = await HpService.get_hp(player_id)
         new_hp = min(current_hp + health_bonus, new_max_hp)
 
-        # Update player's current HP (capped at new max)
-        await HpService.set_hp(player_id, new_hp)
+        # Update both current HP and max HP
+        await HpService.set_hp(player_id, new_hp, max_hp=new_max_hp)
 
         logger.info(
             "Adjusted HP for equip",
@@ -246,6 +243,7 @@ class EquipmentService:
                 "player_id": player_id,
                 "health_bonus": health_bonus,
                 "new_current_hp": new_hp,
+                "new_max_hp": new_max_hp,
             },
         )
 
@@ -269,8 +267,6 @@ class EquipmentService:
         if health_bonus <= 0:
             return -1  # No adjustment needed
 
-        from .hp_service import HpService
-
         # Calculate new max HP (after unequipping, so without this item's bonus)
         new_max_hp = await EquipmentService.get_max_hp(player_id)
 
@@ -281,7 +277,8 @@ class EquipmentService:
         new_current_hp = current_hp - health_bonus
         new_current_hp = max(1, min(new_current_hp, new_max_hp))
 
-        await HpService.set_hp(player_id, new_current_hp)
+        # Update both current HP and max HP
+        await HpService.set_hp(player_id, new_current_hp, max_hp=new_max_hp)
 
         logger.info(
             "Adjusted HP for unequip",
@@ -576,16 +573,10 @@ class EquipmentService:
                         health_bonus_lost += eq_item_wrapper.get("health_bonus", 0)
 
             net_health_change = health_bonus_gained - health_bonus_lost
-            if net_health_change != 0:
-                from .hp_service import HpService
-            
-                current_hp, max_hp = await HpService.get_hp(player_id)
-                if net_health_change > 0:
-                    new_hp = current_hp + net_health_change
-                else:
-                    new_hp = max(1, min(current_hp + net_health_change, max_hp))
-            
-                await HpService.set_hp(player_id, new_hp)
+            if net_health_change > 0:
+                await EquipmentService.adjust_hp_for_equip(player_id, net_health_change)
+            elif net_health_change < 0:
+                await EquipmentService.adjust_hp_for_unequip(player_id, abs(net_health_change))
 
             updated_stats = await EquipmentService.get_total_stats(player_id)
 
@@ -666,15 +657,11 @@ class EquipmentService:
 
             if add_result.success and add_result.data.get("overflow_quantity", 0) == 0:
                 health_bonus_lost = item_wrapper.get("health_bonus", 0)
-            
+
                 await equipment_mgr.delete_equipment_slot(player_id, equipment_slot.value)
 
                 if health_bonus_lost > 0:
-                    from .hp_service import HpService
-                
-                    current_hp, max_hp = await HpService.get_hp(player_id)
-                    new_hp = max(1, min(current_hp - health_bonus_lost, max_hp))
-                    await HpService.set_hp(player_id, new_hp)
+                    await EquipmentService.adjust_hp_for_unequip(player_id, health_bonus_lost)
 
                 updated_stats = await EquipmentService.get_total_stats(player_id)
 
@@ -714,11 +701,7 @@ class EquipmentService:
                     await equipment_mgr.delete_equipment_slot(player_id, equipment_slot.value)
 
                     if health_bonus_lost > 0:
-                        from .hp_service import HpService
-                    
-                        current_hp, max_hp = await HpService.get_hp(player_id)
-                        new_hp = max(1, min(current_hp - health_bonus_lost, max_hp))
-                        await HpService.set_hp(player_id, new_hp)
+                        await EquipmentService.adjust_hp_for_unequip(player_id, health_bonus_lost)
 
                     updated_stats = await EquipmentService.get_total_stats(player_id)
 
