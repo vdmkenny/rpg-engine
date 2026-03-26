@@ -285,6 +285,15 @@ class FakeValkey:
         if key in self._data and field in self._data[key]:
             return self._data[key][field].encode()
         return None
+
+    async def hsetnx(self, key: str, field: str, value: str) -> int:
+        """Set hash field only if it does not exist. Returns 1 if set, 0 if already exists."""
+        if key not in self._data:
+            self._data[key] = {}
+        if field in self._data[key]:
+            return 0
+        self._data[key][str(field)] = str(value)
+        return 1
     
     async def hgetall(self, key: str) -> Dict[bytes, bytes]:
         """Get all fields and values in a hash."""
@@ -470,11 +479,13 @@ def setup_worker_database():
     Each worker gets its own database to eliminate race conditions and enable true 
     parallel test execution. Databases are auto-cleaned up after session completion.
     """
-    worker_id = get_worker_id()
+    # Use the module-level WORKER_ID so the DB name matches TEST_DATABASE_URL.
+    # Calling get_worker_id() again would generate a different timestamp.
+    worker_id = WORKER_ID
     worker_db_name = f"rpg_test_worker_{worker_id}"
-    
+
     logger.info(f"Setting up worker database: {worker_db_name} (worker: {worker_id})")
-    
+
     # Set the DATABASE_URL environment variable for this worker
     worker_db_url = get_worker_database_url(worker_id)
     sync_worker_db_url = get_sync_worker_database_url(worker_id) 

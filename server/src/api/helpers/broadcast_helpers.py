@@ -86,8 +86,7 @@ async def send_welcome_message(websocket, username: str, player_id: int) -> None
             payload={
                 "sender": "Server",
                 "message": f"Welcome, {username}! You can chat by typing in the chat window.",
-                "channel": "system",
-                "sender_position": None
+                "channel": "system"
             },
             version=PROTOCOL_VERSION
         )
@@ -193,7 +192,7 @@ async def handle_player_join_broadcast(
         
         # Get existing players on this map
         existing_players_data = await ConnectionService.get_existing_players_on_map(
-            map_id, username
+            map_id, username, connection_manager=connection_manager
         )
         
         if existing_players_data:

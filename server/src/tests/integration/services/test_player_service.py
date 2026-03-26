@@ -13,6 +13,7 @@ from typing import Dict, Any
 from server.src.services.player_service import PlayerService
 from server.src.services.game_state import get_player_state_manager
 from server.src.core.constants import PlayerRole
+from server.src.core.exceptions import DuplicatePlayerError
 from server.src.schemas.player import PlayerCreate
 from server.src.models.player import Player
 from fastapi import HTTPException
@@ -48,18 +49,15 @@ class TestPlayerCreation:
 
     @pytest.mark.asyncio
     async def test_create_player_duplicate_username(self, game_state_managers, session):
-        """Test that duplicate username raises HTTPException."""
+        """Test that duplicate username raises DuplicatePlayerError."""
         player_data = PlayerCreate(username="duplicate_test", password="password123")
-        
+
         # Create first player
         await PlayerService.create_player(player_data)
-        
+
         # Attempt to create duplicate
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(DuplicatePlayerError):
             await PlayerService.create_player(player_data)
-        
-        assert exc_info.value.status_code == 400
-        assert "already exists" in str(exc_info.value.detail)
 
 
 class TestPlayerLogin:

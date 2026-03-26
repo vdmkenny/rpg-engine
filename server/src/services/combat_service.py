@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from enum import Enum
 
-from server.src.core.config import game_config
+from server.src.core.config import settings, game_config
 from server.src.core.logging_config import get_logger
 from server.src.core.skills import SkillType
 from server.src.services.game_state import get_player_state_manager, get_skills_manager, get_equipment_manager, get_entity_manager, get_reference_data_manager
@@ -82,10 +82,10 @@ class CombatService:
     All business logic is here. GSM is used ONLY for data operations.
     """
     
-    # Combat constants
-    MAX_HIT_ROLL = 64
-    MAX_DEFENCE_ROLL = 64
-    DEATH_ANIMATION_TICKS = 10
+    # Combat constants from config
+    MAX_HIT_ROLL = settings.COMBAT_MAX_HIT_ROLL
+    MAX_DEFENCE_ROLL = settings.COMBAT_MAX_DEFENCE_ROLL
+    DEATH_ANIMATION_TICKS = settings.COMBAT_DEATH_ANIMATION_TICKS
     
     @staticmethod
     async def get_player_combat_stats(player_id: int) -> Optional[CombatStats]:

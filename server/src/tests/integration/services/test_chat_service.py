@@ -13,7 +13,7 @@ These are unit tests that test ChatService methods directly without WebSocket in
 
 import pytest
 import pytest_asyncio
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.src.services.chat_service import ChatService
@@ -139,7 +139,7 @@ class TestPermissionSystem:
         
         assert result["valid"] is False
         assert "permission" in result["error_message"].lower()
-        assert result["system_message"]["username"] == "System"
+        assert result["system_message"]["sender"] == "System"
         assert "permission" in result["system_message"]["message"].lower()
 
     @pytest.mark.asyncio
@@ -175,7 +175,7 @@ class TestPermissionSystem:
             mock_validate.return_value = {
                 "valid": False,
                 "error_message": "Permission denied",
-                "system_message": {"username": "System", "message": "Access denied"}
+                "system_message": {"sender": "System", "message": "Access denied"}
             }
             
             result = await ChatService.validate_message(
@@ -184,7 +184,7 @@ class TestPermissionSystem:
             
             assert result["valid"] is False
             assert result["reason"] == "Permission denied"
-            assert result["system_message"]["username"] == "System"
+            assert result["system_message"]["sender"] == "System"
 
 
 class TestSystemMessages:
@@ -194,17 +194,17 @@ class TestSystemMessages:
         """System error message should have correct default format."""
         message = ChatService.create_system_error_message("Test error")
         
-        assert message["username"] == "System"
+        assert message["sender"] == "System"
         assert message["message"] == "Test error"
         assert message["channel"] == "system"
         assert "timestamp" in message
-        assert isinstance(message["timestamp"], float)
+        assert isinstance(message["timestamp"], int)
 
     def test_create_system_error_message_custom_channel(self):
         """System error message should accept custom channel."""
         message = ChatService.create_system_error_message("Test error", "error")
-        
-        assert message["username"] == "System"
+
+        assert message["sender"] == "System"
         assert message["message"] == "Test error"
         assert message["channel"] == "error"
         assert "timestamp" in message
@@ -246,18 +246,24 @@ class TestRecipientResolution:
     @pytest.mark.asyncio
     async def test_get_local_chat_recipients_calculation(self):
         """Local chat recipients should be calculated based on configured range."""
-        with patch('server.src.services.chat_service.PlayerService.get_nearby_players') as mock_nearby:
+        mock_sender = MagicMock()
+        mock_sender.x = 5
+        mock_sender.y = 5
+
+        with patch('server.src.services.chat_service.PlayerService.get_player_by_id', new_callable=AsyncMock) as mock_get_player, \
+             patch('server.src.services.chat_service.PlayerService.get_nearby_players', new_callable=AsyncMock) as mock_nearby:
+            mock_get_player.return_value = mock_sender
             mock_nearby.return_value = [
                 NearbyPlayer(player_id=2, username="player2", x=10, y=10, direction=Direction.SOUTH, animation_state=AnimationState.IDLE),
                 NearbyPlayer(player_id=3, username="player3", x=15, y=15, direction=Direction.SOUTH, animation_state=AnimationState.IDLE)
             ]
-            
+
             recipients = await ChatService.get_local_chat_recipients(1, "testmap")
-            
+
             # Should call PlayerService with calculated range (chunk_radius * 16)
             expected_range = settings.CHAT_LOCAL_CHUNK_RADIUS * 16
             mock_nearby.assert_called_once_with(1, expected_range)
-            
+
             assert len(recipients) == 2
             assert recipients[0]["player_id"] == 2
             assert recipients[1]["player_id"] == 3

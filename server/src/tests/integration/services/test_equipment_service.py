@@ -83,11 +83,8 @@ class TestGetEquipment:
         """Equipment with items should return EquipmentData with filled slots."""
         player = player_with_equipment
         item = await ItemService.get_item_by_name("bronze_shortsword")
-        
-        from server.src.services.player_service import PlayerService
-        await PlayerService.login_player(player.id)
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         add_result = await InventoryService.add_item(player.id, item.id)
         assert add_result.success
         
@@ -136,18 +133,19 @@ class TestCanEquip:
         assert result.data.get("can_equip") is True
 
     @pytest.mark.asyncio
-    async def test_can_equip_with_default_skills(
+    async def test_can_equip_with_sufficient_skills(
         self, session: AsyncSession, player_with_equipment
     ):
-        """Should succeed when player has default skill levels."""
+        """Should succeed when player meets skill requirements."""
         player = player_with_equipment
         from server.src.services.player_service import PlayerService
         await PlayerService.login_player(player.id)
-        
+
+        await give_player_skill_level(session, player.id, "attack", 5)
         item = await ItemService.get_item_by_name("bronze_shortsword")
-        
+
         result = await EquipmentService.can_equip(player.id, item._data)
-        
+
         assert result.data.get("can_equip") is True
         assert result.message == "OK"
 
@@ -157,15 +155,15 @@ class TestCanEquip:
     ):
         """Should fail if skill level is too low."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name("iron_sword")
+        item = await ItemService.get_item_by_name("iron_shortsword")
 
         await give_player_skill_level(session, player.id, "attack", 5)
 
         result = await EquipmentService.can_equip(player.id, item._data)
 
         assert result.data.get("can_equip") is False
-        assert "10" in result.message
-        assert "5" in result.message
+        assert "10" in result.message  # requires level 10
+        assert "5" in result.message   # player has level 5
 
     @pytest.mark.asyncio
     async def test_can_equip_meets_requirements(
@@ -173,7 +171,7 @@ class TestCanEquip:
     ):
         """Should succeed if requirements are met."""
         player = player_with_equipment
-        item = await ItemService.get_item_by_name("iron_sword")
+        item = await ItemService.get_item_by_name("iron_shortsword")
 
         await give_player_skill_level(session, player.id, "attack", 10)
 
@@ -207,13 +205,13 @@ class TestEquipFromInventory:
         player = player_with_equipment
         item = await ItemService.get_item_by_name("bronze_shortsword")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await InventoryService.add_item(player.id, item.id)
 
         result = await EquipmentService.equip_from_inventory(player.id, 0)
 
         assert result.success is True
-        assert "Bronze Sword" in result.message
+        assert "Bronze Shortsword" in result.message
 
         equipped = await EquipmentService.get_equipped_in_slot(player.id, EquipmentSlot.WEAPON)
         assert equipped is not None
@@ -258,7 +256,7 @@ class TestEquipFromInventory:
         sword = await ItemService.get_item_by_name("bronze_shortsword")
         pickaxe = await ItemService.get_item_by_name("bronze_pickaxe")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await give_player_skill_level(session, player.id, "mining", 1)
 
         await InventoryService.add_item(player.id, sword.id)
@@ -285,7 +283,7 @@ class TestEquipFromInventory:
         two_handed = await ItemService.get_item_by_name("copper_2h_sword")
         shield = await ItemService.get_item_by_name("wooden_shield")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await give_player_skill_level(session, player.id, "defence", 1)
 
         await InventoryService.add_item(player.id, shield.id)
@@ -321,7 +319,7 @@ class TestUnequipToInventory:
         player = player_with_equipment
         item = await ItemService.get_item_by_name("bronze_shortsword")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await InventoryService.add_item(player.id, item.id)
         await EquipmentService.equip_from_inventory(player.id, 0)
 
@@ -354,7 +352,7 @@ class TestUnequipToInventory:
         player = player_with_equipment
         item = await ItemService.get_item_by_name("bronze_shortsword")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await InventoryService.add_item(player.id, item.id, durability=300)
         await EquipmentService.equip_from_inventory(player.id, 0)
 
@@ -390,7 +388,7 @@ class TestGetTotalStats:
         player = player_with_equipment
         item = await ItemService.get_item_by_name("bronze_shortsword")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await InventoryService.add_item(player.id, item.id)
         await EquipmentService.equip_from_inventory(player.id, 0)
 
@@ -408,7 +406,7 @@ class TestGetTotalStats:
         helmet = await ItemService.get_item_by_name("copper_helmet")
         platebody = await ItemService.get_item_by_name("copper_platebody")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await give_player_skill_level(session, player.id, "defence", 1)
 
         await InventoryService.add_item(player.id, sword.id)
@@ -440,7 +438,7 @@ class TestDurability:
         player = player_with_equipment
         item = await ItemService.get_item_by_name("bronze_shortsword")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await InventoryService.add_item(player.id, item.id, durability=500)
         await EquipmentService.equip_from_inventory(player.id, 0)
 
@@ -467,7 +465,7 @@ class TestDurability:
         player = player_with_equipment
         item = await ItemService.get_item_by_name("bronze_shortsword")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await InventoryService.add_item(player.id, item.id, durability=1)
         await EquipmentService.equip_from_inventory(player.id, 0)
 
@@ -484,7 +482,7 @@ class TestDurability:
         player = player_with_equipment
         item = await ItemService.get_item_by_name("bronze_shortsword")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await InventoryService.add_item(player.id, item.id, durability=250)
         await EquipmentService.equip_from_inventory(player.id, 0)
 
@@ -509,7 +507,7 @@ class TestClearEquipment:
         sword = await ItemService.get_item_by_name("bronze_shortsword")
         helmet = await ItemService.get_item_by_name("copper_helmet")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await give_player_skill_level(session, player.id, "defence", 1)
 
         await InventoryService.add_item(player.id, sword.id)
@@ -548,7 +546,7 @@ class TestGetAllEquippedItems:
         player = player_with_equipment
         sword = await ItemService.get_item_by_name("bronze_shortsword")
 
-        await give_player_skill_level(session, player.id, "attack", 1)
+        await give_player_skill_level(session, player.id, "attack", 5)
         await InventoryService.add_item(player.id, sword.id)
         await EquipmentService.equip_from_inventory(player.id, 0)
 
@@ -557,7 +555,7 @@ class TestGetAllEquippedItems:
         assert len(items) == 1
         eq = items[0]
         assert eq.item.id == sword.id
-        assert eq.item.display_name == "Bronze Sword"
+        assert eq.item.display_name == "Bronze Shortsword"
 
 
 @pytest.mark.usefixtures("items_synced")

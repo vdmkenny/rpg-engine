@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from ..core.security import verify_token, verify_password
 from ..core.logging_config import get_logger
+from ..core.exceptions import PlayerBannedError, PlayerTimedOutError
 from ..models.player import Player
 from ..schemas.player import PlayerData
 from .player_service import PlayerService
@@ -36,8 +37,8 @@ class AuthenticationService:
             PlayerData instance if authenticated, None otherwise
             
         Raises:
-            PermissionError: If player is banned
-            ValueError: If player is timed out
+            PlayerBannedError: If player is banned
+            PlayerTimedOutError: If player is timed out
         """
         try:
             # Authentication requires direct database access to get hashed_password
@@ -74,7 +75,7 @@ class AuthenticationService:
                         "Authentication failed - player banned",
                         extra={"username": username, "player_id": player_record.id}
                     )
-                    raise PermissionError("Player is banned")
+                    raise PlayerBannedError(username)
 
                 # Check if player is timed out
                 timeout_until = player_record.timeout_until
@@ -91,7 +92,7 @@ class AuthenticationService:
                                 "timeout_until": str(timeout_until)
                             }
                         )
-                        raise ValueError(f"Player is timed out until {timeout_until}")
+                        raise PlayerTimedOutError(timeout_until)
 
                 logger.info(
                     "User authentication successful",
@@ -102,8 +103,7 @@ class AuthenticationService:
             player_data = await PlayerService.get_player_by_username(username)
             return player_data
 
-        except (PermissionError, ValueError):
-            # Re-raise permission and timeout errors 
+        except (PlayerBannedError, PlayerTimedOutError):
             raise
         except Exception as e:
             logger.error(

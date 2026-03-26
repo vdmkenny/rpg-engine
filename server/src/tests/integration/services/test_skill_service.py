@@ -219,20 +219,20 @@ class TestSkillServiceQueries:
         assert new_total > initial_total
 
     @pytest.mark.asyncio
-    async def test_get_hitpoints_level(
+    async def test_get_hitpoints_skill_level(
         self, session: AsyncSession, create_test_player
     ):
-        """get_hitpoints_level should return hitpoints specifically."""
+        """get_skill_level for HITPOINTS should return hitpoints level."""
         player = await create_test_player("skill_hp_test", "password123")
         await SkillService.grant_all_skills_to_player(player.id)
-        
-        hp_level = await SkillService.get_hitpoints_level(player.id)
+
+        hp_level = await SkillService.get_skill_level(player.id, SkillType.HITPOINTS)
         assert hp_level == HITPOINTS_START_LEVEL
-        
+
         # Add XP to hitpoints
         await SkillService.add_experience(
             player.id, SkillType.HITPOINTS, 5000
         )
-        
-        new_hp = await SkillService.get_hitpoints_level(player.id)
+
+        new_hp = await SkillService.get_skill_level(player.id, SkillType.HITPOINTS)
         assert new_hp > HITPOINTS_START_LEVEL

@@ -470,8 +470,7 @@ class GroundItemService:
             if not all_items:
                 return 0
 
-            import time
-            now = time.time()
+            now = datetime.now(timezone.utc).timestamp()
             cleanup_count = 0
 
             for item in all_items:
@@ -492,7 +491,6 @@ class GroundItemService:
         logger.warning("cleanup_expired_items called without map_id - skipping global cleanup")
         return 0
 
-    @staticmethod
     @staticmethod
     async def drop_player_items_on_death(
         player_id: int,

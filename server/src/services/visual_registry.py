@@ -27,7 +27,7 @@ Usage:
         pass
 """
 
-from typing import Optional, Set
+from typing import Dict, Optional, Set
 from collections import OrderedDict
 import asyncio
 
@@ -177,6 +177,19 @@ class VisualRegistry:
                 return True
             return visual_hash not in seen_hashes
     
+    def _add_hash_to_observer(self, observer_id: str, visual_hash: str) -> None:
+        """Add a hash to observer's seen set, evicting if over capacity. Must hold lock."""
+        if observer_id not in self._observer_seen:
+            self._observer_seen[observer_id] = set()
+
+        seen_set = self._observer_seen[observer_id]
+        seen_set.add(visual_hash)
+
+        if len(seen_set) > self.MAX_OBSERVER_CACHE_SIZE:
+            hashes_list = list(seen_set)
+            half = len(hashes_list) // 2
+            self._observer_seen[observer_id] = set(hashes_list[half:])
+
     async def mark_hash_seen(
         self,
         observer_id: str,
@@ -184,27 +197,15 @@ class VisualRegistry:
     ) -> None:
         """
         Mark a visual hash as seen by an observer.
-        
+
         Called after sending full visual state to an observer.
-        
+
         Args:
             observer_id: The observing player's identifier.
             visual_hash: The hash that was sent.
         """
         async with self._lock:
-            if observer_id not in self._observer_seen:
-                self._observer_seen[observer_id] = set()
-            
-            seen_set = self._observer_seen[observer_id]
-            seen_set.add(visual_hash)
-            
-            # Evict oldest entries if over capacity
-            # Note: Sets don't preserve order, so we just clear half if too big
-            if len(seen_set) > self.MAX_OBSERVER_CACHE_SIZE:
-                # Convert to list, keep recent half
-                hashes_list = list(seen_set)
-                half = len(hashes_list) // 2
-                self._observer_seen[observer_id] = set(hashes_list[half:])
+            self._add_hash_to_observer(observer_id, visual_hash)
     
     async def get_visual_for_observer(
         self,
@@ -240,19 +241,7 @@ class VisualRegistry:
                 needs_full = visual_hash not in seen_hashes
             
             if needs_full:
-                # Mark hash as seen while holding lock
-                if observer_id not in self._observer_seen:
-                    self._observer_seen[observer_id] = set()
-                
-                seen_set = self._observer_seen[observer_id]
-                seen_set.add(visual_hash)
-                
-                # Evict oldest entries if over capacity
-                if len(seen_set) > self.MAX_OBSERVER_CACHE_SIZE:
-                    hashes_list = list(seen_set)
-                    half = len(hashes_list) // 2
-                    self._observer_seen[observer_id] = set(hashes_list[half:])
-                
+                self._add_hash_to_observer(observer_id, visual_hash)
                 return (visual_hash, visual_state.to_dict())
             else:
                 return (visual_hash, None)

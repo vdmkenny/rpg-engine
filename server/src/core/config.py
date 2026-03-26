@@ -139,6 +139,28 @@ class Settings(BaseSettings):
         game_config.get("game", {}).get("ground_items", {}).get("cleanup_interval", 30)
     )
 
+    # World/visibility constants
+    CHUNK_SIZE: int = int(
+        game_config.get("game", {}).get("world", {}).get("chunk_size", 16)
+    )
+    VISIBILITY_RADIUS_CHUNKS: int = int(
+        game_config.get("game", {}).get("world", {}).get("visibility_radius_chunks", 1)
+    )
+    NOTIFY_RADIUS_TILES: int = int(
+        game_config.get("game", {}).get("world", {}).get("notify_radius_tiles", 80)
+    )
+
+    # Combat constants
+    COMBAT_MAX_HIT_ROLL: int = int(
+        game_config.get("game", {}).get("combat", {}).get("max_hit_roll", 64)
+    )
+    COMBAT_MAX_DEFENCE_ROLL: int = int(
+        game_config.get("game", {}).get("combat", {}).get("max_defence_roll", 64)
+    )
+    COMBAT_DEATH_ANIMATION_TICKS: int = int(
+        game_config.get("game", {}).get("combat", {}).get("death_animation_ticks", 10)
+    )
+
     # Cache TTL settings from config.yml
     OFFLINE_PLAYER_CACHE_TTL: int = int(
         os.getenv(

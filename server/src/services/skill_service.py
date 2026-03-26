@@ -176,7 +176,7 @@ class SkillService:
         """
         from server.src.services.game_state import get_skills_manager
         from server.src.core.skills import (
-            get_skill_xp_multiplier, level_for_xp, xp_to_next_level, MAX_LEVEL
+            get_skill_xp_multiplier, level_for_xp, xp_for_level, xp_to_next_level, MAX_LEVEL
         )
 
         if xp_amount <= 0:
@@ -203,13 +203,10 @@ class SkillService:
             previous_level = current_skill["level"]
             previous_xp = current_skill["xp"]
 
-            # Calculate new XP and level
-            new_xp = previous_xp + xp_amount
-            new_level = level_for_xp(new_xp, xp_multiplier)
-
-            # Cap at max level
-            if new_level > MAX_LEVEL:
-                new_level = MAX_LEVEL
+            # Calculate new XP and level, capping both at max
+            max_xp = xp_for_level(MAX_LEVEL, xp_multiplier)
+            new_xp = min(previous_xp + xp_amount, max_xp)
+            new_level = min(level_for_xp(new_xp, xp_multiplier), MAX_LEVEL)
 
             # Update skill data via manager (within lock)
             await skills_mgr.set_skill(player_id, skill_name, new_level, new_xp)
@@ -307,22 +304,3 @@ class SkillService:
         skills = await skills_mgr.get_all_skills(player_id)
         return sum(skill_data.get("level", 1) for skill_data in skills.values())
 
-    @staticmethod
-    async def get_hitpoints_level(player_id: int) -> int:
-        """
-        Get the player's Hitpoints skill level.
-
-        Args:
-            player_id: The player's database ID
-
-        Returns:
-            Hitpoints level, or 10 if not found
-        """
-        from server.src.services.game_state import get_skills_manager
-
-        skills_mgr = get_skills_manager()
-        skill_data = await skills_mgr.get_skill(player_id, "hitpoints")
-
-        if skill_data:
-            return skill_data.get("level", 10)
-        return 10

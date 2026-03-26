@@ -18,10 +18,19 @@ import asyncio
 from typing import Dict, Any, List, Set, Tuple
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from server.src.services.ai_service import AIService
+from server.src.services.ai_service import AIService, _entity_timers
 from server.src.services.entity_spawn_service import EntitySpawnService
 from server.src.core.entities import EntityState, EntityBehavior, EntityType
+from server.src.schemas.player import NearbyPlayer, Direction, AnimationState
 from server.src.services.game_state import get_entity_manager, get_reference_data_manager
+
+
+def _make_player(player_id: int, username: str, x: int, y: int) -> NearbyPlayer:
+    """Helper to create NearbyPlayer for tests."""
+    return NearbyPlayer(
+        player_id=player_id, username=username, x=x, y=y,
+        direction=Direction.SOUTH, animation_state=AnimationState.IDLE,
+    )
 
 
 # =============================================================================
@@ -164,7 +173,7 @@ class TestIdleStateIntegration:
         entity_mgr = get_entity_manager()
         
         # Initialize timer to almost expired
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 1,  # Will expire on first process
             "wander_target": None,
             "last_move_tick": 0,
@@ -194,7 +203,7 @@ class TestIdleStateIntegration:
         assert entity["state"] == "wander"
         
         # Check wander target was set
-        assert AIService._entity_timers[instance_id]["wander_target"] is not None
+        assert _entity_timers[instance_id]["wander_target"] is not None
 
 
 # =============================================================================
@@ -216,7 +225,7 @@ class TestWanderStateIntegration:
         # Set entity to wander state with target east
         await entity_mgr.set_entity_state(instance_id, EntityState.WANDER)
         
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 0,
             "wander_target": (55, 50),  # 5 tiles east
             "last_move_tick": 0,
@@ -260,7 +269,7 @@ class TestWanderStateIntegration:
         # Set entity at its target location
         await entity_mgr.set_entity_state(instance_id, EntityState.WANDER)
         
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 0,
             "wander_target": (50, 50),  # Already at target
             "last_move_tick": 0,
@@ -309,10 +318,10 @@ class TestAggroIntegration:
         
         # Entity at (50, 50), player nearby at (55, 50) - distance 5, within aggro 10
         nearby_player = [
-            {"player_id": 100, "username": "test_player", "x": 55, "y": 50}
+            _make_player(100, "test_player", 55, 50)
         ]
         
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 50,
             "wander_target": None,
             "last_move_tick": 0,
@@ -354,10 +363,10 @@ class TestAggroIntegration:
         
         # Entity at (50, 50), player far at (70, 50) - distance 20, outside aggro 10
         distant_player = [
-            {"player_id": 100, "username": "test_player", "x": 70, "y": 50}
+            _make_player(100, "test_player", 70, 50)
         ]
         
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 50,
             "wander_target": None,
             "last_move_tick": 0,
@@ -410,10 +419,10 @@ class TestCombatIntegration:
         )
         
         player = [
-            {"player_id": 100, "username": "test_player", "x": 55, "y": 50}
+            _make_player(100, "test_player", 55, 50)
         ]
         
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 0,
             "wander_target": None,
             "last_move_tick": 0,  # Ready to move
@@ -461,7 +470,7 @@ class TestCombatIntegration:
             target_player_id=100
         )
         
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 0,
             "wander_target": None,
             "last_move_tick": 0,
@@ -507,10 +516,10 @@ class TestCombatIntegration:
         
         # Player is 30 tiles from spawn (50, 50) - beyond disengage_radius of 20
         far_player = [
-            {"player_id": 100, "username": "test_player", "x": 80, "y": 50}
+            _make_player(100, "test_player", 80, 50)
         ]
         
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 0,
             "wander_target": None,
             "last_move_tick": 0,
@@ -561,7 +570,7 @@ class TestReturningIntegration:
         await entity_mgr.update_entity_position(instance_id, 55, 50)
         await entity_mgr.set_entity_state(instance_id, EntityState.RETURNING)
         
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 0,
             "wander_target": None,
             "last_move_tick": 0,
@@ -604,7 +613,7 @@ class TestReturningIntegration:
         await entity_mgr.update_entity_hp(instance_id, 50)
         await entity_mgr.set_entity_state(instance_id, EntityState.RETURNING)
         
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 0,
             "wander_target": None,
             "last_move_tick": 0,
@@ -656,7 +665,7 @@ class TestFullStateMachineCycle:
         entity_mgr = get_entity_manager()
         
         # Start with entity idle, player nearby
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 50,
             "wander_target": None,
             "last_move_tick": 0,
@@ -665,7 +674,7 @@ class TestFullStateMachineCycle:
         }
         
         nearby_player = [
-            {"player_id": 100, "username": "test_player", "x": 55, "y": 50}
+            _make_player(100, "test_player", 55, 50)
         ]
         
         with patch("server.src.services.ai_service.settings") as mock_settings:
@@ -717,7 +726,7 @@ class TestFullStateMachineCycle:
         entity_mgr = get_entity_manager()
         
         # Start with timer about to expire
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 1,
             "wander_target": None,
             "last_move_tick": 0,
@@ -744,7 +753,7 @@ class TestFullStateMachineCycle:
                 
                 entity = await entity_mgr.get_entity_instance(instance_id)
                 assert entity["state"] == "wander", "Should transition to wander"
-                wander_target = AIService._entity_timers[instance_id]["wander_target"]
+                wander_target = _entity_timers[instance_id]["wander_target"]
                 assert wander_target is not None
                 
                 # Step 2: Set entity position to target to simulate reaching it
@@ -810,7 +819,7 @@ class TestAIEdgeCases:
         await entity_mgr.update_entity_hp(instance_id, 0)
         await entity_mgr.set_entity_state(instance_id, EntityState.DEAD)
         
-        AIService._entity_timers[instance_id] = {
+        _entity_timers[instance_id] = {
             "idle_timer": 1,
             "wander_target": None,
             "last_move_tick": 0,

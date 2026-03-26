@@ -219,6 +219,19 @@ class ReferenceDataManager(BaseManager):
                 await db.execute(stmt)
                 count += 1
 
+            # Sync monsters
+            for monster_enum in MonsterID:
+                entity_data = entity_def_to_dict(
+                    monster_enum.name, monster_enum.value
+                )
+
+                stmt = pg_insert(Entity).values(**entity_data)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["name"], set_=entity_data
+                )
+                await db.execute(stmt)
+                count += 1
+
             await self._commit_if_not_test_session(db)
 
             # Cache in Valkey

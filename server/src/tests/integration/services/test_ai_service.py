@@ -10,13 +10,22 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Dict, Any, List, Set, Tuple
 
-from server.src.services.ai_service import AIService
+from server.src.services.ai_service import AIService, _entity_timers
 from server.src.core.entities import EntityBehavior, EntityState
 from server.src.core.monsters import MonsterDefinition
+from server.src.schemas.player import NearbyPlayer, Direction, AnimationState
 from server.src.services.game_state import get_entity_manager, get_player_state_manager
 
 # Apply game_state_managers fixture to all tests in this module
 pytestmark = pytest.mark.usefixtures("game_state_managers")
+
+
+def _make_player(player_id: int, username: str, x: int, y: int) -> NearbyPlayer:
+    """Helper to create NearbyPlayer for tests."""
+    return NearbyPlayer(
+        player_id=player_id, username=username, x=x, y=y,
+        direction=Direction.SOUTH, animation_state=AnimationState.IDLE,
+    )
 
 
 @pytest.fixture
@@ -75,10 +84,10 @@ def empty_blocked_positions():
 
 @pytest.fixture
 def players_on_map():
-    """Create a list of players for testing."""
+    """Create a list of NearbyPlayer objects for testing."""
     return [
-        {"player_id": 100, "username": "player1", "x": 55, "y": 50},
-        {"player_id": 101, "username": "player2", "x": 100, "y": 100},
+        NearbyPlayer(player_id=100, username="player1", x=55, y=50, direction=Direction.SOUTH, animation_state=AnimationState.IDLE),
+        NearbyPlayer(player_id=101, username="player2", x=100, y=100, direction=Direction.SOUTH, animation_state=AnimationState.IDLE),
     ]
 
 
@@ -95,13 +104,13 @@ class TestTimerManagement:
 
     def test_cleanup_entity_timers(self):
         """Test that cleanup_entity_timers removes timer state."""
-        AIService._entity_timers[123] = {"idle_timer": 50}
-        AIService._entity_timers[456] = {"idle_timer": 30}
+        _entity_timers[123] = {"idle_timer": 50}
+        _entity_timers[456] = {"idle_timer": 30}
         
         AIService.cleanup_entity_timers(123)
         
-        assert 123 not in AIService._entity_timers
-        assert 456 in AIService._entity_timers
+        assert 123 not in _entity_timers
+        assert 456 in _entity_timers
 
     def test_cleanup_nonexistent_entity(self):
         """Test that cleanup of nonexistent entity doesn't raise."""
@@ -109,13 +118,13 @@ class TestTimerManagement:
 
     def test_reset_all_timers(self):
         """Test that reset_all_timers clears all state."""
-        AIService._entity_timers[1] = {"idle_timer": 10}
-        AIService._entity_timers[2] = {"idle_timer": 20}
-        AIService._entity_timers[3] = {"idle_timer": 30}
+        _entity_timers[1] = {"idle_timer": 10}
+        _entity_timers[2] = {"idle_timer": 20}
+        _entity_timers[3] = {"idle_timer": 30}
         
         AIService.reset_all_timers()
         
-        assert len(AIService._entity_timers) == 0
+        assert len(_entity_timers) == 0
 
 
 class TestAggroDetection:
@@ -134,7 +143,7 @@ class TestAggroDetection:
         )
         
         assert result is not None
-        assert result["player_id"] == 100
+        assert result.player_id == 100
 
     @pytest.mark.asyncio
     async def test_aggro_ignores_distant_player(
@@ -142,7 +151,7 @@ class TestAggroDetection:
     ):
         """Test that distant players don't trigger aggro."""
         distant_players = [
-            {"player_id": 100, "username": "player1", "x": 100, "y": 100},
+            _make_player(100, "player1", 100, 100),
         ]
         
         result = await AIService._check_aggro(
@@ -160,7 +169,7 @@ class TestAggroDetection:
     ):
         """Test that aggro requires line of sight."""
         players_behind_wall = [
-            {"player_id": 100, "username": "player1", "x": 55, "y": 60},
+            _make_player(100, "player1", 55, 60),
         ]
         basic_entity["aggro_radius"] = 15
         
@@ -179,9 +188,9 @@ class TestAggroDetection:
     ):
         """Test that aggro selects the closest valid target."""
         multiple_players = [
-            {"player_id": 101, "username": "far", "x": 58, "y": 50},
-            {"player_id": 100, "username": "close", "x": 52, "y": 50},
-            {"player_id": 102, "username": "medium", "x": 55, "y": 50},
+            _make_player(101, "far", 58, 50),
+            _make_player(100, "close", 52, 50),
+            _make_player(102, "medium", 55, 50),
         ]
         
         result = await AIService._check_aggro(
@@ -192,7 +201,7 @@ class TestAggroDetection:
         )
         
         assert result is not None
-        assert result["player_id"] == 100
+        assert result.player_id == 100
 
     @pytest.mark.asyncio
     async def test_aggro_zero_radius(
@@ -511,7 +520,7 @@ class TestCombatState:
         mock_entity_def.disengage_radius = 15
         
         far_players = [
-            {"player_id": 100, "username": "player1", "x": 100, "y": 50},
+            _make_player(100, "player1", 100, 50),
         ]
         
         timers = {
@@ -546,7 +555,7 @@ class TestCombatState:
         basic_entity["x"] = 50
         basic_entity["y"] = 50
         
-        players = [{"player_id": 100, "username": "player1", "x": 55, "y": 50}]
+        players = [_make_player(100, "player1", 55, 50)]
         
         timers = {
             "idle_timer": 0,
@@ -589,7 +598,7 @@ class TestCombatState:
         basic_entity["y"] = 50
         basic_entity["los_lost_at_tick"] = 1
         
-        players = [{"player_id": 100, "username": "player1", "x": 55, "y": 60}]
+        players = [_make_player(100, "player1", 55, 60)]
         
         timers = {
             "idle_timer": 0,
@@ -802,15 +811,15 @@ class TestClearEntitiesTargetingPlayer:
         entity_manager = get_entity_manager()
         
         # Set up timer state for entities
-        AIService._entity_timers[1] = {"wander_target": (10, 20)}
-        AIService._entity_timers[2] = {"wander_target": (30, 40)}
-        AIService._entity_timers[3] = {"wander_target": (50, 60)}
+        _entity_timers[1] = {"wander_target": (10, 20)}
+        _entity_timers[2] = {"wander_target": (30, 40)}
+        _entity_timers[3] = {"wander_target": (50, 60)}
         
         # Mock entities on map - entities 1 and 2 target player 100, entity 3 targets player 999
         mock_entities = [
-            {"id": 1, "entity_name": "GOBLIN", "target_player_id": 100, "state": "combat"},
-            {"id": 2, "entity_name": "GOBLIN", "target_player_id": 100, "state": "combat"},
-            {"id": 3, "entity_name": "GOBLIN", "target_player_id": 999, "state": "combat"},
+            {"instance_id": 1, "entity_name": "GOBLIN", "target_player_id": 100, "state": "combat"},
+            {"instance_id": 2, "entity_name": "GOBLIN", "target_player_id": 100, "state": "combat"},
+            {"instance_id": 3, "entity_name": "GOBLIN", "target_player_id": 999, "state": "combat"},
         ]
         
         with patch.object(entity_manager, "get_map_entities", new_callable=AsyncMock) as mock_get:
@@ -827,10 +836,10 @@ class TestClearEntitiesTargetingPlayer:
                 assert mock_set.call_count == 2
                 
         # Verify timer state - entities targeting player 100 should have wander_target cleared
-        assert AIService._entity_timers[1]["wander_target"] is None
-        assert AIService._entity_timers[2]["wander_target"] is None
+        assert _entity_timers[1]["wander_target"] is None
+        assert _entity_timers[2]["wander_target"] is None
         # Entity 3 was not targeting player 100, so its wander_target should remain
-        assert AIService._entity_timers[3]["wander_target"] == (50, 60)
+        assert _entity_timers[3]["wander_target"] == (50, 60)
 
     @pytest.mark.asyncio
     async def test_clear_entities_no_entities_targeting(self):

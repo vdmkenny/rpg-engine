@@ -42,6 +42,14 @@ class ConnectionManager:
         - `_connection_lock`: Protects connection state changes
         """
         self.connections_by_map: Dict[str, Dict[int, WebSocket]] = defaultdict(dict)
+
+    @staticmethod
+    def _is_connection_dead(connection: WebSocket) -> bool:
+        """Check if a WebSocket connection is disconnected."""
+        return (
+            hasattr(connection, 'client_state')
+            and connection.client_state == WebSocketState.DISCONNECTED
+        )
         self.player_to_map: Dict[int, str] = {}
         self._connection_lock = asyncio.Lock()
 
@@ -136,7 +144,7 @@ class ConnectionManager:
         for player_id, connection in connections_snapshot:
             try:
                 # Validate connection state before sending
-                if hasattr(connection, 'client_state') and connection.client_state == WebSocketState.DISCONNECTED:
+                if self._is_connection_dead(connection):
                     failed_connections.append(player_id)
                     continue
                     
@@ -230,7 +238,7 @@ class ConnectionManager:
         for player_id, connection, map_id in connections_snapshot:
             try:
                 # Validate connection state before sending
-                if hasattr(connection, 'client_state') and connection.client_state == WebSocketState.DISCONNECTED:
+                if self._is_connection_dead(connection):
                     failed_connections.append(player_id)
                     continue
                     
